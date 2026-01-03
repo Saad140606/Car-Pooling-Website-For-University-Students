@@ -9,8 +9,8 @@
     {
       "id": "fast-university-campus",
       "description": "A picture of the FAST University campus.",
-      "imageUrl": "https://images.unsplash.com/photo-1682161473727-402b497251b8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw2fHxtb2Rlcm4lMjB1bml2ZXJzaXR5fGVufDB8fHx8MTc2NzAyOTg3M3ww&ixlib=rb-4.1.0&q=80&w=1080",
-      "imageHint": "modern university"
+      "imageUrl": "https://storage.googleapis.com/project-os-frontend/studio-bots/assets/images/5e38102a-9e12-4299-8d4b-3269a84f479a.png",
+      "imageHint": "university building"
     }
   ]
 }

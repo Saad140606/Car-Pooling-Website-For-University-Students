@@ -361,47 +361,50 @@ export default function CreateRidePage() {
   };
   
   const onSubmit = async (values: z.infer<typeof rideSchema>) => {
-    if (!initialized || !user || !userData || !firestore) {
-        toast({ variant: "destructive", title: "Authentication Error", description: "Please wait a moment and try again. You must be logged in to create a ride." });
-        return;
+    if (!initialized || !user || !userData || !firestore || !mapRef.current) {
+      toast({ variant: "destructive", title: "Authentication Error", description: "Please wait a moment and try again. You must be logged in to create a ride." });
+      return;
     }
     setIsSubmitting(true);
-
+  
     try {
-        const route = mapRef.current?.getRoute() ?? [];
-        if (fromCoords && toCoords && route.length === 0 && process.env.NEXT_PUBLIC_ORS_API_KEY) {
-            toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
-            setIsSubmitting(false);
-            return;
+      const route = mapRef.current.getRoute();
+      if (fromCoords && toCoords && route.length === 0) {
+        if (process.env.NEXT_PUBLIC_ORS_API_KEY) {
+          toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
+          setIsSubmitting(false);
+          return;
         }
-
-        const rideData: any = {
-            driverId: user.uid,
-            from: values.from, to: values.to,
-            departureTime: values.departureTime,
-            transportMode: values.transportMode,
-            price: values.price,
-            totalSeats: values.totalSeats,
-            availableSeats: values.totalSeats,
-            genderAllowed: values.genderAllowed,
-            status: 'active',
-            route,
-            createdAt: serverTimestamp(),
-            driverInfo: { fullName: userData.fullName, gender: userData.gender },
-            ...(distanceKm && { distanceKm }),
-            ...(durationMin && { durationMin }),
-        };
-
-        const ridesCollection = collection(firestore, 'universities', userData.university, 'rides');
-        await addDoc(ridesCollection, rideData);
-        
-        toast({ title: 'Success!', description: 'Your ride has been created.' });
-        router.push('/dashboard/my-rides');
+      }
+  
+      const rideData: any = {
+        driverId: user.uid,
+        from: values.from, 
+        to: values.to,
+        departureTime: values.departureTime,
+        transportMode: values.transportMode,
+        price: values.price,
+        totalSeats: values.totalSeats,
+        availableSeats: values.totalSeats,
+        genderAllowed: values.genderAllowed,
+        status: 'active',
+        route,
+        createdAt: serverTimestamp(),
+        driverInfo: { fullName: userData.fullName, gender: userData.gender },
+        ...(distanceKm && { distanceKm }),
+        ...(durationMin && { durationMin }),
+      };
+  
+      const ridesCollection = collection(firestore, 'universities', userData.university, 'rides');
+      await addDoc(ridesCollection, rideData);
+      
+      toast({ title: 'Success!', description: 'Your ride has been created.' });
+      router.push('/dashboard/my-rides');
     } catch (e: any) {
-        console.error("Error creating ride:", e);
-        toast({ variant: "destructive", title: "Error", description: e.message || "Failed to create ride." });
+      console.error("Error creating ride:", e);
+      toast({ variant: "destructive", title: "Error", description: e.message || "Failed to create ride." });
     } finally {
-        setIsSubmitting(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -418,7 +421,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = !initialized || isSubmitting;
+  const isButtonDisabled = !initialized || userLoading || isSubmitting;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -546,7 +549,7 @@ export default function CreateRidePage() {
                       <FormLabel>Total Seats</FormLabel>
                       <FormControl><Input type="number" min="1" {...field} /></FormControl>
                       <FormMessage />
-                      </FormItem>
+                      </İtem>
                   )}/>
               </div>
 
@@ -567,7 +570,7 @@ export default function CreateRidePage() {
                   
               <div className="flex flex-col gap-2 pt-4">
                   <Button type="submit" className="w-full" size="lg" disabled={isButtonDisabled}>
-                      {isButtonDisabled ? <Loader2 className="animate-spin" /> : 'Create Ride'}
+                      {isSubmitting ? <Loader2 className="animate-spin" /> : 'Create Ride'}
                   </Button>
                   <Button variant="outline" type="button" onClick={() => { 
                       form.reset();

@@ -222,7 +222,7 @@ MapComponent.displayName = 'MapComponent';
 
 
 export default function CreateRidePage() {
-  const [isSubmitting, setIsSubmitting = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const mapRef = useRef<MapComponentRef>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   

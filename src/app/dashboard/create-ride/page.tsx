@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
@@ -418,7 +419,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = !initialized || userLoading || !userData || isSubmitting;
+  const isButtonDisabled = userLoading || !userData || isSubmitting;
 
   return (
     <div className="w-full max-w-4xl mx-auto">

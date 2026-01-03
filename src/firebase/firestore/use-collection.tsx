@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { onSnapshot, getDocs, doc, DocumentData, Query } from 'firebase/firestore';
+import { onSnapshot, getDocs, doc, DocumentData, Query, collection, where } from 'firebase/firestore';
 import { useFirestore } from '../provider';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError } from '../errors';
@@ -50,19 +50,31 @@ export function useCollection<T extends DocumentData>(
       if (options.includeUserDetails && items.length > 0) {
         const userIds = [...new Set(items.map((item: any) => item[options.includeUserDetails!]).filter(Boolean))];
         if (userIds.length > 0) {
-          const userDocs = await Promise.all(userIds.map(uid => getDocs(query(collection(firestore, 'users'), where('uid', '==', uid)))));
-          const userMap = new Map();
-          userDocs.forEach(userSnapshot => {
-            if (!userSnapshot.empty) {
-                const userData = userSnapshot.docs[0].data();
-                userMap.set(userData.uid, userData);
-            }
-          });
+            
+          const usersRef = collection(firestore, 'users');
+          const userQuery = where('uid', 'in', userIds);
+          const finalQuery = query(usersRef, userQuery);
           
-          items = items.map((item: any) => ({
-            ...item,
-            [`${options.includeUserDetails!.replace('Id', '')}Details`]: userMap.get(item[options.includeUserDetails!])
-          }));
+          try {
+            const userDocsSnapshot = await getDocs(finalQuery);
+            const userMap = new Map();
+            userDocsSnapshot.forEach(doc => {
+                const userData = doc.data();
+                userMap.set(userData.uid, userData);
+            });
+            items = items.map((item: any) => ({
+                ...item,
+                [`${options.includeUserDetails!.replace('Id', '')}Details`]: userMap.get(item[options.includeUserDetails!])
+            }));
+          } catch (e) {
+            console.error("Failed to fetch user details for collection", e);
+             const permissionError = new FirestorePermissionError({
+                path: 'users',
+                operation: 'list',
+             });
+            errorEmitter.emit('permission-error', permissionError);
+            setError(permissionError);
+          }
         }
       }
 
@@ -103,7 +115,8 @@ export function useCollection<T extends DocumentData>(
           setLoading(false);
         });
     }
-  }, [queryKey, firestore, options.listen, options.includeUserDetails]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryKey, firestore, options.listen]);
 
   return { data, loading, error };
 }

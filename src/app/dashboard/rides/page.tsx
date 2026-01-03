@@ -1,6 +1,6 @@
 'use client';
 import { useUser, useFirestore } from '@/firebase';
-import { collection, query, where, orderBy, Timestamp, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, Timestamp, doc, runTransaction, serverTimestamp, addDoc } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,8 @@ import L, { LatLng, LatLngExpression } from 'leaflet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from '@/components/map';
 import { Ride as RideType } from '@/lib/types';
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError } from '@/firebase/errors';
 
 
 // Fix for default icon not showing in Leaflet
@@ -118,50 +120,62 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
   const handleRequestSeat = async (pickupPoint: LatLng) => {
     if (!user || !firestore) return;
     setLoading(true);
-    try {
-      if (ride.driverId === user.uid) {
-        toast({ variant: 'destructive', title: "Can't book own ride" });
-        return;
-      }
 
-      await runTransaction(firestore, async (transaction) => {
-        const rideRef = doc(firestore, `universities/${userData.university}/rides`, ride.id);
-        const rideDoc = await transaction.get(rideRef);
-
-        if (!rideDoc.exists()) {
-          throw "Ride does not exist!";
-        }
-
-        const currentRideData = rideDoc.data();
-        if (currentRideData.availableSeats <= 0) {
-          throw "This ride is already full.";
-        }
-        
-        const newBookingRef = doc(collection(firestore, `universities/${userData.university}/bookings`));
-        transaction.set(newBookingRef, {
-          rideId: ride.id,
-          driverId: ride.driverId,
-          passengerId: user.uid,
-          status: 'pending',
-          createdAt: serverTimestamp(),
-          ride: currentRideData, // denormalize for easier access
-          pickupPoint: { lat: pickupPoint.lat, lng: pickupPoint.lng },
-        });
-      });
-
-      toast({
-        title: 'Request Sent!',
-        description: 'The driver has been notified of your request.',
-      });
-    } catch (error: any) {
-      console.error('Error requesting seat:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.toString() || 'Could not request seat. Please try again.',
-      });
-    } finally {
+    if (ride.driverId === user.uid) {
+      toast({ variant: 'destructive', title: "Can't book own ride" });
       setLoading(false);
+      return;
+    }
+
+    const bookingData = {
+      rideId: ride.id,
+      driverId: ride.driverId,
+      passengerId: user.uid,
+      status: 'pending' as 'pending',
+      createdAt: serverTimestamp(),
+      pickupPoint: { lat: pickupPoint.lat, lng: pickupPoint.lng },
+    };
+
+    try {
+        // We run a transaction to ensure the seat is available before booking.
+        await runTransaction(firestore, async (transaction) => {
+            const rideRef = doc(firestore, `universities/${userData.university}/rides`, ride.id);
+            const rideDoc = await transaction.get(rideRef);
+            if (!rideDoc.exists() || rideDoc.data().availableSeats <= 0) {
+                throw new Error("This ride is no longer available or is full.");
+            }
+
+            // Create a new booking document within the transaction
+            const newBookingRef = doc(collection(firestore, `universities/${userData.university}/bookings`));
+            transaction.set(newBookingRef, bookingData);
+        });
+
+        toast({
+            title: 'Request Sent!',
+            description: 'The driver has been notified of your request.',
+        });
+    } catch (error: any) {
+        console.error('Error requesting seat:', error);
+        
+        // This is a generic way to handle transaction vs direct write errors
+        const isTransactionError = !error.code; // Transactions throw plain errors on failure
+        
+        const permissionError = new FirestorePermissionError({
+            path: `universities/${userData.university}/bookings`,
+            operation: 'create',
+            requestResourceData: bookingData,
+        });
+        errorEmitter.emit('permission-error', permissionError);
+
+        if (!isTransactionError) {
+             toast({
+                variant: 'destructive',
+                title: 'Booking Failed',
+                description: error.message || 'Could not request seat. Please try again.',
+            });
+        }
+    } finally {
+        setLoading(false);
     }
   };
 

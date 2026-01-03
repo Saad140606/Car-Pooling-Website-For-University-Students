@@ -21,6 +21,8 @@ import { useFirestore, useUser } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, MapPin } from 'lucide-react';
 import { LeavingTimePicker } from '@/components/ui/leaving-time-picker';
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError } from '@/firebase/errors';
 
 
 const rideSchema = z.object({
@@ -361,49 +363,62 @@ export default function CreateRidePage() {
   };
   
   const onSubmit = async (values: z.infer<typeof rideSchema>) => {
-    if (!initialized || !user || !userData || !firestore || !mapRef.current) {
+    if (!initialized || !user || !userData || !firestore) {
       toast({ variant: "destructive", title: "Authentication Error", description: "Please wait a moment and try again. You must be logged in to create a ride." });
       return;
     }
+     if (!mapRef.current) {
+      toast({ variant: "destructive", title: "Map Error", description: "Map component is not ready. Please wait a moment." });
+      return;
+    }
+
     setIsSubmitting(true);
   
+    const route = mapRef.current.getRoute();
+    if (fromCoords && toCoords && route.length === 0 && process.env.NEXT_PUBLIC_ORS_API_KEY) {
+        toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
+        setIsSubmitting(false);
+        return;
+    }
+
+    const rideData = {
+      driverId: user.uid,
+      from: values.from,
+      to: values.to,
+      departureTime: values.departureTime,
+      transportMode: values.transportMode,
+      price: values.price,
+      totalSeats: values.totalSeats,
+      availableSeats: values.totalSeats,
+      genderAllowed: values.genderAllowed,
+      status: 'active' as 'active',
+      route,
+      createdAt: serverTimestamp(),
+      driverInfo: {
+        fullName: userData.fullName,
+        gender: userData.gender,
+      },
+      ...(distanceKm && { distanceKm }),
+      ...(durationMin && { durationMin }),
+    };
+
     try {
-      const route = mapRef.current.getRoute();
-      if (fromCoords && toCoords && route.length === 0 && process.env.NEXT_PUBLIC_ORS_API_KEY) {
-          toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
-          setIsSubmitting(false);
-          return;
-      }
-  
-      const rideData = {
-        driverId: user.uid,
-        from: values.from,
-        to: values.to,
-        departureTime: values.departureTime,
-        transportMode: values.transportMode,
-        price: values.price,
-        totalSeats: values.totalSeats,
-        availableSeats: values.totalSeats,
-        genderAllowed: values.genderAllowed,
-        status: 'active' as 'active',
-        route,
-        createdAt: serverTimestamp(),
-        driverInfo: {
-          fullName: userData.fullName,
-          gender: userData.gender,
-        },
-        ...(distanceKm && { distanceKm }),
-        ...(durationMin && { durationMin }),
-      };
-  
       const ridesCollection = collection(firestore, 'universities', userData.university, 'rides');
       await addDoc(ridesCollection, rideData);
       
       toast({ title: 'Success!', description: 'Your ride has been created.' });
       router.push('/dashboard/my-rides');
     } catch (e: any) {
-      console.error("Error creating ride:", e);
-      toast({ variant: "destructive", title: "Error", description: e.message || "Failed to create ride." });
+        console.error("Error creating ride:", e);
+        // This is a placeholder for the specialized error handling.
+        // In a real scenario, this would be a FirestorePermissionError.
+        const permissionError = new FirestorePermissionError({
+            path: `universities/${userData.university}/rides`,
+            operation: 'create',
+            requestResourceData: rideData
+        });
+        errorEmitter.emit('permission-error', permissionError);
+        // We no longer show a generic toast here. The FirebaseErrorListener will handle it.
     } finally {
       setIsSubmitting(false);
     }
@@ -422,7 +437,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = userLoading || !userData || !initialized || isSubmitting;
+  const isButtonDisabled = userLoading || isSubmitting;
 
   return (
     <div className="w-full max-w-4xl mx-auto">

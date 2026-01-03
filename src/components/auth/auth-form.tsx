@@ -10,7 +10,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 import { ArrowRight, Loader2 } from "lucide-react";
 
@@ -27,6 +27,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth, useFirestore } from "@/firebase";
 import { useToast } from "@/hooks/use-toast";
+import { FirestorePermissionError } from "@/firebase/errors";
+import { errorEmitter } from "@/firebase/error-emitter";
 
 type AuthFormProps = {
   university: "ned" | "fast";
@@ -82,19 +84,32 @@ export function AuthForm({ university, action }: AuthFormProps) {
       if (action === "register") {
         const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
         const user = userCredential.user;
-        await setDoc(doc(firestore, "users", user.uid), {
+        const userDocRef = doc(firestore, "users", user.uid);
+        const userProfileData = {
           uid: user.uid,
           email: user.email,
           fullName: values.fullName,
           university: university,
           gender: values.gender,
-          createdAt: new Date(),
-        });
+          createdAt: serverTimestamp(),
+        };
+
+        setDoc(userDocRef, userProfileData)
+          .catch(async (serverError) => {
+            const permissionError = new FirestorePermissionError({
+              path: userDocRef.path,
+              operation: 'create',
+              requestResourceData: userProfileData,
+            });
+            errorEmitter.emit('permission-error', permissionError);
+          });
+          
         toast({
           title: "Account Created",
           description: "Welcome to Campus Cruiser!",
         });
         router.push("/dashboard/rides");
+
       } else {
         await signInWithEmailAndPassword(auth, values.email, values.password);
         toast({

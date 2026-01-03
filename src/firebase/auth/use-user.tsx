@@ -26,11 +26,13 @@ export function useUser() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
       setLoading(false);
-      setInitialized(true); // Mark as initialized once auth state is known
+      if (!initialized) {
+        setInitialized(true); // Mark as initialized once auth state is known
+      }
     });
 
     return () => unsubscribe();
-  }, [auth]);
+  }, [auth, initialized]);
 
   const userDocRef = user && firestore ? doc(firestore, 'users', user.uid) : null;
   const { data, loading: dataLoading, error } = useDoc<UserProfile>(userDocRef);

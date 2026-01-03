@@ -227,7 +227,7 @@ export default function CreateRidePage() {
   const mapRef = useRef<MapComponentRef>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   
-  const { user, loading: userLoading, data: userData } = useUser();
+  const { user, loading: userLoading, data: userData, initialized } = useUser();
   const firestore = useFirestore();
   const router = useRouter();
   const { toast } = useToast();
@@ -361,7 +361,7 @@ export default function CreateRidePage() {
   };
   
   const onSubmit = async (values: z.infer<typeof rideSchema>) => {
-    if (!user || !userData || !firestore) {
+    if (!initialized || !user || !userData || !firestore) {
         toast({ variant: "destructive", title: "Authentication Error", description: "Please wait a moment and try again. You must be logged in to create a ride." });
         return;
     }
@@ -369,8 +369,8 @@ export default function CreateRidePage() {
 
     try {
         const route = mapRef.current?.getRoute() ?? [];
-        if (route.length === 0 && (fromCoords && toCoords)) {
-            toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please ensure start and end points are valid and an API key is provided." });
+        if (fromCoords && toCoords && route.length === 0 && process.env.NEXT_PUBLIC_ORS_API_KEY) {
+            toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
             setIsSubmitting(false);
             return;
         }
@@ -418,7 +418,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = userLoading || isSubmitting || !userData;
+  const isButtonDisabled = !initialized || isSubmitting;
 
   return (
     <div className="w-full max-w-4xl mx-auto">

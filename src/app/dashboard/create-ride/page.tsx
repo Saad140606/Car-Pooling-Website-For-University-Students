@@ -418,7 +418,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = userLoading || isSubmitting;
+  const isButtonDisabled = userLoading || isSubmitting || !userData;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -583,5 +583,3 @@ export default function CreateRidePage() {
     </div>
   );
 }
-
-    

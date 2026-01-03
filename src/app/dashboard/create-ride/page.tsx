@@ -45,8 +45,6 @@ export interface MapComponentRef {
   getTempMarkerLatLng: () => L.LatLng | null;
 }
 
-const ORS_API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY;
-
 type LatLngLiteral = { lat: number; lng: number; name?: string };
 
 const MapComponent = forwardRef<MapComponentRef, {
@@ -73,9 +71,9 @@ const MapComponent = forwardRef<MapComponentRef, {
     if (typeof window !== 'undefined') {
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
-        iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png').default.src,
-        iconUrl: require('leaflet/dist/images/marker-icon.png').default.src,
-        shadowUrl: require('leaflet/dist/images/marker-shadow.png').default.src,
+        iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+        iconUrl: require('leaflet/dist/images/marker-icon.png'),
+        shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
       });
     }
     
@@ -147,7 +145,7 @@ const MapComponent = forwardRef<MapComponentRef, {
             routeLayerRef.current = null;
         }
 
-        if (!ORS_API_KEY) {
+        if (!process.env.NEXT_PUBLIC_ORS_API_KEY) {
             console.warn('ORS API key missing. Cannot draw route. Please add NEXT_PUBLIC_ORS_API_KEY to your .env file.');
             props.onRouteUpdate(null, null);
             return;
@@ -497,7 +495,7 @@ export default function CreateRidePage() {
                   </div>
               )}
 
-              {!ORS_API_KEY && (
+              {!process.env.NEXT_PUBLIC_ORS_API_KEY && (
                 <div className="text-sm text-center p-3 bg-destructive/20 text-destructive-foreground rounded-md border border-destructive/50">
                     <strong>Route Service Not Configured:</strong> The map cannot draw routes. Please add your OpenRouteService API key to the <strong>.env</strong> file as <code>NEXT_PUBLIC_ORS_API_KEY</code> and restart the development server.
                 </div>
@@ -585,3 +583,5 @@ export default function CreateRidePage() {
     </div>
   );
 }
+
+    

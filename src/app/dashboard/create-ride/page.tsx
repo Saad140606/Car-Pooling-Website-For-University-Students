@@ -48,9 +48,9 @@ const ORS_API_KEY = "PASTE_KEY_HERE";
 
 type LatLngLiteral = { lat: number; lng: number; name?: string };
 
-const MapComponent = forwardRef<MapComponentRef, { 
+const MapComponent = forwardRef<MapComponentRef, {
     onMapClick: (lat: number, lng: number, name: string) => void;
-    onRouteUpdate: (distance: number | null, duration: number | null) => void; 
+    onRouteUpdate: (distance: number | null, duration: number | null) => void;
     from: LatLngLiteral | null;
     to: LatLngLiteral | null;
     activeMapSelect: 'from' | 'to' | null;
@@ -78,7 +78,7 @@ const MapComponent = forwardRef<MapComponentRef, {
     });
     
     mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
     }).addTo(mapInstanceRef.current);
 
@@ -437,41 +437,43 @@ export default function CreateRidePage() {
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               
-              <FormField control={form.control} name="from" render={({ field }) => (
-                  <FormItem className="relative">
-                      <FormLabel>From</FormLabel>
-                      <FormControl>
-                          <div className='relative'>
-                            <Input placeholder="Search for starting point" {...field} onChange={(e) => { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
-                            {searchLoading && query.field === 'from' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
-                          </div>
-                      </FormControl>
-                      <Button type="button" variant="link" size="sm" className="p-0 h-auto absolute right-1 -bottom-6 text-accent" onClick={() => handleChooseOnMap('from')}>
-                        <MapPin className="w-3 h-3 mr-1" /> Choose on map
-                      </Button>
-                      {renderSuggestionsFor('from')}
-                      <FormMessage />
-                  </FormItem>
-              )}/>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8">
+                <FormField control={form.control} name="from" render={({ field }) => (
+                    <FormItem className="relative">
+                        <FormLabel>From</FormLabel>
+                        <FormControl>
+                            <div className='relative'>
+                              <Input placeholder="Search for starting point" {...field} onChange={(e) => { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              {searchLoading && query.field === 'from' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
+                            </div>
+                        </FormControl>
+                        <Button type="button" variant="link" size="sm" className="p-0 h-auto absolute right-1 -bottom-6 text-accent" onClick={() => handleChooseOnMap('from')}>
+                          <MapPin className="w-3 h-3 mr-1" /> Choose on map
+                        </Button>
+                        {renderSuggestionsFor('from')}
+                        <FormMessage />
+                    </FormItem>
+                )}/>
 
-              <FormField control={form.control} name="to" render={({ field }) => (
-                  <FormItem className="relative">
-                      <FormLabel>To</FormLabel>
-                      <FormControl>
-                          <div className='relative'>
-                            <Input placeholder="Search for destination" {...field} onChange={(e) => { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
-                            {searchLoading && query.field === 'to' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
-                          </div>
-                      </FormControl>
-                      <Button type="button" variant="link" size="sm" className="p-0 h-auto absolute right-1 -bottom-6 text-accent" onClick={() => handleChooseOnMap('to')}>
-                        <MapPin className="w-3 h-3 mr-1" /> Choose on map
-                      </Button>
-                      {renderSuggestionsFor('to')}
-                      <FormMessage />
-                  </FormItem>
-              )}/>
+                <FormField control={form.control} name="to" render={({ field }) => (
+                    <FormItem className="relative">
+                        <FormLabel>To</FormLabel>
+                        <FormControl>
+                            <div className='relative'>
+                              <Input placeholder="Search for destination" {...field} onChange={(e) => { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              {searchLoading && query.field === 'to' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
+                            </div>
+                        </FormControl>
+                        <Button type="button" variant="link" size="sm" className="p-0 h-auto absolute right-1 -bottom-6 text-accent" onClick={() => handleChooseOnMap('to')}>
+                          <MapPin className="w-3 h-3 mr-1" /> Choose on map
+                        </Button>
+                        {renderSuggestionsFor('to')}
+                        <FormMessage />
+                    </FormItem>
+                )}/>
+              </div>
             
-              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden border shadow-sm relative">
+              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden border shadow-sm relative z-0">
                   <MapComponent 
                     ref={mapRef} 
                     onMapClick={() => {}}
@@ -481,9 +483,8 @@ export default function CreateRidePage() {
                     activeMapSelect={activeMapSelect}
                   />
                   {activeMapSelect && (
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[100%] z-[1000] pointer-events-none">
-                         {/* Use the MapPin icon as the central pin */}
-                         <MapPin className="h-10 w-10 text-primary"/>
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full z-[1000] pointer-events-none">
+                         <MapPin className="h-10 w-10 text-primary drop-shadow-lg"/>
                       </div>
                   )}
                   {activeMapSelect && (

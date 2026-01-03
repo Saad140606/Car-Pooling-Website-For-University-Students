@@ -44,7 +44,7 @@ export interface MapComponentRef {
   getTempMarkerLatLng: () => L.LatLng | null;
 }
 
-const ORS_API_KEY = "PASTE_KEY_HERE";
+const ORS_API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY || "PASTE_KEY_HERE";
 
 type LatLngLiteral = { lat: number; lng: number; name?: string };
 
@@ -69,8 +69,6 @@ const MapComponent = forwardRef<MapComponentRef, {
     
     // CRITICAL ICON FIX: Ensures marker icons are visible in Next.js.
     // Replaces default path logic with direct paths to images in `/public`.
-    // @ts-ignore
-    delete L.Icon.Default.prototype._getIconUrl;
     L.Icon.Default.mergeOptions({
         iconRetinaUrl: '/marker-icon-2x.png',
         iconUrl: '/marker-icon.png',
@@ -583,3 +581,5 @@ export default function CreateRidePage() {
     </div>
   );
 }
+
+    

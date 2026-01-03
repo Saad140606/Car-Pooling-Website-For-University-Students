@@ -45,7 +45,7 @@ export interface MapComponentRef {
   getTempMarkerLatLng: () => L.LatLng | null;
 }
 
-const ORS_API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY || "PASTE_KEY_HERE";
+const ORS_API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY;
 
 type LatLngLiteral = { lat: number; lng: number; name?: string };
 
@@ -144,8 +144,8 @@ const MapComponent = forwardRef<MapComponentRef, {
             routeLayerRef.current = null;
         }
 
-        if (!ORS_API_KEY || ORS_API_KEY === "PASTE_KEY_HERE") {
-            console.warn('ORS API key missing. Cannot draw route.');
+        if (!ORS_API_KEY) {
+            console.warn('ORS API key missing. Cannot draw route. Please add NEXT_PUBLIC_ORS_API_KEY to your .env.local file.');
             props.onRouteUpdate(null, null);
             return;
         }
@@ -163,8 +163,6 @@ const MapComponent = forwardRef<MapComponentRef, {
             const routeData = await response.json();
             
             if (routeData.features && routeData.features.length > 0) {
-                // Use L.polyline instead of L.geoJSON for reliability.
-                // It requires manually converting coordinates from [lng, lat] to [lat, lng].
                 const coordinates = routeData.features[0].geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
                 const polyline = L.polyline(coordinates, { color: '#3F51B5', weight: 7, opacity: 0.9 }).addTo(mapInstanceRef.current);
                 mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] });
@@ -210,11 +208,8 @@ const MapComponent = forwardRef<MapComponentRef, {
     enterSelectionMode: (center: L.LatLngExpression) => {
         if (!mapInstanceRef.current) return;
         mapInstanceRef.current.setView(center, 15, { animate: true });
-        // The visual pin is now handled by a div overlay in the parent component,
-        // so we don't need a temporary Leaflet marker here.
     },
     exitSelectionMode: () => {
-       // No temporary marker to remove.
     },
     getTempMarkerLatLng: () => {
         return mapInstanceRef.current?.getCenter() || null;
@@ -292,7 +287,6 @@ export default function CreateRidePage() {
     setActiveMapSelect(field);
     mapRef.current?.enterSelectionMode([24.8607, 67.0011]); // Center on Karachi
     
-    // Smoothly scroll to the map container
     mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     toast({
@@ -314,7 +308,6 @@ export default function CreateRidePage() {
   const searchNominatim = async (q: string) => {
     if (q.length < 3) return [];
     try {
-        // Bounding box for Karachi: min lon, min lat, max lon, max lat
         const viewbox = "66.8,24.7,67.4,25.1";
         const params = new URLSearchParams({ 
             q, 
@@ -376,7 +369,7 @@ export default function CreateRidePage() {
     try {
         const route = mapRef.current?.getRoute() ?? [];
         if (route.length === 0 && (fromCoords && toCoords)) {
-            toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please ensure start and end points are valid." });
+            toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please ensure start and end points are valid and an API key is provided." });
             setIsSubmitting(false);
             return;
         }
@@ -501,6 +494,13 @@ export default function CreateRidePage() {
                   </div>
               )}
 
+              {!ORS_API_KEY && (
+                <div className="text-sm text-center p-3 bg-destructive/20 text-destructive-foreground rounded-md border border-destructive/50">
+                    <strong>Route Service Not Configured:</strong> The map cannot draw routes. Please add your OpenRouteService API key to the <strong>.env.local</strong> file as <code>NEXT_PUBLIC_ORS_API_KEY</code> and restart the development server.
+                </div>
+              )}
+
+
               <FormField
                 control={form.control}
                 name="departureTime"
@@ -582,5 +582,3 @@ export default function CreateRidePage() {
     </div>
   );
 }
-
-    

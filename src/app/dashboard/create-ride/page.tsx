@@ -70,6 +70,7 @@ const MapComponent = forwardRef<MapComponentRef, {
     
     // CRITICAL ICON FIX: Ensures marker icons are visible in Next.js.
     // Replaces default path logic with direct paths to images in `/public`.
+    delete (L.Icon.Default.prototype as any)._getIconUrl;
     L.Icon.Default.mergeOptions({
         iconRetinaUrl: '/marker-icon-2x.png',
         iconUrl: '/marker-icon.png',
@@ -145,7 +146,7 @@ const MapComponent = forwardRef<MapComponentRef, {
         }
 
         if (!ORS_API_KEY) {
-            console.warn('ORS API key missing. Cannot draw route. Please add NEXT_PUBLIC_ORS_API_KEY to your .env.local file.');
+            console.warn('ORS API key missing. Cannot draw route. Please add NEXT_PUBLIC_ORS_API_KEY to your .env file.');
             props.onRouteUpdate(null, null);
             return;
         }
@@ -265,7 +266,7 @@ export default function CreateRidePage() {
     try {
         const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latLng.lat}&lon=${latLng.lng}`);
         const data = await res.json();
-        const name = data.display_name || `${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)}`;
+        const name = data.display_name || `${latLng.lat.toFixed(4)}, ${lng.toFixed(4)}`;
         
         form.setValue(activeMapSelect, name);
         if (activeMapSelect === 'from') {
@@ -496,7 +497,7 @@ export default function CreateRidePage() {
 
               {!ORS_API_KEY && (
                 <div className="text-sm text-center p-3 bg-destructive/20 text-destructive-foreground rounded-md border border-destructive/50">
-                    <strong>Route Service Not Configured:</strong> The map cannot draw routes. Please add your OpenRouteService API key to the <strong>.env.local</strong> file as <code>NEXT_PUBLIC_ORS_API_KEY</code> and restart the development server.
+                    <strong>Route Service Not Configured:</strong> The map cannot draw routes. Please add your OpenRouteService API key to the <strong>.env</strong> file as <code>NEXT_PUBLIC_ORS_API_KEY</code> and restart the development server.
                 </div>
               )}
 

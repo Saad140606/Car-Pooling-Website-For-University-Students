@@ -156,7 +156,7 @@ const MapComponent = forwardRef<MapComponentRef, {
         try {
             const response = await fetch('/api/ors', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json; charset=utf-8' },
                 body: JSON.stringify(body),
             });
     
@@ -369,15 +369,15 @@ export default function CreateRidePage() {
   
     try {
       const route = mapRef.current.getRoute();
-      if ((fromCoords && toCoords && route.length === 0) && process.env.NEXT_PUBLIC_ORS_API_KEY) {
+      if (fromCoords && toCoords && route.length === 0 && process.env.NEXT_PUBLIC_ORS_API_KEY) {
           toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
           setIsSubmitting(false);
           return;
       }
   
-      const rideData: any = {
+      const rideData = {
         driverId: user.uid,
-        from: values.from, 
+        from: values.from,
         to: values.to,
         departureTime: values.departureTime,
         transportMode: values.transportMode,
@@ -385,10 +385,13 @@ export default function CreateRidePage() {
         totalSeats: values.totalSeats,
         availableSeats: values.totalSeats,
         genderAllowed: values.genderAllowed,
-        status: 'active',
+        status: 'active' as 'active',
         route,
         createdAt: serverTimestamp(),
-        driverInfo: { fullName: userData.fullName, gender: userData.gender },
+        driverInfo: {
+          fullName: userData.fullName,
+          gender: userData.gender,
+        },
         ...(distanceKm && { distanceKm }),
         ...(durationMin && { durationMin }),
       };
@@ -419,7 +422,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = userLoading || !userData || isSubmitting;
+  const isButtonDisabled = userLoading || !userData || !initialized || isSubmitting;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -520,28 +523,31 @@ export default function CreateRidePage() {
                 )}
               />
 
-              <FormField control={form.control} name="transportMode" render={({ field }) => (
-                  <FormItem>
-                  <FormLabel>Transport Mode</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Select transport mode" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                          <SelectItem value="car">Car</SelectItem>
-                          <SelectItem value="bike">Bike</SelectItem>
-                      </SelectContent>
-                  </Select>
-                  <FormMessage />
-                  </FormItem>
-              )}/>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField control={form.control} name="transportMode" render={({ field }) => (
+                    <FormItem>
+                    <FormLabel>Transport Mode</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl><SelectTrigger><SelectValue placeholder="Select transport mode" /></SelectTrigger></FormControl>
+                        <SelectContent>
+                            <SelectItem value="car">Car</SelectItem>
+                            <SelectItem value="bike">Bike</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <FormMessage />
+                    </FormItem>
+                )}/>
+
+                <FormField control={form.control} name="price" render={({ field }) => (
+                    <FormItem>
+                    <FormLabel>Price per Seat (PKR)</FormLabel>
+                    <FormControl><Input type="number" min="1" {...field} /></FormControl>
+                    <FormMessage />
+                    </FormItem>
+                )}/>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField control={form.control} name="price" render={({ field }) => (
-                      <FormItem>
-                      <FormLabel>Price per Seat (PKR)</FormLabel>
-                      <FormControl><Input type="number" min="1" {...field} /></FormControl>
-                      <FormMessage />
-                      </FormItem>
-                  )}/>
                   <FormField control={form.control} name="totalSeats" render={({ field }) => (
                       <FormItem>
                       <FormLabel>Total Seats</FormLabel>
@@ -549,22 +555,22 @@ export default function CreateRidePage() {
                       <FormMessage />
                       </FormItem>
                   )}/>
-              </div>
 
-              <FormField control={form.control} name="genderAllowed" render={({ field }) => (
-                  <FormItem>
-                  <FormLabel>Gender Allowed</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Select who can book" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                          <SelectItem value="both">All Genders</SelectItem>
-                          <SelectItem value="male">Male Only</SelectItem>
-                          <SelectItem value="female">Female Only</SelectItem>
-                      </SelectContent>
-                  </Select>
-                  <FormMessage />
-                  </FormItem>
-              )}/>
+                  <FormField control={form.control} name="genderAllowed" render={({ field }) => (
+                      <FormItem>
+                      <FormLabel>Gender Allowed</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl><SelectTrigger><SelectValue placeholder="Select who can book" /></SelectTrigger></FormControl>
+                          <SelectContent>
+                              <SelectItem value="both">All Genders</SelectItem>
+                              <SelectItem value="male">Male Only</SelectItem>
+                              <SelectItem value="female">Female Only</SelectItem>
+                          </SelectContent>
+                      </Select>
+                      <FormMessage />
+                      </FormItem>
+                  )}/>
+              </div>
                   
               <div className="flex flex-col gap-2 pt-4">
                   <Button type="submit" className="w-full" size="lg" disabled={isButtonDisabled}>

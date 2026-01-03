@@ -69,13 +69,15 @@ const MapComponent = forwardRef<MapComponentRef, {
     if (typeof window === 'undefined' || !mapContainerRef.current || mapInstanceRef.current) return;
     
     // CRITICAL ICON FIX: Ensures marker icons are visible in Next.js.
-    // Replaces default path logic with direct paths to images in `/public`.
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    L.Icon.Default.mergeOptions({
-        iconRetinaUrl: '/marker-icon-2x.png',
-        iconUrl: '/marker-icon.png',
-        shadowUrl: '/marker-shadow.png',
-    });
+    // This imports the images directly from the leaflet package.
+    if (typeof window !== 'undefined') {
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png').default.src,
+        iconUrl: require('leaflet/dist/images/marker-icon.png').default.src,
+        shadowUrl: require('leaflet/dist/images/marker-shadow.png').default.src,
+      });
+    }
     
     mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 13);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {

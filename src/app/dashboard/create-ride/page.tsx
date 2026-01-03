@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
@@ -223,7 +222,7 @@ MapComponent.displayName = 'MapComponent';
 
 
 export default function CreateRidePage() {
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmitting = useState(false);
   const mapRef = useRef<MapComponentRef>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   
@@ -369,12 +368,10 @@ export default function CreateRidePage() {
   
     try {
       const route = mapRef.current.getRoute();
-      if (fromCoords && toCoords && route.length === 0) {
-        if (process.env.NEXT_PUBLIC_ORS_API_KEY) {
+      if ((fromCoords && toCoords && route.length === 0) && process.env.NEXT_PUBLIC_ORS_API_KEY) {
           toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
           setIsSubmitting(false);
           return;
-        }
       }
   
       const rideData: any = {
@@ -421,7 +418,7 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = !initialized || userLoading || isSubmitting;
+  const isButtonDisabled = !initialized || userLoading || !userData || isSubmitting;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -549,7 +546,7 @@ export default function CreateRidePage() {
                       <FormLabel>Total Seats</FormLabel>
                       <FormControl><Input type="number" min="1" {...field} /></FormControl>
                       <FormMessage />
-                      </İtem>
+                      </FormItem>
                   )}/>
               </div>
 

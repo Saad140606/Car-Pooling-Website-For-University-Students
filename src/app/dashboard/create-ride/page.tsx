@@ -154,9 +154,9 @@ const MapComponent = forwardRef<MapComponentRef, {
         const body = { coordinates: [[start.lng, start.lat], [end.lng, end.lat]] };
         
         try {
-            const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+            const response = await fetch('/api/ors', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': ORS_API_KEY },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
     

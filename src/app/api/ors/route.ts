@@ -1,3 +1,4 @@
+
 // src/app/api/ors/route.ts
 import { type NextRequest, NextResponse } from 'next/server';
 
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
     const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         'Authorization': ORS_API_KEY,
       },
       body: JSON.stringify(body),

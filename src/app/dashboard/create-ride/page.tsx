@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
@@ -76,8 +77,8 @@ const MapComponent = forwardRef<MapComponentRef, {
     });
     
     mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '', // Clear attribution
     }).addTo(mapInstanceRef.current);
 
     mapInstanceRef.current.on('click', async (e: L.LeafletMouseEvent) => {
@@ -471,7 +472,7 @@ export default function CreateRidePage() {
                 )}/>
               </div>
             
-              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden border shadow-sm relative z-0">
+              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden border shadow-sm relative">
                   <MapComponent 
                     ref={mapRef} 
                     onMapClick={() => {}}

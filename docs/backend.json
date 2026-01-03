@@ -1,0 +1,89 @@
+
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Represents a user's profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user's unique ID from Firebase Authentication." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "fullName": { "type": "string", "description": "The user's full name." },
+        "university": { "type": "string", "enum": ["ned", "fast"], "description": "The university the user belongs to." },
+        "gender": { "type": "string", "enum": ["male", "female"], "description": "The user's gender." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The timestamp when the user profile was created." }
+      },
+      "required": ["uid", "email", "fullName", "university", "gender", "createdAt"]
+    },
+    "Ride": {
+      "title": "Ride",
+      "description": "Represents a carpooling ride offered by a driver.",
+      "type": "object",
+      "properties": {
+        "driverId": { "type": "string", "description": "The UID of the driver offering the ride." },
+        "from": { "type": "string", "description": "The starting location of the ride." },
+        "to": { "type": "string", "description": "The destination of the ride." },
+        "departureTime": { "type": "string", "format": "date-time", "description": "The departure time of the ride." },
+        "transportMode": { "type": "string", "enum": ["car", "bike"], "description": "The mode of transport." },
+        "price": { "type": "number", "description": "The price per seat." },
+        "totalSeats": { "type": "number", "description": "The total number of seats available in the ride." },
+        "availableSeats": { "type": "number", "description": "The number of currently available seats." },
+        "genderAllowed": { "type": "string", "enum": ["male", "female", "both"], "description": "The allowed gender for passengers." },
+        "status": { "type": "string", "enum": ["active", "full", "completed", "cancelled"], "description": "The current status of the ride." },
+        "route": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lng": { "type": "number" }
+            },
+            "required": ["lat", "lng"]
+          },
+          "description": "An array of latitude/longitude objects representing the ride's route."
+        },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The timestamp when the ride was created." }
+      },
+      "required": ["driverId", "from", "to", "departureTime", "price", "totalSeats", "availableSeats", "genderAllowed", "status", "createdAt", "route", "transportMode"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Represents a booking request from a passenger for a ride.",
+      "type": "object",
+      "properties": {
+        "rideId": { "type": "string", "description": "The ID of the ride being booked." },
+        "driverId": { "type": "string", "description": "The UID of the driver of the ride." },
+        "passengerId": { "type": "string", "description": "The UID of the passenger making the booking." },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"], "description": "The status of the booking request." },
+        "pickupPoint": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          },
+          "required": ["lat", "lng"],
+          "description": "The passenger's selected pickup location."
+        },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The timestamp when the booking was created." }
+      },
+      "required": ["rideId", "driverId", "passengerId", "status", "createdAt", "pickupPoint"]
+    }
+  },
+  "auth": {
+    "providers": ["email_password"]
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Stores public profiles for all users."
+    },
+    "/universities/{universityId}/rides/{rideId}": {
+      "schema": { "$ref": "#/entities/Ride" },
+      "description": "Stores all rides, partitioned by university."
+    },
+    "/universities/{universityId}/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Stores all booking requests, partitioned by university."
+    }
+  }
+}

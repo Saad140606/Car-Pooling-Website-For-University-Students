@@ -1,0 +1,16 @@
+{
+  "placeholderImages": [
+    {
+      "id": "ned-university-campus",
+      "description": "A picture of the NED University campus.",
+      "imageUrl": "https://images.unsplash.com/photo-1606761568499-6d2451b23c66?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHx1bml2ZXJzaXR5JTIwY2FtcHVzfGVufDB8fHx8MTc2NzAxNjM4MHww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "university campus"
+    },
+    {
+      "id": "fast-university-campus",
+      "description": "A picture of the FAST University campus.",
+      "imageUrl": "https://images.unsplash.com/photo-1682161473727-402b497251b8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw2fHxtb2Rlcm4lMjB1bml2ZXJzaXR5fGVufDB8fHx8MTc2NzAyOTg3M3ww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "modern university"
+    }
+  ]
+}

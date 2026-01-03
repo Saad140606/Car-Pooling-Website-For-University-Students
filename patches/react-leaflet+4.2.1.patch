@@ -1,0 +1,32 @@
+diff --git a/node_modules/react-leaflet/package.json b/node_modules/react-leaflet/package.json
+index 19a90a2..7c35a64 100644
+--- a/node_modules/react-leaflet/package.json
++++ b/node_modules/react-leaflet/package.json
+@@ -62,7 +62,7 @@
+   "peerDependencies": {
+     "leaflet": "^1.7.1",
+     "react": "^18.0.0",
+     "react-dom": "^18.0.0"
+   },
+   "resolutions": {
+     "@types/react": "^18.0.0"
+   },
+   "funding": "https://github.com/sponsors/PaulLeCam"
+}
+]A> ""
+]A> ""
+]A> ""
+]A> "diff --git a/node_modules/react-leaflet/package.json b/node_modules/react-leaflet/package.json"
+]A> "index 19a90a2..7c35a64 100644"
+--- a/node_modules/react-leaflet/package.json
++++ b/node_modules/react-leaflet/package.json
+@@ -62,7 +62,7 @@
+   "peerDependencies": {
+     "leaflet": "^1.7.1",
+-    "react": "^18.0.0",
+-    "react-dom": "^18.0.0"
++    "react": "^18.0.0 || ^19.0.0",
++    "react-dom": "^18.0.0 || ^19.0.0"
+   },
+   "resolutions": {
+     "@types/react": "^18.0.0"

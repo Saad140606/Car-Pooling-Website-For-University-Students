@@ -3,13 +3,13 @@
     {
       "id": "ned-university-campus",
       "description": "A picture of the NED University campus.",
-      "imageUrl": "https://storage.googleapis.com/project-os-frontend/studio-bots/assets/images/875c7545-2070-4f51-b3b4-9336585db96d.png",
+      "imageUrl": "/ned-university-campus.png",
       "imageHint": "university campus"
     },
     {
       "id": "fast-university-campus",
       "description": "A picture of the FAST University campus.",
-      "imageUrl": "https://storage.googleapis.com/project-os-frontend/studio-bots/assets/images/5e38102a-9e12-4299-8d4b-3269a84f479a.png",
+      "imageUrl": "/fast-university-campus.png",
       "imageHint": "university building"
     }
   ]

@@ -26,7 +26,12 @@ export default function Home() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="container mx-auto px-4 py-6">
-        <Logo />
+        <div className="flex items-center justify-between">
+          <Logo />
+          <nav>
+            <Link href="/contact-us" className="text-sm font-medium text-muted-foreground hover:underline">Contact</Link>
+          </nav>
+        </div>
       </header>
       <main className="flex-grow">
         <section className="container mx-auto flex flex-col items-center justify-center px-4 py-20 text-center sm:py-32">
@@ -68,7 +73,10 @@ export default function Home() {
         </section>
       </main>
       <footer className="container mx-auto px-4 py-6 text-center text-muted-foreground">
-        <p>&copy; {new Date().getFullYear()} Campus Cruiser. All rights reserved.</p>
+        <div className="flex items-center justify-center gap-4">
+          <p>&copy; {new Date().getFullYear()} Campus Cruiser. All rights reserved.</p>
+          <Link href="/contact-us" className="text-sm hover:underline">Contact</Link>
+        </div>
       </footer>
     </div>
   );

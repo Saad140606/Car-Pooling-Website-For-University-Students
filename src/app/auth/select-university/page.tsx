@@ -9,12 +9,12 @@ const universities = [
   {
     name: "NED University",
     slug: "ned",
-    image: PlaceHolderImages.find(img => img.id === "./ned-university-campus"),
+    image: PlaceHolderImages.find(img => img.id === "ned-university-campus"),
   },
   {
     name: "FAST University",
     slug: "fast",
-    image: PlaceHolderImages.find(img => img.id === "./fast-university-campus"),
+    image: PlaceHolderImages.find(img => img.id === "fast-university-campus"),
   },
 ];
 

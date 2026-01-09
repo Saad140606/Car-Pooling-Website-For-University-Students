@@ -41,6 +41,7 @@ export function useDoc<T extends DocumentData>(
           const permissionError = new FirestorePermissionError({
             path: docRef.path,
             operation: 'get',
+            hint: 'Ensure users/{uid} exists and your Firestore rules allow access to this document. See docs/firestore-rules.md for guidance.'
           });
           errorEmitter.emit('permission-error', permissionError);
           setError(permissionError);

@@ -9,6 +9,8 @@ import * as z from "zod";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendEmailVerification,
+  signOut,
 } from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
@@ -50,13 +52,10 @@ export function AuthForm({ university, action }: AuthFormProps) {
   const config = universityConfig[university];
 
   const formSchema = z.object({
-    email: z.string().email().refine(
-      (email) => email.endsWith(`@${config.domain}`),
-      { message: `Email must be a valid @${config.domain} address.` }
-    ),
+    email: z.string().email(),
     password: z.string().min(6, { message: "Password must be at least 6 characters." }),
     fullName: action === 'register' ? z.string().min(3, { message: "Full name is required."}) : z.optional(z.string()),
-    gender: action === 'register' ? z.enum(["male", "female"]) : z.optional(z.enum(["male", "female"])),
+    consent: action === 'register' ? z.boolean().refine(v => v === true, { message: 'You must accept the Terms & Regulations and Privacy Policy to register.' }) : z.optional(z.boolean()),
   });
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -65,6 +64,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
       email: "",
       password: "",
       fullName: "",
+      consent: false,
     },
   });
 
@@ -82,33 +82,43 @@ export function AuthForm({ university, action }: AuthFormProps) {
 
     try {
       if (action === "register") {
+        // Persist the intended university so the onAuthStateChanged hook can use it when creating missing user docs
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('pending_university', university);
+          }
+        } catch (err) {
+          console.warn('Could not set pending_university in localStorage', err);
+        }
+
         const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
         const user = userCredential.user;
-        const userDocRef = doc(firestore, "users", user.uid);
-        const userProfileData = {
-          uid: user.uid,
-          email: user.email,
-          fullName: values.fullName,
-          university: university,
-          gender: values.gender,
-          createdAt: serverTimestamp(),
-        };
 
-        setDoc(userDocRef, userProfileData)
-          .catch(async (serverError) => {
-            const permissionError = new FirestorePermissionError({
-              path: userDocRef.path,
-              operation: 'create',
-              requestResourceData: userProfileData,
-            });
-            errorEmitter.emit('permission-error', permissionError);
+        // Send verification email. We *do not* create the users/{uid} profile until the email is verified.
+        try {
+          await sendEmailVerification(user);
+          toast({
+            title: "Verification Sent",
+            description: "A verification email was sent to your inbox. Please verify your email before signing in.",
           });
-          
-        toast({
-          title: "Account Created",
-          description: "Welcome to Campus Cruiser!",
-        });
-        router.push("/dashboard/rides");
+        } catch (err) {
+          console.warn('Failed to send verification email', err);
+          toast({
+            variant: 'destructive',
+            title: 'Verification Failed',
+            description: 'Could not send verification email. Please try signing in or contact support.',
+          });
+        }
+
+        // Sign the ephemeral account out so the user must verify and then sign in again (this avoids unverified profiles being active)
+        try {
+          await signOut(auth);
+        } catch (err) {
+          console.warn('Failed to sign out after registration:', err);
+        }
+
+        // Redirect to login so user can sign in after verification
+        router.push(`/auth/${university}/login`);
 
       } else {
         await signInWithEmailAndPassword(auth, values.email, values.password);
@@ -166,23 +176,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
                     </FormItem>
                   )}
                 />
-                <FormField
-                  control={form.control}
-                  name="gender"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Gender</FormLabel>
-                      <FormControl>
-                         <select {...field} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
-                          <option value="">Select Gender</option>
-                          <option value="male">Male</option>
-                          <option value="female">Female</option>
-                        </select>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {/* Gender is intentionally collected in Complete Profile, not at registration */}
               </>
             )}
             <FormField
@@ -190,9 +184,9 @@ export function AuthForm({ university, action }: AuthFormProps) {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>University Email</FormLabel>
+                  <FormLabel>Email</FormLabel>
                   <FormControl>
-                    <Input placeholder={`yourname@${config.domain}`} {...field} />
+                    <Input placeholder={`yourname@example.com`} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -211,8 +205,40 @@ export function AuthForm({ university, action }: AuthFormProps) {
                 </FormItem>
               )}
             />
+            {!isLogin && (
+              <FormField
+                control={form.control}
+                name="consent"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!field.value}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                          className="h-4 w-4 rounded border-input text-primary focus:ring-2"
+                        />
+                        <span className="text-sm">
+                          I confirm that I have read, understood, and agree to the <Link href="/terms" className="text-accent underline">Terms & Regulations and Privacy Policy</Link> of this University Car Pooling Application.
+                        </span>
+                      </label>
+                    </FormControl>
+                    <FormMessage />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      By registering, you voluntarily accept all responsibilities, risks, and obligations described in this document without limitation.
+                    </p>
+                  </FormItem>
+                )}
+              />
+            )}
+            {isLogin && (
+              <div className="text-right text-sm mt-1">
+                <Link href="/auth/forgot-password" className="text-accent hover:underline">Forgot password?</Link>
+              </div>
+            )}
             
-            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+            <Button type="submit" className="w-full" size="lg" disabled={loading || (!isLogin && !form.watch('consent'))}>
               {loading ? (
                 <Loader2 className="animate-spin" />
               ) : (

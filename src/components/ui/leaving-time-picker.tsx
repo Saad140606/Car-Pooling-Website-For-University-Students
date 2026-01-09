@@ -4,9 +4,14 @@
 import React from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { createPortal } from 'react-dom';
 import { CalendarIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { addMinutes, setHours, setMinutes } from 'date-fns';
+
+const PopperContainer = ({ children }: { children: React.ReactNode }) => {
+  return createPortal(<div>{children}</div>, document.body);
+};
 
 interface LeavingTimePickerProps {
   selected: Date | undefined;
@@ -40,8 +45,9 @@ export const LeavingTimePicker: React.FC<LeavingTimePickerProps> = ({
         )}
         wrapperClassName="w-full"
         calendarClassName="bg-card border-border"
-        popperClassName="z-50"
+        popperClassName="z-[9999]"
         popperPlacement="bottom-start"
+        popperContainer={PopperContainer}
         timeClassName={(time) => 'text-foreground'}
         dayClassName={(date) =>
           cn(

@@ -2,10 +2,6 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import type { FirebaseApp } from 'firebase/app';
-import type { Auth } from 'firebase/auth';
-import type { Firestore } from 'firebase/firestore';
-
 import { initializeFirebase } from './init';
 import { FirebaseErrorListener } from '@/components/FirebaseErrorListener';
 
@@ -18,16 +14,15 @@ interface FirebaseContextValue {
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
 
 export function FirebaseProvider({ children }: { children: React.ReactNode }) {
-  const [firebaseInstances, setFirebaseInstances] = useState<FirebaseContextValue>({
-    firebaseApp: undefined,
-    auth: undefined,
-    firestore: undefined,
+  // Initialize synchronously during render on the client so consuming components
+  // (like auth forms) can access `auth`/`firestore` immediately and avoid
+  // race conditions with `useEffect` initialization.
+  const initial = typeof window !== 'undefined' ? initializeFirebase() : { firebaseApp: undefined, auth: undefined, firestore: undefined };
+  const [firebaseInstances] = useState<FirebaseContextValue>({
+    firebaseApp: initial.firebaseApp as any,
+    auth: initial.auth as any,
+    firestore: initial.firestore as any,
   });
-
-  useEffect(() => {
-    const instances = initializeFirebase();
-    setFirebaseInstances(instances);
-  }, []);
 
   return (
     <FirebaseContext.Provider value={firebaseInstances}>
@@ -38,6 +33,21 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useFirebase = () => useContext(FirebaseContext);
-export const useFirebaseApp = () => useContext(FirebaseContext)?.firebaseApp;
-export const useAuth = () => useContext(FirebaseContext)?.auth;
-export const useFirestore = () => useContext(FirebaseContext)?.firestore;
+export const useFirebaseApp = () => {
+  const ctx = useContext(FirebaseContext);
+  if (ctx?.firebaseApp) return ctx.firebaseApp;
+  if (typeof window !== 'undefined') return initializeFirebase().firebaseApp;
+  return undefined;
+};
+export const useAuth = () => {
+  const ctx = useContext(FirebaseContext);
+  if (ctx?.auth) return ctx.auth;
+  if (typeof window !== 'undefined') return initializeFirebase().auth;
+  return undefined;
+};
+export const useFirestore = () => {
+  const ctx = useContext(FirebaseContext);
+  if (ctx?.firestore) return ctx.firestore;
+  if (typeof window !== 'undefined') return initializeFirebase().firestore;
+  return undefined;
+};

@@ -2,13 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Car, LogOut, PlusCircle, Search, User } from 'lucide-react';
+import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield } from 'lucide-react';
 import { useEffect } from 'react';
 import 'leaflet/dist/leaflet.css';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import Logo from '@/components/logo';
-import { useAuth, useUser } from '@/firebase';
+import { useAuth, useUser, useIsAdmin } from '@/firebase';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -17,11 +17,15 @@ const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
   { href: '/dashboard/create-ride', icon: PlusCircle, label: 'Offer a Ride' },
   { href: '/dashboard/my-rides', icon: Car, label: 'My Rides' },
+  { href: '/dashboard/my-bookings', icon: User, label: 'My Bookings' },
+  { href: '/contact-us', icon: Mail, label: 'Contact' },
+  { href: '/report', icon: Flag, label: 'Report' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, loading: userLoading, data: userData, initialized } = useUser();
+  const { isAdmin, loading: adminLoading } = useIsAdmin();
   const auth = useAuth();
   const router = useRouter();
 
@@ -30,10 +34,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     // null user states caused by hot reloads / runtime errors / hydration quirks.
     if (!initialized) return; // not initialized yet
 
-    // if initialized and there's no user, redirect to university selection
-    if (!user) {
-      router.replace('/auth/select-university');
-    }
+    // Add a short delay to tolerate transient null states that sometimes occur during
+    // auth restoration on page refresh (prevents immediate false redirects).
+    const t = setTimeout(() => {
+      // Don't redirect while the user is still loading; this prevents false redirects
+      // during client-side navigations where auth state may briefly be unknown.
+      if (!user && !userLoading) {
+        router.replace('/auth/select-university');
+      }
+    }, 400);
+
+    return () => clearTimeout(t);
   }, [initialized, user, router]);
 
   const handleSignOut = async () => {
@@ -85,6 +96,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </Button>
               </li>
             ))}
+            {isAdmin && (
+              <li>
+                <Button
+                  asChild
+                  variant={pathname === '/dashboard/admin/support' ? 'secondary' : 'ghost'}
+                  className="w-full justify-start"
+                >
+                  <Link href="/dashboard/admin/support">
+                    <Shield className="mr-2 h-5 w-5" />
+                    Admin
+                  </Link>
+                </Button>
+              </li>
+            )}
           </ul>
         </nav>
         <div className="p-4 border-t border-border">
@@ -103,8 +128,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56" align="end" forceMount>
                 <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleSignOut}>
+                <DropdownMenuSeparator />                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/account" className="flex items-center">
+                    <User className="mr-2 h-4 w-4" />
+                    <span>Profile</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />                <DropdownMenuItem onClick={handleSignOut}>
                     <LogOut className="mr-2 h-4 w-4" />
                     <span>Log out</span>
                 </DropdownMenuItem>
@@ -125,6 +155,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>{userData?.fullName}</DropdownMenuLabel>
+              <DropdownMenuItem asChild>
+                <Link href="/dashboard/account" className={cn(pathname === '/dashboard/account' && "bg-secondary")}>
+                  <User className="mr-2 h-4 w-4" />
+                  Profile
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
                {navItems.map((item) => (
                 <DropdownMenuItem key={item.href} asChild>
@@ -134,6 +170,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </Link>
                 </DropdownMenuItem>
               ))}
+              {isAdmin && (
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/admin/support" className={cn(pathname === '/dashboard/admin/support' && "bg-secondary")}>
+                    <Shield className="mr-2 h-4 w-4" />
+                    Admin
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut}>
                 <LogOut className="mr-2 h-4 w-4" />

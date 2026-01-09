@@ -1,6 +1,10 @@
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
+  // Disable React Strict Mode during development to avoid double-mount issues
+  // with third-party libraries like Leaflet that re-initialize DOM containers.
+  // Re-enable if you need strict-mode checks.
+  reactStrictMode: false,
   /* config options here */
   typescript: {
     ignoreBuildErrors: true,

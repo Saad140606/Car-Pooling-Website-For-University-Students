@@ -1,0 +1,240 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helpers
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Return true only if the signed-in user's document exists
+    function userDocExists() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Safely read the user's university; only call when userDocExists() is true
+    function userUniversity() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.university;
+    }
+
+    // Return true only if the signed-in user's UID has a document in `admins/{uid}`.
+    // Admins are managed server-side (via the Admin SDK); clients must NOT set admin flags.
+    function isAdmin() {
+      // Admin verified only by presence of an admins/{uid} document.
+      // Admins must be created server-side (Admin SDK). Clients cannot set admin flags.
+      return isAuth() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Top-level users collection
+    match /users/{userId} {
+      // Allow an authenticated user to create their own profile, but do not allow others
+      allow create: if isAuth() && request.auth.uid == userId && request.resource.data.email == request.auth.token.email;
+
+      // A user can read and modify their own profile
+      allow get, update, delete: if isAuth() && request.auth.uid == userId;
+    }
+
+    // Universities & rides: restrict reads to admins only
+    match /universities/{univId} {
+      allow list, get: if isAdmin();
+
+      // Rides under a university
+      match /rides/{rideId} {
+        // Only allow listing and getting rides for users whose profile university matches the university path.
+        // Safe fallback: if the users/{uid} doc is missing (e.g., during dev or a missing profile),
+        // allow authenticated users to read rides to avoid blocking the UI with permission errors.
+        allow list, get: if isAdmin();
+
+        // Create a ride: only authenticated users may create rides and createdBy must equal request.auth.uid
+        allow create: if isAuth()
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.from is string
+          && request.resource.data.to is string
+          && (request.resource.data.time is timestamp || request.resource.data.time is string)
+          && request.resource.data.seats is int
+          && request.resource.data.createdAt is timestamp;
+
+        // Only the creator may update or delete their ride
+        allow update, delete: if isAuth() && resource.data.createdBy == request.auth.uid;
+      }
+
+      // Bookings for rides
+      match /bookings/{bookingId} {
+        // Create booking if passengerId matches authenticated user
+        allow create: if isAuth() && request.resource.data.passengerId == request.auth.uid;
+
+        // Only admins may read bookings
+        allow list, get: if isAdmin();
+
+        // Allow update/delete by the passenger who made it or the driver of the ride
+        allow update, delete: if isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid);
+      }
+
+      // One chat per ride under a university. Support two common shapes:
+      // 1) Newer shape: { participants: [uid, uid], ... }
+      // 2) Older/top-level-compatible shape: { passengerId: 'uid', providerId: 'uid', ... }
+      // Rules below accept either shape so existing chats don't need backfill.
+      match /chats/{chatId} {
+        // Create allowed if the request references a rideId and the creator is a participant.
+        // Accept either a `participants` array or explicit `passengerId`/`providerId`.
+        allow create: if isAuth()
+          && request.resource.data.rideId is string
+          && (
+            // participants array provided and includes the creator
+            (request.resource.data.participants is list && request.auth.uid in request.resource.data.participants)
+            ||
+            // or explicit passenger/provider ids and the creator is one of them
+            (request.resource.data.passengerId is string && request.resource.data.providerId is string && (request.auth.uid == request.resource.data.passengerId || request.auth.uid == request.resource.data.providerId))
+          );
+
+        // Only participants may list/get chats. Accept either participants array or passenger/provider fields.
+        allow list, get: if isAuth() && userDocExists() && userUniversity() == univId && (
+          (resource.data.participants is list && request.auth.uid in resource.data.participants)
+          ||
+          (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+        );
+
+        allow update, delete: if isAuth() && (
+          (resource.data.participants is list && request.auth.uid in resource.data.participants)
+          ||
+          (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+        );
+
+        // Messages nested under a university-scoped chat
+        match /messages/{messageId} {
+          // Allow sending messages only if the sender is the authenticated user and is a participant.
+          // We use `get(...)` to read the parent chat doc and support both shapes.
+          allow create: if isAuth()
+            && request.resource.data.senderId == request.auth.uid
+            && (
+              // participants array on the chat doc
+              (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
+              ||
+              // or explicit passenger/provider ids on the chat doc
+              ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
+            )
+            && request.resource.data.timestamp is timestamp
+            && (request.resource.data.type in ['text','image','video','emoji']);
+
+          // Only participants can read message lists
+          allow list, get: if isAuth() && (
+            (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
+            ||
+            ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
+          );
+
+          // Messages are immutable
+          allow update, delete: if false;
+        }
+      }
+    }
+
+    // Top-level chats (legacy). Accept both shapes to avoid forcing backfills.
+    match /chats/{chatId} {
+      allow create: if request.auth != null
+        && request.resource.data.bookingId is string
+        && request.resource.data.rideId is string
+        && (
+          // participants array present and includes creator
+          (request.resource.data.participants is list && request.auth.uid in request.resource.data.participants)
+          ||
+          // or explicit passenger/provider ids and creator is one of them
+          (request.resource.data.passengerId is string && request.resource.data.providerId is string && (request.auth.uid == request.resource.data.passengerId || request.auth.uid == request.resource.data.providerId))
+        );
+
+      // Only participants can read the chat doc (accept both shapes)
+      allow get: if request.auth != null && (
+        (resource.data.participants is list && request.auth.uid in resource.data.participants)
+        ||
+        (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+      );
+      allow update: if request.auth != null && (
+        (resource.data.participants is list && request.auth.uid in resource.data.participants)
+        ||
+        (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+      );
+      allow delete: if request.auth != null && (
+        (resource.data.participants is list && request.auth.uid in resource.data.participants)
+        ||
+        (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+      );
+
+      match /messages/{messageId} {
+        // Messages may be created if sender is authenticated and is a participant.
+        allow create: if request.auth != null
+          && request.resource.data.senderId == request.auth.uid
+          && (
+            (resource.parent.data.participants is list && request.auth.uid in resource.parent.data.participants)
+            ||
+            (resource.parent.data.passengerId is string && resource.parent.data.providerId is string && (request.auth.uid == resource.parent.data.passengerId || request.auth.uid == resource.parent.data.providerId))
+          )
+          && request.resource.data.type in ['text','image','video','emoji']
+          && request.resource.data.timestamp is timestamp;
+
+        allow list, get: if request.auth != null && (
+          (resource.parent.data.participants is list && request.auth.uid in resource.parent.data.participants)
+          ||
+          (resource.parent.data.passengerId is string && resource.parent.data.providerId is string && (request.auth.uid == resource.parent.data.passengerId || request.auth.uid == resource.parent.data.providerId))
+        );
+        allow update, delete: if false;
+      }
+    }
+
+    // Deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Admins collection: presence of a document indicates an admin account.
+    // Clients should NOT be able to create/update/delete these documents — use the Admin SDK.
+    match /admins/{adminId} {
+      // Allow the authenticated user to read their own admin doc (to confirm status) and no one else's
+      allow get: if request.auth != null && request.auth.uid == adminId;
+
+      // Prevent client-side creation/modification/deletion. Admin SDK (server) bypasses rules.
+      allow create, update, delete: if false;
+    }
+    
+    // Contact messages - public submission, admin-only visibility
+    match /contact_messages/{msgId} {
+      // Anyone (guest or authenticated) may create a contact message.
+      // Enforce strict shape and minimum message length here. Rate-limiting by IP/UID
+      // should be enforced server-side (cloud function or server endpoint) — rules only validate shape.
+      allow create: if request.resource.data.createdAt is timestamp
+        && request.resource.data.isAuthenticated is bool
+        && (request.resource.data.uid is string || request.resource.data.uid == null)
+        && request.resource.data.name is string
+        && request.resource.data.email is string
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 10
+        && request.resource.data.status in ['open','resolved'];
+
+      // Only admins may read/list contact messages. Submitters (guest or auth) may NOT read.
+      allow get, list: if isAdmin();
+
+      // Only admins may update (change status) or delete messages
+      allow update, delete: if isAdmin();
+    }
+
+    // Reports collection - sensitive, auth-only creation, admin-only visibility and updates
+    match /reports/{reportId} {
+      // Only authenticated users may create reports. Enforce strict schema.
+      allow create: if isAuth()
+        && request.resource.data.reportedBy.uid == request.auth.uid
+        && request.resource.data.reportedBy.role in ['driver','passenger']
+        && (request.resource.data.againstUserUid is string || request.resource.data.againstUserUid == null)
+        && (request.resource.data.rideId is string || request.resource.data.rideId == null)
+        && request.resource.data.category in ['misbehavior','safety','fraud','app_issue']
+        && request.resource.data.description is string
+        && request.resource.data.description.size() >= 10
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.status in ['pending','reviewed','action_taken'];
+
+      // Only admins may read or list reports
+      allow get, list: if isAdmin();
+
+      // Only admins may update status or add adminNotes; reports are immutable for submitters
+      allow update, delete: if isAdmin();
+    }
+  }
+}

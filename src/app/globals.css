@@ -89,3 +89,15 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  /* Utility to clamp text to 3 lines (uses -webkit-line-clamp)
+     Applied to long addresses in ride cards to prevent UI breakage. */
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+}

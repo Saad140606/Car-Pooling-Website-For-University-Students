@@ -1,8 +1,8 @@
 // src/firebase/firestore/use-collection.tsx
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
-import { onSnapshot, getDocs, doc, DocumentData, Query, collection, where } from 'firebase/firestore';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { onSnapshot, getDocs, getDoc, doc, DocumentData, Query, collection, where, query as firestoreQueryFn } from 'firebase/firestore';
 import { useFirestore } from '../provider';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError } from '../errors';
@@ -12,20 +12,43 @@ interface UseCollectionOptions {
   includeUserDetails?: 'driverId' | 'passengerId';
 }
 
-function stableStringify(value: any): string {
+function stableStringify(value: any, _seen?: WeakSet<object>, _depth: number = 0): string {
+  // Protect against circular references and very deep objects.
+  const seen = _seen ?? new WeakSet<object>();
+  const maxDepth = 6;
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(',')}]`;
+  if (seen.has(value)) {
+    return '"[Circular]"';
   }
-  const sortedKeys = Object.keys(value).sort();
-  const sortedObject = sortedKeys.map(key => `"${key}":${stableStringify(value[key])}`).join(',');
-  return `{${sortedObject}}`;
+  if (_depth > maxDepth) {
+    return '"[Truncated]"';
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return `[${value.map(v => stableStringify(v, seen, _depth + 1)).join(',')}]`;
+  }
+
+  try {
+    const keys = Object.keys(value).sort();
+    const mapped = keys.map((key) => {
+      // Only include primitive or plain object values to keep the string short and stable.
+      try {
+        return `"${key}":${stableStringify(value[key], seen, _depth + 1)}`;
+      } catch (e) {
+        return `"${key}":"[Unserializable]"`;
+      }
+    }).join(',');
+    return `{${mapped}}`;
+  } finally {
+    // allow GC of seen for this branch
+  }
 }
 
 export function useCollection<T extends DocumentData>(
-  query: Query | null,
+  firestoreQuery: Query | null,
   options: UseCollectionOptions = { listen: true }
 ) {
   const firestore = useFirestore();
@@ -33,10 +56,21 @@ export function useCollection<T extends DocumentData>(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const queryKey = useMemo(() => query ? `${stableStringify(query as any)}` : null, [query]);
+  // Prefer a stable query key derived from the path; avoid deep stringify of the query object which can be circular.
+  const queryKey = useMemo(() => {
+    if (!firestoreQuery) return null;
+    try {
+      const path = (firestoreQuery as any)?._query?.path?.segments?.join('/');
+      if (path) return path;
+      return String(firestoreQuery);
+    } catch (e) {
+      console.warn('Failed to create query key, falling back to String(query):', e);
+      return String(firestoreQuery);
+    }
+  }, [firestoreQuery]);
 
   useEffect(() => {
-    if (!query || !firestore) {
+    if (!firestoreQuery || !firestore) {
       setData([]);
       setLoading(false);
       return;
@@ -48,52 +82,64 @@ export function useCollection<T extends DocumentData>(
       let items = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
 
       if (options.includeUserDetails && items.length > 0) {
-        const userIds = [...new Set(items.map((item: any) => item[options.includeUserDetails!]).filter(Boolean))];
+        // Collect user IDs and ensure they are strings to satisfy Firestore types.
+        const userIds = [...new Set(items.map((item: any) => {
+          const val = item[options.includeUserDetails!];
+          return typeof val === 'string' && val ? val : undefined;
+        }).filter(Boolean) as string[])];
+
         if (userIds.length > 0) {
-            
-          const usersRef = collection(firestore, 'users');
-          const userQuery = where('uid', 'in', userIds);
-          const finalQuery = query(usersRef, userQuery);
-          
-          try {
-            const userDocsSnapshot = await getDocs(finalQuery);
-            const userMap = new Map();
-            userDocsSnapshot.forEach(doc => {
-                const userData = doc.data();
-                userMap.set(userData.uid, userData);
-            });
-            items = items.map((item: any) => ({
-                ...item,
-                [`${options.includeUserDetails!.replace('Id', '')}Details`]: userMap.get(item[options.includeUserDetails!])
-            }));
-          } catch (e) {
-            console.error("Failed to fetch user details for collection", e);
-             const permissionError = new FirestorePermissionError({
-                path: 'users',
-                operation: 'list',
-             });
-            errorEmitter.emit('permission-error', permissionError);
-            setError(permissionError);
-          }
+          // Instead of running a collection query against /users (which requires list permissions),
+          // fetch each user doc individually. This avoids triggering a global permission denied
+          // error when the rules intentionally prevent listing the users collection.
+          const userMap = new Map<string, any>();
+          await Promise.all(userIds.map(async (uid: string) => {
+            try {
+              const ref = doc(firestore, 'users', uid);
+              const snap = await getDoc(ref);
+              if (snap.exists()) userMap.set(uid, snap.data());
+            } catch (err) {
+              // Likely a permission-denied for this user; skip details for this uid but do not
+              // emit a global permission error as that's noisy and expected in many setups.
+              console.debug('Skipping user details for', uid, 'due to fetch error:', err);
+            }
+          }));
+
+          items = items.map((item: any) => ({
+            ...item,
+            // Preserve existing denormalized details on the document if fetching
+            // user doc failed (userMap.get(...) may be undefined). This avoids
+            // wiping out already-stored `passengerDetails`/`driverDetails`.
+            [`${options.includeUserDetails!.replace('Id', '')}Details`]: userMap.get(item[options.includeUserDetails!]) || item[`${options.includeUserDetails!.replace('Id', '')}Details`]
+          }));
         }
       }
 
-      setData(items as T[]);
+      // Avoid unnecessary state updates if items are deeply equal by id and length.
+      setData(prev => {
+        const prevIds = ((prev || []) as any[]).map((p: any) => (p as any).id).join(',');
+        const newIds = ((items || []) as any[]).map((i: any) => (i as any).id).join(',');
+        if (prev && prev.length === items.length && prevIds === newIds) {
+          return prev; // no change
+        }
+        return items as T[];
+      });
       setLoading(false);
       setError(null);
     };
 
     if (options.listen) {
       const unsubscribe = onSnapshot(
-        query,
+        firestoreQuery,
         (snapshot) => {
           processSnapshot(snapshot);
         },
         (err) => {
           console.error("onSnapshot error:", err);
           const permissionError = new FirestorePermissionError({
-            path: (query as any)._query.path.segments.join('/'),
+            path: (firestoreQuery as any)?._query?.path?.segments?.join('/') ?? 'unknown',
             operation: 'list',
+            hint: 'Make sure users/{uid} exists and your Firestore security rules allow listing this collection. See docs/firestore-rules.md for guidance.'
           });
           errorEmitter.emit('permission-error', permissionError);
           setError(permissionError);
@@ -102,13 +148,14 @@ export function useCollection<T extends DocumentData>(
       );
       return () => unsubscribe();
     } else {
-      getDocs(query)
+      getDocs(firestoreQuery)
         .then(processSnapshot)
         .catch((err) => {
           console.error("getDocs error:", err);
           const permissionError = new FirestorePermissionError({
-            path: (query as any)._query.path.segments.join('/'),
+            path: (firestoreQuery as any)?._query?.path?.segments?.join('/') ?? 'unknown',
             operation: 'list',
+            hint: 'Make sure users/{uid} exists and your Firestore security rules allow listing this collection. See docs/firestore-rules.md for guidance.'
           });
           errorEmitter.emit('permission-error', permissionError);
           setError(permissionError);

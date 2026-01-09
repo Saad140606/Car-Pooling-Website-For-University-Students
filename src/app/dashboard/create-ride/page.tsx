@@ -6,20 +6,24 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallba
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { Button } from '@/components/ui/button';
+import RouteEditor from '@/components/RouteEditor';
+import { encodePolyline, decodePolyline, LatLng as RouteLatLng, computeBounds } from '@/lib/route';
+import { calculatePricing, clampAdjustedPrice } from '@/lib/pricing';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useUser } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, MapPin } from 'lucide-react';
+import { ToastAction } from '@/components/ui/toast';
+import { Loader2, MapPin, Lock } from 'lucide-react';
 import { LeavingTimePicker } from '@/components/ui/leaving-time-picker';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
@@ -42,7 +46,9 @@ const rideSchema = z.object({
 export interface MapComponentRef {
   resetMap: () => void;
   getRoute: () => { lat: number; lng: number }[];
-  enterSelectionMode: (center: L.LatLngExpression) => void;
+  setRoute?: (latlngs: { lat: number; lng: number }[] ) => void;
+  // center: where to show selection UI, bounds?: visual bounds, radius?: meters
+  enterSelectionMode: (center: L.LatLngExpression, bounds?: L.LatLngBoundsExpression, radius?: number) => void;
   exitSelectionMode: () => void;
   getTempMarkerLatLng: () => L.LatLng | null;
 }
@@ -52,6 +58,7 @@ type LatLngLiteral = { lat: number; lng: number; name?: string };
 const MapComponent = forwardRef<MapComponentRef, {
     onMapClick: (lat: number, lng: number, name: string) => void;
     onRouteUpdate: (distance: number | null, duration: number | null) => void;
+    onRouteError?: (err: Error) => void;
     from: LatLngLiteral | null;
     to: LatLngLiteral | null;
     activeMapSelect: 'from' | 'to' | null;
@@ -64,33 +71,55 @@ const MapComponent = forwardRef<MapComponentRef, {
   const routeLayerRef = useRef<L.Polyline | null>(null);
   // Ref for the temporary marker used in selection mode
   const tempMarkerRef = useRef<L.Marker | null>(null);
+  // Semi-transparent selection circle to indicate allowed campus radius during selection
+  const selectionCircleRef = useRef<L.Circle | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !mapContainerRef.current || mapInstanceRef.current) return;
     
-    // CRITICAL ICON FIX: Ensures marker icons are visible in Next.js.
-    // This imports the images directly from the leaflet package.
+    // Ensure marker icons are available in Next.js by pointing to public/ assets
     if (typeof window !== 'undefined') {
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
-        iconUrl: require('leaflet/dist/images/marker-icon.png'),
-        shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
-      });
+      try {
+        L.Icon.Default.mergeOptions({
+          iconRetinaUrl: '/marker-icon-2x.png',
+          iconUrl: '/marker-icon.png',
+          shadowUrl: '/marker-shadow.png',
+        });
+      } catch (e) {
+        // ignore
+      }
     }
     
-    mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '', // Clear attribution
+    // Use CartoDB Dark Matter tiles for a professional dark theme and consistent UI
+    if (mapContainerRef.current) mapContainerRef.current.style.backgroundColor = '#0b1220';
+    mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 16);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      maxZoom: 19,
+      detectRetina: true,
+      subdomains: 'abcd',
     }).addTo(mapInstanceRef.current);
 
     mapInstanceRef.current.on('click', async (e: L.LeafletMouseEvent) => {
         if (!props.activeMapSelect) return; // Only handle clicks in selection mode
         const { lat, lng } = e.latlng;
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-        const data = await res.json();
-        const name = data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-        props.onMapClick(lat, lng, name);
+        try {
+          // Use server-side proxy to avoid CORS and ensure a valid User-Agent
+          const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const name = data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+            props.onMapClick(lat, lng, name);
+            return;
+          } else {
+            console.warn('Nominatim reverse proxy returned non-OK', { status: res.status });
+          }
+        } catch (err) {
+          console.error('Nominatim reverse failed', err);
+        }
+
+        // Fallback: use coordinates as the name if proxy fails
+        props.onMapClick(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
     });
 
     // Update temp marker on map move during selection mode
@@ -118,7 +147,8 @@ const MapComponent = forwardRef<MapComponentRef, {
       } else {
         fromMarkerRef.current = L.marker(props.from).addTo(mapInstanceRef.current);
       }
-      fromMarkerRef.current.bindPopup(props.from.name || 'Starting Point').openPopup();
+      // Avoid auto-panning when marking a location. Opening popups will not auto-pan the map.
+      try { fromMarkerRef.current.bindPopup(props.from.name || 'Starting Point'); } catch (_) {}
     } else if (fromMarkerRef.current) {
         mapInstanceRef.current.removeLayer(fromMarkerRef.current);
         fromMarkerRef.current = null;
@@ -131,7 +161,7 @@ const MapComponent = forwardRef<MapComponentRef, {
       } else {
         toMarkerRef.current = L.marker(props.to).addTo(mapInstanceRef.current);
       }
-      toMarkerRef.current.bindPopup(props.to.name || 'Destination').openPopup();
+      try { toMarkerRef.current.bindPopup(props.to.name || 'Destination'); } catch (_) {}
     } else if (toMarkerRef.current) {
         mapInstanceRef.current.removeLayer(toMarkerRef.current);
         toMarkerRef.current = null;
@@ -154,32 +184,78 @@ const MapComponent = forwardRef<MapComponentRef, {
         }
         
         const body = { coordinates: [[start.lng, start.lat], [end.lng, end.lat]] };
-        
-        try {
-            const response = await fetch('/api/ors', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json; charset=utf-8' },
-                body: JSON.stringify(body),
-            });
-    
-            if (!response.ok) throw new Error(`Failed to fetch route. Status: ${response.status}`);
-            const routeData = await response.json();
-            
-            if (routeData.features && routeData.features.length > 0) {
-                const coordinates = routeData.features[0].geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
-                const polyline = L.polyline(coordinates, { color: '#3F51B5', weight: 7, opacity: 0.9 }).addTo(mapInstanceRef.current);
-                mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] });
-                routeLayerRef.current = polyline;
-    
-                const summary = routeData.features[0].properties.summary;
-                props.onRouteUpdate(summary.distance / 1000, summary.duration / 60);
-            } else {
-                props.onRouteUpdate(null, null);
+
+        const maxAttempts = 3;
+        let attempt = 0;
+        let lastErr: any = null;
+
+        while (attempt < maxAttempts) {
+            attempt++;
+            try {
+                const response = await fetch('/api/ors', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                    body: JSON.stringify(body),
+                });
+
+                if (!response.ok) {
+                    // Try to parse returned JSON for more details
+                    let errText = '';
+                    try {
+                        const errJson = await response.json();
+                        if (errJson?.error) errText = typeof errJson.error === 'string' ? errJson.error : JSON.stringify(errJson.error);
+                        else errText = JSON.stringify(errJson);
+                    } catch (e) {
+                        errText = await response.text().catch(() => `Status ${response.status}`);
+                    }
+                    const short = errText ? (errText.length > 1000 ? errText.slice(0, 1000) + '…' : errText) : `Status ${response.status}`;
+
+                    // If ORS returns a client error (4xx), it's likely "no route found" or bad request — don't retry, surface friendly message.
+                    if (response.status >= 400 && response.status < 500) {
+                        console.warn('ORS returned client error (no route / bad request)', { status: response.status, short });
+                        props.onRouteUpdate(null, null);
+                        props.onRouteError?.(new Error(`No routable path found (ORS ${response.status}). ${short}`));
+                        return;
+                    }
+
+                    // For server errors (5xx) or other statuses, throw to trigger retry/backoff
+                    throw new Error(`ORS proxy error: ${response.status} — ${short}`);
+                }
+
+                const routeData = await response.json();
+
+                if (routeData.features && routeData.features.length > 0) {
+                    const coordinates = routeData.features[0].geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
+                    // Draw outline + foreground polyline for contrast on dark basemap
+                    const polylineOutline = L.polyline(coordinates, { color: '#0b1220', weight: 13, opacity: 0.95 }).addTo(mapInstanceRef.current);
+                    const polyline = L.polyline(coordinates, { color: '#FFD166', weight: 7, opacity: 0.95 }).addTo(mapInstanceRef.current);
+                    routeLayerRef.current = polyline;
+                    // Only fit the map to the route if the user is NOT actively selecting a point — avoid interrupting selection
+                    if (!props.activeMapSelect) {
+                      try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (_) {}
+                    }
+                    routeLayerRef.current = polyline;
+
+                    const summary = routeData.features[0].properties.summary;
+                    props.onRouteUpdate(summary.distance / 1000, summary.duration / 60);
+                } else {
+                    props.onRouteUpdate(null, null);
+                }
+
+                // success — break retry loop
+                return;
+            } catch (error) {
+                lastErr = error;
+                console.warn(`Route fetch attempt ${attempt} failed:`, error);
+                // small backoff before retrying
+                if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 500 * attempt));
             }
-        } catch (error) {
-            console.error("Error drawing route:", error);
-            props.onRouteUpdate(null, null);
         }
+
+        // If we reach here, all attempts failed
+        console.error("Error drawing route after retries:", lastErr);
+        props.onRouteUpdate(null, null);
+        props.onRouteError?.(lastErr instanceof Error ? lastErr : new Error(String(lastErr)));
     };
     
     if (props.from && props.to) {
@@ -208,14 +284,71 @@ const MapComponent = forwardRef<MapComponentRef, {
         const flattened = Array.isArray(latLngs[0]) ? (latLngs as L.LatLng[][]).flat() : (latLngs as L.LatLng[]);
         return flattened.map(latLng => ({ lat: latLng.lat, lng: latLng.lng }));
     },
-    enterSelectionMode: (center: L.LatLngExpression) => {
+    enterSelectionMode: (center: L.LatLngExpression, bounds?: L.LatLngBoundsExpression, radius?: number) => {
         if (!mapInstanceRef.current) return;
+        // center the map on the university/selection point so user sees the boundary
         mapInstanceRef.current.setView(center, 15, { animate: true });
+        // show temp marker at center
+        if (tempMarkerRef.current) {
+          tempMarkerRef.current.setLatLng(center as any);
+        } else {
+          tempMarkerRef.current = L.marker(center as any, { interactive: false }).addTo(mapInstanceRef.current);
+        }
+        // Draw a semi-transparent selection circle when radius provided
+        try {
+          if (typeof radius === 'number') {
+            if (selectionCircleRef.current) {
+              selectionCircleRef.current.setLatLng(center as any).setRadius(radius);
+            } else {
+              selectionCircleRef.current = L.circle(center as any, {
+                radius,
+                color: '#FFD166',
+                weight: 2,
+                dashArray: '6 8',
+                fillColor: '#FFD166',
+                fillOpacity: 0.06,
+                interactive: false,
+              }).addTo(mapInstanceRef.current);
+            }
+          }
+        } catch (_) {}
+        // NOTE: we intentionally do NOT set max bounds here — allowing free panning makes selection easier.
+        // University bounds are validated on confirm (see handleConfirmSelection).
     },
     exitSelectionMode: () => {
+        if (!mapInstanceRef.current) return;
+        if (tempMarkerRef.current) {
+            mapInstanceRef.current.removeLayer(tempMarkerRef.current);
+            tempMarkerRef.current = null;
+        }
+        // Remove selection circle if present
+        if (selectionCircleRef.current) {
+            try { mapInstanceRef.current.removeLayer(selectionCircleRef.current); } catch (_) {}
+            selectionCircleRef.current = null;
+        }
+        // leave max-bounds untouched; no cleanup needed since we never set it
     },
     getTempMarkerLatLng: () => {
-        return mapInstanceRef.current?.getCenter() || null;
+        return (tempMarkerRef.current?.getLatLng && tempMarkerRef.current.getLatLng()) || mapInstanceRef.current?.getCenter() || null;
+    }
+    ,
+    // Allow externally setting a precomputed route (lat/lng array)
+    setRoute: (coords: { lat: number; lng: number }[]) => {
+      if (!mapInstanceRef.current) return;
+      try {
+        if (routeLayerRef.current) {
+          mapInstanceRef.current.removeLayer(routeLayerRef.current);
+          routeLayerRef.current = null;
+        }
+        if (!coords || coords.length === 0) return;
+        const ll = coords.map(c => [c.lat, c.lng] as [number, number]);
+        const polylineOutline = L.polyline(ll, { color: '#0b1220', weight: 13, opacity: 0.95 }).addTo(mapInstanceRef.current);
+        const polyline = L.polyline(ll, { color: '#FFD166', weight: 7, opacity: 0.95 }).addTo(mapInstanceRef.current);
+        routeLayerRef.current = polyline;
+        if (!props.activeMapSelect) {
+          try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (_) {}
+        }
+      } catch (e) { console.warn('setRoute failed', e); }
     }
   }));
 
@@ -228,6 +361,8 @@ export default function CreateRidePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const mapRef = useRef<MapComponentRef>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const submitTimeoutRef = useRef<number | null>(null);
+  const submissionAbortedRef = useRef(false);
   
   const { user, loading: userLoading, data: userData, initialized } = useUser();
   const firestore = useFirestore();
@@ -236,7 +371,92 @@ export default function CreateRidePage() {
 
   const [fromCoords, setFromCoords] = useState<LatLngLiteral | null>(null);
   const [toCoords, setToCoords] = useState<LatLngLiteral | null>(null);
+  const [routePolyline, setRoutePolyline] = useState<string | null>(null);
+  const [routeBounds, setRouteBounds] = useState<ReturnType<typeof computeBounds> | null>(null);
+  const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
+  const [routeLatLngs, setRouteLatLngs] = useState<RouteLatLng[] | null>(null);
+  const [recommendedPricePerSeat, setRecommendedPricePerSeat] = useState<number | null>(null);
+  const [finalPricePerSeat, setFinalPricePerSeat] = useState<number | null>(null);
+  const [pricingBreakdown, setPricingBreakdown] = useState<any | null>(null);
 
+  // University selection is mandatory: 'toUni' (going to uni) | 'fromUni' (leaving from uni)
+  const [uniAuto, setUniAuto] = useState<'toUni' | 'fromUni'>('toUni');
+
+  // Predefined university locations (approximate centers)
+  const FAST_UNI: LatLngLiteral = {
+    lat: 24.8569128,
+    lng: 67.2646384,
+    name: 'FAST National University of Computer and Emerging Sciences, Bin Qasim Town, Malir District, Karachi Division, Sindh, 75030, Pakistan',
+  };
+  const NED_UNI: LatLngLiteral = {
+    lat: 24.9368,
+    lng: 67.0580,
+    name: 'NED UET, University Road, Billys Homes, Gul Houses, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
+  };
+
+  const UNI_MAX_RADIUS_METERS = 4000; // allow ~4km radius from campus center
+
+  const getCurrentUniversity = () => {
+    if (userData?.university === 'ned') return NED_UNI;
+    return FAST_UNI;
+  };
+
+  const distanceInMeters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+    // Haversine formula
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const R = 6371e3; // meters
+    const phi1 = toRad(a.lat);
+    const phi2 = toRad(b.lat);
+    const dPhi = toRad(b.lat - a.lat);
+    const dLambda = toRad(b.lng - a.lng);
+
+    const A = Math.sin(dPhi / 2) * Math.sin(dPhi / 2) + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) * Math.sin(dLambda / 2);
+    const C = 2 * Math.atan2(Math.sqrt(A), Math.sqrt(1 - A));
+    return R * C;
+  };
+
+  const isWithinUniversityBounds = (point: { lat: number; lng: number }) => {
+    const uni = getCurrentUniversity();
+    return distanceInMeters(uni, point) <= UNI_MAX_RADIUS_METERS;
+  };
+
+  const applyUniversitySelection = (sel: 'toUni' | 'fromUni') => {
+    setUniAuto(sel);
+    const uni = getCurrentUniversity();
+    if (sel === 'toUni') {
+      // Set destination to the student's university and clear the starting point (always)
+      if (!form.getValues('to')) form.setValue('to', String(uni.name ?? ''));
+      setToCoords(uni);
+      // Always clear opposite field and coords so switching presets behaves predictably
+      form.setValue('from', '');
+      setFromCoords(null);
+      const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
+      const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(uni.lat * Math.PI / 180));
+      const bounds: L.LatLngBoundsExpression = [[uni.lat - deltaLat, uni.lng - deltaLng], [uni.lat + deltaLat, uni.lng + deltaLng]];
+      mapRef.current?.enterSelectionMode([uni.lat, uni.lng], bounds, UNI_MAX_RADIUS_METERS);
+    } else if (sel === 'fromUni') {
+      // Set starting point to the student's university and clear the destination (always)
+      if (!form.getValues('from')) form.setValue('from', String(uni.name ?? ''));
+      setFromCoords(uni);
+      // Always clear opposite field and coords so switching presets behaves predictably
+      form.setValue('to', '');
+      setToCoords(null);
+      const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
+      const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(uni.lat * Math.PI / 180));
+      const bounds: L.LatLngBoundsExpression = [[uni.lat - deltaLat, uni.lng - deltaLng], [uni.lat + deltaLat, uni.lng + deltaLng]];
+      mapRef.current?.enterSelectionMode([uni.lat, uni.lng], bounds, UNI_MAX_RADIUS_METERS);
+    }
+  };
+
+  // Apply default selection only after the user's university is known
+  useEffect(() => {
+    // Only apply when fields are empty and the user's university is available to avoid
+    // overwriting input with a wrong default (e.g. FAST) while auth/profile are still loading.
+    if ((form.getValues('from') === '' && form.getValues('to') === '') && userData?.university) {
+      applyUniversitySelection(uniAuto);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userData?.university, initialized]);
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [durationMin, setDurationMin] = useState<number | null>(null);
   
@@ -248,6 +468,7 @@ export default function CreateRidePage() {
   });
   
   const transportMode = form.watch('transportMode');
+  const departureTimeValue = form.watch('departureTime');
 
   useEffect(() => {
     if (transportMode === 'bike') {
@@ -264,31 +485,61 @@ export default function CreateRidePage() {
     
     const latLng = mapRef.current.getTempMarkerLatLng();
     if (!latLng) return;
-    
-    try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latLng.lat}&lon=${latLng.lng}`);
-        const data = await res.json();
-        const name = data.display_name || `${latLng.lat.toFixed(4)}, ${lng.toFixed(4)}`;
-        
-        form.setValue(activeMapSelect, name);
-        if (activeMapSelect === 'from') {
-            setFromCoords({ lat: latLng.lat, lng: latLng.lng, name });
+
+    const finalizeSelection = async (chosenLatLng: { lat: number; lng: number }) => {
+      try {
+        const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(chosenLatLng.lat)}&lon=${encodeURIComponent(chosenLatLng.lng)}`);
+        let name = `${chosenLatLng.lat.toFixed(4)}, ${chosenLatLng.lng.toFixed(4)}`;
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.display_name) name = data.display_name;
         } else {
-            setToCoords({ lat: latLng.lat, lng: latLng.lng, name });
+          try {
+            const errJson = await res.json();
+            console.warn('Nominatim reverse proxy returned non-OK', errJson);
+          } catch (e) {
+            console.warn('Nominatim reverse proxy returned non-OK status', { status: res.status });
+          }
         }
-        
-    } catch (e) {
+
+        form.setValue(activeMapSelect!, name);
+        if (activeMapSelect === 'from') {
+          setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
+        } else {
+          setToCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
+        }
+      } catch (e) {
         console.error("Reverse geocoding failed", e);
         toast({ variant: 'destructive', title: "Could not fetch location name."});
-    } finally {
-        mapRef.current.exitSelectionMode();
+      } finally {
+        mapRef.current?.exitSelectionMode();
         setActiveMapSelect(null);
-    }
+      }
+    };
+
+
+    // Proceed with reverse geocoding and finalization regardless of distance
+    await finalizeSelection(latLng);
   };
   
   const handleChooseOnMap = (field: 'from' | 'to') => {
+    // Prevent changing a locked field (preset to the student's university)
+    if (field === 'to' && uniAuto === 'toUni') {
+      toast({ title: 'Locked', description: 'Destination is locked to your university and cannot be changed.' });
+      return;
+    }
+    if (field === 'from' && uniAuto === 'fromUni') {
+      toast({ title: 'Locked', description: 'Starting location is locked to your university and cannot be changed.' });
+      return;
+    }
+
     setActiveMapSelect(field);
-    mapRef.current?.enterSelectionMode([24.8607, 67.0011]); // Center on Karachi
+    // Center selection around the student's university and restrict to campus area
+    const centerUni = getCurrentUniversity();
+    const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
+    const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(centerUni.lat * Math.PI / 180));
+    const bounds: L.LatLngBoundsExpression = [[centerUni.lat - deltaLat, centerUni.lng - deltaLng], [centerUni.lat + deltaLat, centerUni.lng + deltaLng]];
+    mapRef.current?.enterSelectionMode([centerUni.lat, centerUni.lng], bounds);
     
     mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
@@ -303,26 +554,66 @@ export default function CreateRidePage() {
       if(duration) setDurationMin(Math.round(duration));
   }, []);
 
+  const onRouteGenerated = useCallback((data: { waypoints: any[]; polyline: string; bounds: any } ) => {
+    try {
+      setRouteWaypoints(data.waypoints || []);
+      setRoutePolyline(data.polyline || null);
+      setRouteBounds(data.bounds || null);
+      // decode polyline to lat/lng for map drawing
+      // lazy import decode to avoid circulars
+      const latlngs = decodePolyline(data.polyline || '');
+      setRouteLatLngs(latlngs);
+      // instruct the map to draw the generated route
+      try { mapRef.current?.setRoute(latlngs); } catch (e) { console.warn('Failed to set route on map', e); }
+    } catch (e) {
+      console.error('onRouteGenerated failed', e);
+    }
+  }, []);
+
   const [query, setQuery] = useState({ field: '', text: '' });
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<number | null>(null);
   
   const searchNominatim = async (q: string) => {
     if (q.length < 3) return [];
     try {
-        const viewbox = "66.8,24.7,67.4,25.1";
-        const params = new URLSearchParams({ 
-            q, 
-            format: 'json', 
-            limit: '5', 
+        // Restrict search area by university bounds where possible to surface local results
+        // Karachi bounding box (lon/lat). We'll strictly filter results to this box
+        // to avoid showing out-of-city suggestions.
+        const KARACHI_VIEWBOX = { minLon: 66.8, minLat: 24.7, maxLon: 67.4, maxLat: 25.1 };
+        // Tight viewbox around NED University when the user is from NED
+        let viewbox = `${KARACHI_VIEWBOX.minLon},${KARACHI_VIEWBOX.minLat},${KARACHI_VIEWBOX.maxLon},${KARACHI_VIEWBOX.maxLat}`;
+        if (userData?.university === 'ned') {
+          viewbox = '67.00,24.84,67.06,24.88';
+        }
+        const params = new URLSearchParams({
+            q,
+            format: 'jsonv2',
+            limit: '8',
             countrycodes: 'pk',
             viewbox: viewbox,
             bounded: '1'
         });
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`);
-        if (!res.ok) return [];
-        return await res.json();
+        // Use server-side proxy for search to avoid client-side CORS/UA restrictions
+        const res = await fetch(`/api/nominatim/search?${params.toString()}`);
+        if (!res.ok) {
+            console.warn('Nominatim search proxy returned non-OK', { status: res.status });
+            return [];
+        }
+        const results = await res.json();
+        // Filter results to ensure they lie within Karachi box (fallback safety) so
+        // we never show results outside Karachi even if the proxy returns extras.
+        const filtered = (results || []).filter((p: any) => {
+            const lat = parseFloat(p.lat);
+            const lon = parseFloat(p.lon);
+            // If we're using the tight NED viewbox, use that box as bounds
+            if (userData?.university === 'ned') {
+              return lon >= 67.00 && lon <= 67.06 && lat >= 24.84 && lat <= 24.88;
+            }
+            return lon >= KARACHI_VIEWBOX.minLon && lon <= KARACHI_VIEWBOX.maxLon && lat >= KARACHI_VIEWBOX.minLat && lat <= KARACHI_VIEWBOX.maxLat;
+        });
+        return filtered;
     } catch (e) {
         console.error('Nominatim search failed', e);
         return [];
@@ -337,7 +628,8 @@ export default function CreateRidePage() {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     
     setSearchLoading(true);
-    searchTimeoutRef.current = setTimeout(async () => {
+    if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = window.setTimeout(async () => {
       const results = await searchNominatim(query.text);
       setSuggestions(results);
       setSearchLoading(false);
@@ -345,6 +637,39 @@ export default function CreateRidePage() {
 
     return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
   }, [query]);
+
+  // Recalculate pricing whenever transportMode, route distance/duration or departure time changes
+  useEffect(() => {
+    if (!distanceKm || !durationMin) {
+      setRecommendedPricePerSeat(null);
+      setFinalPricePerSeat(null);
+      setPricingBreakdown(null);
+      return;
+    }
+
+    try {
+      const pricing = calculatePricing({
+        transportType: transportMode === 'bike' ? 'bike' : 'car',
+        distanceKm: distanceKm || 0,
+        durationMinutes: durationMin || 0,
+        departureTime: departureTimeValue || null,
+      });
+
+      setRecommendedPricePerSeat(pricing.recommendedPerSeat);
+      setFinalPricePerSeat(pricing.finalPerSeat);
+      setPricingBreakdown(pricing.breakdown);
+      // Pre-fill form price with recommended if user hasn't already changed it from default
+      try {
+        const currentPrice = form.getValues('price');
+        // only overwrite if current price equals initial default (200) or empty
+        if (!currentPrice || Number(currentPrice) === 200) {
+          form.setValue('price', pricing.recommendedPerSeat);
+        }
+      } catch (_) {}
+    } catch (e) {
+      console.error('Pricing calculation failed', e);
+    }
+  }, [transportMode, distanceKm, durationMin, departureTimeValue]);
   
   const handleSelectSuggestion = (field: 'from' | 'to', place: any) => {
     const name = place.display_name;
@@ -363,17 +688,57 @@ export default function CreateRidePage() {
   };
   
   const onSubmit = async (values: z.infer<typeof rideSchema>) => {
-    if (!initialized || !user || !userData || !firestore) {
-      toast({ variant: "destructive", title: "Authentication Error", description: "Please wait a moment and try again. You must be logged in to create a ride." });
+    const missing: string[] = [];
+    if (!initialized) missing.push('auth not initialized');
+    if (!user) missing.push('not signed in');
+    if (!userData) missing.push('user profile missing');
+    if (!firestore) missing.push('firestore not initialized');
+    if (missing.length > 0) {
+      // Helpful debug info for development — use browser console to inspect values.
+      console.debug('Create ride blocked - missing:', { initialized, user, userData, firestore });
+      // If user profile is missing, send the user to a quick "Complete Profile" page to fill
+      // the required fields (university, full name, gender). This avoids repeated failures.
+      if (!userData && user) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot Create Ride',
+          description: 'Please complete your profile before creating a ride. Redirecting...',
+        });
+        router.push('/dashboard/complete-profile');
+        return;
+      }
+      toast({
+        variant: 'destructive',
+        title: 'Cannot Create Ride',
+        description: `Please wait a moment and try again. Missing: ${missing.join(', ')}.`,
+      });
       return;
     }
-     if (!mapRef.current) {
+
+    // At this point we've validated presence of user, userData, and firestore — create local non-null aliases
+    const uid = user!.uid;
+    const ud = userData!;
+    const db = firestore!;
+    if (!mapRef.current) {
       toast({ variant: "destructive", title: "Map Error", description: "Map component is not ready. Please wait a moment." });
       return;
     }
 
+    // Ensure the user's university is present — Firestore collection paths require valid strings.
+    if (userData && !userData.university) {
+      toast({ variant: 'destructive', title: 'Cannot Create Ride', description: 'Your profile is missing the university. Please complete your profile.' });
+      router.push('/dashboard/complete-profile');
+      return;
+    }
+
     setIsSubmitting(true);
-  
+
+    // Debugging: log key values that affect the submission flow
+    console.debug('Create ride submit started', { fromCoords, toCoords, userId: user?.uid, university: userData?.university });
+
+    // Reset abort marker — we'll use a timed wrapper around the Firestore write to detect hangs
+    submissionAbortedRef.current = false;
+
     const route = mapRef.current.getRoute();
     if (fromCoords && toCoords && route.length === 0 && process.env.NEXT_PUBLIC_ORS_API_KEY) {
         toast({ variant: "destructive", title: "Missing Route", description: "Could not calculate a route. Please wait for the route to appear on the map before creating the ride." });
@@ -382,44 +747,174 @@ export default function CreateRidePage() {
     }
 
     const rideData = {
-      driverId: user.uid,
+      driverId: uid,
+      createdBy: uid, // canonical
       from: values.from,
       to: values.to,
+      time: values.departureTime, // canonical
       departureTime: values.departureTime,
       transportMode: values.transportMode,
       price: values.price,
+      seats: values.totalSeats, // canonical
       totalSeats: values.totalSeats,
       availableSeats: values.totalSeats,
       genderAllowed: values.genderAllowed,
       status: 'active' as 'active',
+      // Keep legacy `route` (array of lat/lng) for compatibility, but store canonical encoded polyline and bounds
       route,
+      routePolyline: routePolyline || null,
+      routeBounds: routeBounds || null,
+      waypoints: routeWaypoints || null,
       createdAt: serverTimestamp(),
       driverInfo: {
-        fullName: userData.fullName,
-        gender: userData.gender,
+        fullName: ud.fullName,
+        gender: ud.gender,
+        ...(ud.contactNumber && { contactNumber: ud.contactNumber }),
+        ...(ud.transport && { transport: ud.transport }),
       },
       ...(distanceKm && { distanceKm }),
       ...(durationMin && { durationMin }),
+      ...(recommendedPricePerSeat && { recommendedPricePerSeat }),
+      ...(finalPricePerSeat && { finalPricePerSeat }),
+      ...(pricingBreakdown && { pricingBreakdown }),
     };
 
     try {
-      const ridesCollection = collection(firestore, 'universities', userData.university, 'rides');
-      await addDoc(ridesCollection, rideData);
-      
+      console.debug('Creating ride: writing to Firestore', { university: userData!.university, rideData });
+      const ridesCollection = collection(firestore!, 'universities', userData!.university, 'rides');
+
+      const writeStart = Date.now();
+
+      // Quick network check: if the browser reports offline, bail out early.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setIsSubmitting(false);
+        toast({ variant: 'destructive', title: 'No Connection', description: 'Your device appears to be offline. Please reconnect and try again.' });
+        return;
+      }
+
+      // SDK preflight: use Firestore SDK read of the current user doc to validate network/auth/rules.
+      if (!firestore || !user) {
+        console.warn('Firestore SDK preflight skipped due to missing firestore or user', { firestoreAvailable: !!firestore, uid: user?.uid });
+      } else {
+        try {
+          const preflightPromise = getDoc(doc(db, 'users', uid));
+          const res = await Promise.race([preflightPromise, new Promise((_, rej) => setTimeout(() => rej(new Error('preflight-timeout')), 5000))]);
+          // If getDoc resolves, the client can reach Firestore and auth is valid (though rules may still restrict the read)
+          if ((res as any)?.exists && (res as any).exists()) {
+            console.debug('Firestore SDK preflight OK (user doc exists)');
+          } else {
+            console.debug('Firestore SDK preflight OK (user doc read)');
+          }
+        } catch (err: any) {
+          console.warn('Firestore SDK preflight failed', err);
+          setIsSubmitting(false);
+
+          // Map common SDK errors to actionable messages
+          const code = err?.code || err?.status || '';
+          const message = err?.message || String(err);
+
+          if (message.includes('permission-denied') || code === 'permission-denied') {
+            toast({ variant: 'destructive', title: 'Permission Denied', description: 'Your account does not have permission to access Firestore. Check security rules and that you are signed in.' });
+          } else if (message === 'preflight-timeout') {
+            toast({ variant: 'destructive', title: 'Firestore Preflight Timeout', description: 'Request to Firestore did not respond within 5s. Check network/firewall.' });
+          } else {
+            toast({ variant: 'destructive', title: 'Could not reach Firestore', description: message });
+          }
+
+          return;
+        }
+      }
+
+      // Ensure user's ID token can be refreshed before attempting a write (helps catch auth/session issues)
+      try {
+        // Race token refresh against a short timeout so we don't stall longer than necessary
+        await Promise.race([user!.getIdToken(true), new Promise((_, rej) => setTimeout(() => rej(new Error('token-timeout')), 5000))]);
+        console.debug('ID token refresh successful before write', { uid: user?.uid });
+      } catch (err) {
+        console.warn('ID token refresh failed before write', err);
+        setIsSubmitting(false);
+        toast({ variant: 'destructive', title: 'Authentication Error', description: 'Unable to verify your session. Please sign out and sign in again.' });
+        return;
+      }
+
+      // Try the write with a simple retry strategy (2 attempts) and a 20s per-attempt timeout.
+      const addDocWithRetry = async (attempts = 2) => {
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+          // reset abort flag for each attempt
+          submissionAbortedRef.current = false;
+
+          const p = new Promise<any>(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+              submissionAbortedRef.current = true;
+              reject(new Error('write-timeout'));
+            }, 20000);
+
+            try {
+              const res = await addDoc(ridesCollection, rideData);
+              clearTimeout(timer);
+              resolve(res);
+            } catch (err) {
+              clearTimeout(timer);
+              reject(err);
+            }
+          });
+
+          try {
+            const res = await p;
+            return res;
+          } catch (err: any) {
+            console.warn('addDoc attempt failed', { attempt, error: err?.message || err, online: typeof navigator !== 'undefined' ? navigator.onLine : undefined, uid: user?.uid, university: userData?.university });
+            // If last attempt, rethrow
+            if (attempt === attempts) throw err;
+            // Otherwise, small backoff before retrying
+            await new Promise((r) => setTimeout(r, 500 * attempt));
+          }
+        }
+      };
+
+      try {
+        await addDocWithRetry(2);
+      } catch (err: any) {
+        // Re-throw to be handled by outer catch
+        throw err;
+      }
+
+      if (submissionAbortedRef.current) {
+        const offline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
+        console.warn('Create ride write completed after timeout — ignoring result', { offline });
+        return;
+      }
+
+      console.debug('Ride created successfully', { durationMs: Date.now() - writeStart });
       toast({ title: 'Success!', description: 'Your ride has been created.' });
       router.push('/dashboard/my-rides');
     } catch (e: any) {
         console.error("Error creating ride:", e);
-        // This is a placeholder for the specialized error handling.
-        // In a real scenario, this would be a FirestorePermissionError.
-        const permissionError = new FirestorePermissionError({
-            path: `universities/${userData.university}/rides`,
-            operation: 'create',
-            requestResourceData: rideData
-        });
-        errorEmitter.emit('permission-error', permissionError);
-        // We no longer show a generic toast here. The FirebaseErrorListener will handle it.
+        // Ensure we clear the submitting state BEFORE doing anything that could throw or crash the page
+        setIsSubmitting(false);
+
+        if (e?.message === 'write-timeout') {
+          toast({ variant: 'destructive', title: 'Timed out', description: 'Creating ride is taking too long. Please check your connection and try again.' });
+          return;
+        }
+
+        // Show a helpful toast for the user immediately
+        toast({ variant: 'destructive', title: 'Could not create ride', description: e?.message || 'An error occurred while creating the ride.' });
+
+        // Emit the permission error for developer visibility, but do it asynchronously so the UI can update first
+        try {
+          const permissionError = new FirestorePermissionError({
+              path: `universities/${ud.university}/rides`,
+              operation: 'create',
+              requestResourceData: rideData
+          });
+          setTimeout(() => errorEmitter.emit('permission-error', permissionError), 50);
+        } catch (emitErr) {
+          console.error('Failed to emit permission-error:', emitErr);
+        }
+        return; // we've already cleaned up
     } finally {
+      // Defensive: ensure submitting is cleared if it hasn't been already
       setIsSubmitting(false);
     }
   };
@@ -427,17 +922,28 @@ export default function CreateRidePage() {
   const renderSuggestionsFor = (field: 'from' | 'to') => {
     if (query.field !== field || suggestions.length === 0) return null;
     return (
-        <div className="absolute left-0 right-0 top-full bg-popover border rounded-md mt-1 z-50 max-h-60 overflow-auto">
-            {suggestions.map((s) => (
-                <div key={s.place_id} className="p-2 hover:bg-muted cursor-pointer" onMouseDown={() => handleSelectSuggestion(field, s)}>
-                    <p className="text-sm">{s.display_name}</p>
-                </div>
+      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-popover border rounded-md mt-1 z-[10050] max-h-60 overflow-auto shadow-lg">
+        <div className="px-3 py-2 text-xs text-muted-foreground border-b">Suggestions</div>
+            {suggestions.map((s, idx) => (
+                <button
+                  key={s.place_id || `${s.lat}-${s.lon}-${idx}`}
+                  role="option"
+                  aria-selected={false}
+                  className="w-full text-left flex flex-col p-3 hover:bg-muted cursor-pointer"
+                  onMouseDown={() => handleSelectSuggestion(field, s)}
+                >
+                    <div className="text-sm font-medium truncate">{s.display_name}</div>
+                    {s.type && <div className="text-xs text-muted-foreground truncate">{s.type}</div>}
+                </button>
             ))}
-        </div>
+        {suggestions.length === 0 && (
+          <div className="p-3 text-sm text-muted-foreground">No nearby results. Try a different query.</div>
+        )}
+      </div>
     );
   };
   
-  const isButtonDisabled = userLoading || isSubmitting;
+  const isButtonDisabled = userLoading || isSubmitting || !routePolyline;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -446,40 +952,61 @@ export default function CreateRidePage() {
           <CardTitle className="font-headline text-3xl">Offer a New Ride</CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="mb-4">
+            <label className="text-sm font-medium mb-2 block">Trip Type (required)</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" aria-pressed={uniAuto === 'toUni'} onClick={() => applyUniversitySelection('toUni')} className={`rounded-md border p-3 text-left transition focus:outline-none ${uniAuto === 'toUni' ? 'bg-primary text-primary-foreground border-primary' : 'bg-card'}`}>
+                <div className="font-medium">Going to university</div>
+                <div className="text-xs text-muted-foreground mt-1">Set destination to {userData?.university === 'ned' ? 'NED University' : 'FAST University'}</div>
+              </button>
+              <button type="button" aria-pressed={uniAuto === 'fromUni'} onClick={() => applyUniversitySelection('fromUni')} className={`rounded-md border p-3 text-left transition focus:outline-none ${uniAuto === 'fromUni' ? 'bg-primary text-primary-foreground border-primary' : 'bg-card'}`}>
+                <div className="font-medium">Leaving from university</div>
+                <div className="text-xs text-muted-foreground mt-1">Set start point to {userData?.university === 'ned' ? 'NED University' : 'FAST University'}</div>
+              </button>
+            </div>
+          </div>
+
+          {/* Ensure the default selection is applied on mount */}
+          <script>
+            { /* noop - keep TS happy; real effect below */ }
+          </script>
+          
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8">
-                <FormField control={form.control} name="from" render={({ field }) => (
+                <FormField control={form.control} name="from" render={({ field }: any) => (
                     <FormItem className="relative">
                         <FormLabel>From</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Search for starting point" {...field} onChange={(e) => { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
-                              {searchLoading && query.field === 'from' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
+                              <Input placeholder="Search for starting point" {...field} readOnly={uniAuto === 'fromUni'} className={uniAuto === 'fromUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              {searchLoading && query.field === 'from' && uniAuto !== 'fromUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
+                              {uniAuto === 'fromUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
                         </FormControl>
-                        <Button type="button" variant="link" size="sm" className="p-0 h-auto absolute right-1 -bottom-6 text-accent" onClick={() => handleChooseOnMap('from')}>
+                        <Button type="button" variant="link" size="sm" className={`p-0 h-auto absolute right-1 -bottom-6 ${uniAuto === 'fromUni' ? 'opacity-50 pointer-events-none' : 'text-accent'}`} onClick={() => handleChooseOnMap('from')} disabled={uniAuto === 'fromUni'}>
                           <MapPin className="w-3 h-3 mr-1" /> Choose on map
                         </Button>
-                        {renderSuggestionsFor('from')}
+                        {uniAuto !== 'fromUni' && renderSuggestionsFor('from')}
                         <FormMessage />
                     </FormItem>
                 )}/>
 
-                <FormField control={form.control} name="to" render={({ field }) => (
+                <FormField control={form.control} name="to" render={({ field }: any) => (
                     <FormItem className="relative">
                         <FormLabel>To</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Search for destination" {...field} onChange={(e) => { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
-                              {searchLoading && query.field === 'to' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
+                              <Input placeholder="Search for destination" {...field} readOnly={uniAuto === 'toUni'} className={uniAuto === 'toUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              {searchLoading && query.field === 'to' && uniAuto !== 'toUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
+                              {uniAuto === 'toUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
                         </FormControl>
-                        <Button type="button" variant="link" size="sm" className="p-0 h-auto absolute right-1 -bottom-6 text-accent" onClick={() => handleChooseOnMap('to')}>
+                        <Button type="button" variant="link" size="sm" className={`p-0 h-auto absolute right-1 -bottom-6 ${uniAuto === 'toUni' ? 'opacity-50 pointer-events-none' : 'text-accent'}`} onClick={() => handleChooseOnMap('to')} disabled={uniAuto === 'toUni'}>
                           <MapPin className="w-3 h-3 mr-1" /> Choose on map
                         </Button>
-                        {renderSuggestionsFor('to')}
+                        {uniAuto !== 'toUni' && renderSuggestionsFor('to')}
                         <FormMessage />
                     </FormItem>
                 )}/>
@@ -490,10 +1017,23 @@ export default function CreateRidePage() {
                     ref={mapRef} 
                     onMapClick={() => {}}
                     onRouteUpdate={handleRouteUpdate}
+                    onRouteError={(err) => {
+                      const msg = err?.message || 'Could not fetch route. Please try again.';
+                      const isORSDown = /ORS proxy error|Status: 500|500/.test(msg);
+                      const isNoRoute = /No routable path found|No route found/i.test(msg);
+                      if (isORSDown) {
+                        toast({ variant: 'destructive', title: 'Route Service Unavailable', description: `${msg}. Check NEXT_PUBLIC_ORS_API_KEY or try again later.` });
+                      } else if (isNoRoute) {
+                        toast({ variant: 'destructive', title: 'No Route Found', description: 'Could not find a routable path between those locations. Try different points or adjust the route.' });
+                      } else {
+                        toast({ variant: 'destructive', title: 'Route Error', description: msg });
+                      }
+                    }}
                     from={fromCoords}
                     to={toCoords}
                     activeMapSelect={activeMapSelect}
                   />
+
                   {activeMapSelect && (
                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full z-[1000] pointer-events-none">
                          <MapPin className="h-10 w-10 text-primary drop-shadow-lg"/>
@@ -507,7 +1047,36 @@ export default function CreateRidePage() {
                       </div>
                   )}
               </div>
-              
+
+              <div className="mb-4 z-50">
+                <FormField
+                  control={form.control}
+                  name="departureTime"
+                  render={({ field }: any) => (
+                    <FormItem>
+                      <FormLabel>Leaving Time</FormLabel>
+                      <FormControl>
+                        <LeavingTimePicker
+                          selected={field.value}
+                          onChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Route editor: add/reorder/remove waypoints and generate final polyline */}
+              <div className="mb-6">
+                <RouteEditor origin={fromCoords || null} destination={toCoords || null} onRouteGenerated={onRouteGenerated} />
+                {routePolyline ? (
+                  <div className="mt-2 text-xs text-muted-foreground">Route generated and ready. Bounds: {routeBounds ? `${routeBounds.minLat.toFixed(4)},${routeBounds.minLng.toFixed(4)} → ${routeBounds.maxLat.toFixed(4)},${routeBounds.maxLng.toFixed(4)}` : 'n/a'}</div>
+                ) : (
+                  <div className="mt-2 text-xs text-muted-foreground">No generated route yet. Add waypoints or ensure start/end are selected.</div>
+                )}
+              </div>
+
               {distanceKm != null && durationMin != null && (
                   <div className="text-sm text-center p-2 bg-secondary rounded-md text-secondary-foreground">
                       Estimated distance: <strong>{distanceKm} km</strong> &bull; Estimated duration: <strong>{durationMin} min</strong>
@@ -521,25 +1090,9 @@ export default function CreateRidePage() {
               )}
 
 
-              <FormField
-                control={form.control}
-                name="departureTime"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Leaving Time</FormLabel>
-                    <FormControl>
-                      <LeavingTimePicker
-                        selected={field.value}
-                        onChange={field.onChange}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField control={form.control} name="transportMode" render={({ field }) => (
+                <FormField control={form.control} name="transportMode" render={({ field }: any) => (
                     <FormItem>
                     <FormLabel>Transport Mode</FormLabel>
                     <Select onValueChange={field.onChange} defaultValue={field.value}>
@@ -553,17 +1106,65 @@ export default function CreateRidePage() {
                     </FormItem>
                 )}/>
 
-                <FormField control={form.control} name="price" render={({ field }) => (
-                    <FormItem>
-                    <FormLabel>Price per Seat (PKR)</FormLabel>
-                    <FormControl><Input type="number" min="1" {...field} /></FormControl>
-                    <FormMessage />
-                    </FormItem>
-                )}/>
+                <FormField control={form.control} name="price" render={({ field }: any) => {
+                    const recommended = recommendedPricePerSeat;
+                    const bounds = recommended ? clampAdjustedPrice(recommended, recommended) : { min: 1, max: 10000, clamped: Number(field.value) };
+                    return (
+                      <FormItem>
+                        <FormLabel>Price per Seat (PKR)</FormLabel>
+
+                        {recommended != null && (
+                          <div className="mb-2 text-sm">
+                            <div>Recommended Price (Auto-calculated): <strong>PKR {recommended}</strong></div>
+                            <div className="text-xs text-muted-foreground">Based on distance {distanceKm ?? '—'} km • duration {durationMin ?? '—'} min</div>
+                          </div>
+                        )}
+
+                        <FormControl>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={bounds.min}
+                              max={bounds.max}
+                              step={1}
+                              value={Number(field.value || bounds.clamped)}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                const { clamped } = clampAdjustedPrice(recommended ?? v, v);
+                                field.onChange(clamped);
+                                setFinalPricePerSeat(clamped);
+                              }}
+                              className="flex-1"
+                            />
+
+                            <Input
+                              type="number"
+                              min={bounds.min}
+                              max={bounds.max}
+                              step="0.5"
+                              {...field}
+                              onChange={(e) => {
+                                const v = Number(e.target.value || 0);
+                                const { clamped } = clampAdjustedPrice(recommended ?? v, v);
+                                field.onChange(clamped);
+                                setFinalPricePerSeat(clamped);
+                              }}
+                            />
+                          </div>
+                        </FormControl>
+
+                        {recommended != null && (
+                          <div className="text-xs text-muted-foreground mt-2">Minimum allowed: PKR {bounds.min} • Maximum allowed: PKR {bounds.max}</div>
+                        )}
+
+                        <FormMessage />
+                      </FormItem>
+                    );
+                }}/>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField control={form.control} name="totalSeats" render={({ field }) => (
+                  <FormField control={form.control} name="totalSeats" render={({ field }: any) => (
                       <FormItem>
                       <FormLabel>Total Seats</FormLabel>
                       <FormControl><Input type="number" min="1" {...field} /></FormControl>
@@ -571,7 +1172,7 @@ export default function CreateRidePage() {
                       </FormItem>
                   )}/>
 
-                  <FormField control={form.control} name="genderAllowed" render={({ field }) => (
+                  <FormField control={form.control} name="genderAllowed" render={({ field }: any) => (
                       <FormItem>
                       <FormLabel>Gender Allowed</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>

@@ -6,6 +6,8 @@ export interface UserProfile {
   fullName: string;
   university: 'ned' | 'fast';
   gender: 'male' | 'female';
+  contactNumber?: string;
+  transport?: 'car' | 'bike';
   createdAt: Timestamp;
 }
 
@@ -26,6 +28,8 @@ export interface Ride {
   driverInfo: {
     fullName: string;
     gender: 'male' | 'female';
+    contactNumber?: string;
+    transport?: 'car' | 'bike';
   };
 }
 
@@ -38,6 +42,7 @@ export interface Booking {
   createdAt: Timestamp;
   ride?: Ride; // Denormalized data for easier access
   passengerDetails?: UserProfile;
+  driverDetails?: UserProfile;
   pickupPoint?: { lat: number, lng: number };
 }
 

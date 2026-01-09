@@ -1,19 +1,53 @@
 // src/firebase/init.ts
-import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getApps, initializeApp } from 'firebase/app';
+import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
-let firebaseApp: FirebaseApp | undefined;
-let auth: Auth | undefined;
-let firestore: Firestore | undefined;
+let firebaseApp: ReturnType<typeof initializeApp> | undefined;
+let auth: ReturnType<typeof getAuth> | undefined;
+let firestore: ReturnType<typeof getFirestore> | undefined;
 
-function initializeFirebase() {
-  if (typeof window !== 'undefined' && !getApps().length) {
-    firebaseApp = initializeApp(firebaseConfig);
-    auth = getAuth(firebaseApp);
-    firestore = getFirestore(firebaseApp);
+function initializeFirebase(): { firebaseApp?: ReturnType<typeof initializeApp>; auth?: ReturnType<typeof getAuth>; firestore?: ReturnType<typeof getFirestore> } {
+  if (typeof window === 'undefined') {
+    return { firebaseApp, auth, firestore };
   }
+
+  const apps = getApps();
+  // If no app is present, initialize a new one. Otherwise reuse the first app.
+  if (!apps.length && !firebaseApp) {
+    const app = initializeApp(firebaseConfig);
+    const a = getAuth(app);
+    // Ensure auth persistence is explicitly set to local so sessions survive page reloads.
+    setPersistence(a, browserLocalPersistence).catch((e) => {
+      // Non-fatal, but helpful to see in console during development.
+      console.warn('Failed to set Firebase auth persistence:', e);
+    });
+    const fs = getFirestore(app);
+
+    // assign to module-level variables after local initialization to keep types narrow
+    firebaseApp = app;
+    auth = a;
+    firestore = fs;
+  } else {
+    // Reuse existing app instance if available.
+    const app = apps[0] ?? firebaseApp;
+    if (app && !firebaseApp) firebaseApp = app;
+    if (firebaseApp && !auth) auth = getAuth(firebaseApp as any);
+    if (firebaseApp && !firestore) firestore = getFirestore(firebaseApp as any);
+  }
+  // In development only, expose these instances to `window` for easy debugging in the browser console.
+  if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).firebaseApp = firebaseApp;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).firebaseAuth = auth;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).firebaseFirestore = firestore;
+  }
+
+  console.debug('Firebase initialized:', { app: firebaseApp, authAvailable: !!auth, firestoreAvailable: !!firestore });
+
   return { firebaseApp, auth, firestore };
 }
 

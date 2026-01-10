@@ -1,14 +1,14 @@
 // src/firebase/auth/use-user.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 
 import { useAuth, useFirestore } from '../provider';
 import { useDoc } from '../firestore/use-doc';
 import { UserProfile } from '@/lib/types';
-import { getMessaging, getToken } from 'firebase/messaging';
+import { getMessaging, getToken, deleteToken } from 'firebase/messaging';
 
 
 export function useUser() {
@@ -24,6 +24,8 @@ export function useUser() {
       setInitialized(true); // Mark as initialized even if auth is not available
       return;
     }
+    const prevUidRef = { current: null as string | null };
+
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       console.debug('onAuthStateChanged:', { user: u, currentUser: auth.currentUser });
       setUser(u);
@@ -63,24 +65,7 @@ export function useUser() {
                   setDoc(uniUserRef, profile)
                 ]);
                 console.debug('Created missing users document for', u.uid, 'and mirrored to', `universities/${finalUniversity}/users/${u.uid}`);
-                // Try to register FCM token for this user (if browser supports it)
-                try {
-                  if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY) {
-                    try {
-                      const messaging = getMessaging();
-                      const token = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
-                      if (token) {
-                        // store token under users/{uid}/fcmTokens/{token}
-                        await setDoc(doc(firestore, 'users', u.uid, 'fcmTokens', token), { token, createdAt: serverTimestamp() });
-                        console.debug('Saved FCM token for user', u.uid);
-                      }
-                    } catch (e) {
-                      console.debug('FCM registration failed (non-fatal):', e);
-                    }
-                  }
-                } catch (e) {
-                  console.debug('Failed to save fcm token:', e);
-                }
+                // Note: token registration moved to global sign-in handling below.
               } catch (err) {
                 console.warn('Failed to create users/{uid} document or mirror to universities/{univ}/users/{uid}:', err);
               } finally {
@@ -97,6 +82,56 @@ export function useUser() {
         } catch (err) {
           console.warn('Failed to ensure users/{uid} document exists:', err);
         }
+
+      // Register FCM token for signed-in users (and remove on sign-out)
+      try {
+        if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY) {
+          const messaging = getMessaging();
+
+          if (u) {
+            try {
+              if ('Notification' in window) {
+                const perm = await Notification.requestPermission();
+                if (perm !== 'granted') {
+                  console.debug('Notification permission not granted');
+                }
+              }
+
+              const token = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
+              if (token) {
+                await setDoc(doc(firestore, 'users', u.uid, 'fcmTokens', token), { token, createdAt: serverTimestamp() });
+                prevUidRef.current = u.uid;
+                console.debug('Saved FCM token for user', u.uid);
+              }
+            } catch (e) {
+              console.debug('FCM registration failed (non-fatal):', e);
+            }
+          } else {
+            // user signed out - try to remove token doc for previous user
+            try {
+              const prevUid = prevUidRef.current;
+              if (prevUid) {
+                // Attempt to obtain current token from the browser and delete both the token and its doc
+                try {
+                  const currentToken = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
+                  if (currentToken) {
+                    // remove doc at users/{prevUid}/fcmTokens/{token}
+                    await deleteDoc(doc(firestore, 'users', prevUid, 'fcmTokens', currentToken));
+                    try { await deleteToken(messaging); } catch (e) { /* ignore */ }
+                    console.debug('Removed FCM token for previous user', prevUid);
+                  }
+                } catch (e) {
+                  console.debug('Failed to remove FCM token on sign-out (non-fatal):', e);
+                }
+              }
+            } catch (e) {
+              console.debug('Error during FCM cleanup on sign-out:', e);
+            }
+          }
+        }
+      } catch (e) {
+        console.debug('FCM token flow encountered an error:', e);
+      }
       }
 
       setLoading(false);

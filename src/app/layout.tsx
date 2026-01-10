@@ -5,7 +5,7 @@ import { FirebaseClientProvider } from '@/firebase/client-provider';
 import 'leaflet/dist/leaflet.css'; // CRITICAL: Import Leaflet CSS for markers, popups, and controls to render correctly.
 
 export const metadata: Metadata = {
-  title: 'Campus Cruiser',
+  title: 'Campus Ride',
   description: 'University carpooling, simplified.',
 };
 

@@ -42,6 +42,366 @@ export const expireRides = functions.pubsub
     return null;
   });
 
+  /**
+   * Notification helpers + triggers
+   */
+
+  // Helper: get FCM tokens for a user
+  async function getUserTokens(uid: string) {
+    const tokens: { id: string; token: string }[] = [];
+    const snap = await db.collection(`users/${uid}/fcmTokens`).get();
+    snap.forEach((d) => {
+      const data = d.data() as any;
+      if (data && data.token) tokens.push({ id: d.id, token: data.token as string });
+    });
+    return tokens;
+  }
+
+  // Helper: remove a token doc
+  async function removeToken(uid: string, tokenDocId: string) {
+    try {
+      await db.doc(`users/${uid}/fcmTokens/${tokenDocId}`).delete();
+    } catch (e) {
+      console.warn('Failed removing token doc', tokenDocId, e);
+    }
+  }
+
+  // Helper: create notification doc and send FCM
+  async function createAndSendNotification(targetUid: string, payload: { title: string; body: string; data?: any }, opts?: { excludeSender?: string; throttleKey?: string; throttleSeconds?: number }) {
+    if (!targetUid) return;
+
+    // Throttle support stored per-user
+    if (opts?.throttleKey && opts?.throttleSeconds) {
+      const throttleRef = db.doc(`users/${targetUid}/notificationThrottles/${opts.throttleKey}`);
+      await db.runTransaction(async (tx) => {
+        const tSnap = await tx.get(throttleRef);
+        const now = admin.firestore.Timestamp.now();
+        if (tSnap.exists) {
+          const last = tSnap.data()?.lastSent as admin.firestore.Timestamp | undefined;
+          if (last && (now.toMillis() - last.toMillis()) < opts.throttleSeconds! * 1000) {
+            // skip sending due to throttle
+            return;
+          }
+        }
+        tx.set(throttleRef, { lastSent: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      });
+    }
+
+    // create notification in central collection
+    try {
+      await db.collection('notifications').add({
+        userId: targetUid,
+        title: payload.title,
+        body: payload.body,
+        type: payload.data?.type || 'general',
+        relatedId: payload.data?.relatedId || payload.data?.bookingId || payload.data?.rideId || null,
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error('Failed to write notification doc', e);
+    }
+
+    // send FCM
+    const tokens = await getUserTokens(targetUid);
+    if (!tokens || tokens.length === 0) return;
+
+    const fcmTokens = tokens.map(t => t.token);
+    // exclude sender's tokens if requested
+    let finalTokens = fcmTokens;
+    if (opts?.excludeSender) {
+      // If sender specified, remove any tokens that belong to that sender (best-effort)
+      // We assume sender tokens are in their own users/{sender}/fcmTokens, so only relevant if same uid
+      if (opts.excludeSender === targetUid) finalTokens = [];
+    }
+
+    if (finalTokens.length === 0) return;
+
+    const message: admin.messaging.MulticastMessage = {
+      tokens: finalTokens,
+      notification: { title: payload.title, body: payload.body },
+      data: payload.data || {},
+    };
+
+    try {
+      const resp = await admin.messaging().sendMulticast(message);
+      // cleanup invalid tokens
+      resp.responses.forEach((r, idx) => {
+        if (!r.success) {
+          const err = r.error;
+          const tokenDoc = tokens[idx];
+          if (err && (err.code === 'messaging/registration-token-not-registered' || err.code === 'messaging/invalid-registration-token')) {
+            removeToken(targetUid, tokenDoc.id);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('FCM send error', err);
+    }
+  }
+
+  // Helper: send to multiple users
+  async function notifyUsers(uids: string[], payload: { title: string; body: string; data?: any }, opts?: { excludeSender?: string; throttleKey?: string; throttleSeconds?: number }) {
+    const promises: Promise<any>[] = [];
+    const uniq = Array.from(new Set(uids.filter(Boolean)));
+    for (const uid of uniq) {
+      if (opts?.excludeSender && uid === opts.excludeSender) continue;
+      promises.push(createAndSendNotification(uid, payload, opts));
+    }
+    await Promise.all(promises);
+  }
+
+  /**
+   * Booking request created under ride requests -> notify ride owner
+   */
+  export const notifyOnBookingRequest = functions.firestore
+    .document('universities/{univ}/rides/{rideId}/requests/{requestId}')
+    .onCreate(async (snap, ctx) => {
+      const data = snap.data() as any;
+      const univ = ctx.params.univ as string;
+      const rideId = ctx.params.rideId as string;
+      try {
+        const rideRef = db.doc(`universities/${univ}/rides/${rideId}`);
+        const rideSnap = await rideRef.get();
+        if (!rideSnap.exists) return null;
+        const ride = rideSnap.data() as any;
+        const driverId = ride.driverId as string | undefined;
+        const requester = data?.passengerId as string | undefined;
+        if (!driverId || driverId === requester) return null;
+
+        await createAndSendNotification(driverId, {
+          title: 'New Booking Request 🚗',
+          body: 'A student requested to join your ride',
+          data: { type: 'booking', bookingId: snap.id, rideId }
+        }, { excludeSender: requester });
+      } catch (err) {
+        console.error('notifyOnBookingRequest error', err);
+      }
+      return null;
+    });
+
+  /**
+   * Booking created/updated -> notify passenger about acceptance/rejection
+   */
+  export const notifyOnBookingCreate = functions.firestore
+    .document('universities/{univ}/bookings/{bookingId}')
+    .onCreate(async (snap, ctx) => {
+      const data = snap.data() as any;
+      const univ = ctx.params.univ as string;
+      try {
+        const passenger = data?.passengerId as string | undefined;
+        const driverId = data?.driverId as string | undefined;
+        if (passenger) {
+          await createAndSendNotification(passenger, {
+            title: 'Booking Accepted ✅',
+            body: 'Your booking has been accepted',
+            data: { type: 'booking', bookingId: snap.id, rideId: data?.rideId }
+          }, { excludeSender: driverId });
+        }
+        // also notify driver that booking was created (optional)
+        if (driverId) {
+          await createAndSendNotification(driverId, {
+            title: 'Booking Confirmed',
+            body: 'A seat has been booked on your ride',
+            data: { type: 'booking', bookingId: snap.id, rideId: data?.rideId }
+          }, { excludeSender: passenger });
+        }
+      } catch (err) {
+        console.error('notifyOnBookingCreate error', err);
+      }
+      return null;
+    });
+
+  export const notifyOnBookingUpdate = functions.firestore
+    .document('universities/{univ}/bookings/{bookingId}')
+    .onUpdate(async (change, ctx) => {
+      const before = change.before.data() as any;
+      const after = change.after.data() as any;
+      if (!before || !after) return null;
+      try {
+        if (before.status !== after.status) {
+          const passenger = after.passengerId as string | undefined;
+          const driver = after.driverId as string | undefined;
+          if (after.status === 'accepted' && passenger) {
+            await createAndSendNotification(passenger, {
+              title: 'Booking Accepted ✅',
+              body: 'Your booking request was accepted',
+              data: { type: 'booking', bookingId: ctx.params.bookingId, rideId: after.rideId }
+            }, { excludeSender: driver });
+          } else if (after.status === 'rejected' && passenger) {
+            await createAndSendNotification(passenger, {
+              title: 'Booking Rejected ❌',
+              body: 'Your booking request was rejected',
+              data: { type: 'booking', bookingId: ctx.params.bookingId, rideId: after.rideId }
+            }, { excludeSender: driver });
+          }
+        }
+      } catch (err) {
+        console.error('notifyOnBookingUpdate error', err);
+      }
+      return null;
+    });
+
+  /**
+   * Ride updates: cancelled, completed, availableSeats changes -> notify passengers
+   */
+  export const notifyOnRideUpdate = functions.firestore
+    .document('universities/{univ}/rides/{rideId}')
+    .onUpdate(async (change, ctx) => {
+      const before = change.before.data() as any;
+      const after = change.after.data() as any;
+      if (!after) return null;
+      const univ = ctx.params.univ as string;
+      const rideId = ctx.params.rideId as string;
+      try {
+        // status changes
+        if (before.status !== after.status) {
+          if (after.status === 'cancelled' || after.status === 'completed' || after.status === 'expired') {
+            // notify all accepted passengers
+            const bookingsSnap = await db.collection(`universities/${univ}/bookings`).where('rideId', '==', rideId).where('status', '==', 'accepted').get();
+            const uids: string[] = [];
+            bookingsSnap.forEach(b => { const d = b.data() as any; if (d?.passengerId) uids.push(d.passengerId); });
+            const title = after.status === 'cancelled' ? 'Ride Cancelled' : 'Ride Completed';
+            const body = after.status === 'cancelled' ? 'A ride you were booked on was cancelled' : 'Your ride has been marked completed';
+            await notifyUsers(uids, { title, body, data: { type: 'ride', rideId } });
+          }
+        }
+
+        // available seats change
+        if (before.availableSeats !== after.availableSeats) {
+          // notify driver about seats change and accepted passengers
+          const driver = after.driverId as string | undefined;
+          const bookingsSnap = await db.collection(`universities/${univ}/bookings`).where('rideId', '==', rideId).where('status', '==', 'accepted').get();
+          const passengers: string[] = [];
+          bookingsSnap.forEach(b => { const d = b.data() as any; if (d?.passengerId) passengers.push(d.passengerId); });
+          const title = 'Seat availability updated';
+          const body = `Available seats: ${after.availableSeats}`;
+          if (driver) await createAndSendNotification(driver, { title, body, data: { type: 'ride', rideId } });
+          if (passengers.length > 0) await notifyUsers(passengers, { title, body, data: { type: 'ride', rideId } });
+        }
+      } catch (err) {
+        console.error('notifyOnRideUpdate error', err);
+      }
+      return null;
+    });
+
+  /**
+   * Chat created -> notify participants (exclude creator)
+   */
+  export const notifyOnChatCreate = functions.firestore
+    .document('universities/{univ}/chats/{chatId}')
+    .onCreate(async (snap, ctx) => {
+      const data = snap.data() as any;
+      const participants: string[] = Array.isArray(data?.participants) ? data.participants : [];
+      const creator = data?.createdBy as string | undefined;
+      try {
+        if (participants.length === 0 && data?.bookingId) {
+          // fallback: read booking to notify driver/passenger
+          const bSnap = await db.doc(`universities/${ctx.params.univ}/bookings/${data.bookingId}`).get();
+          if (bSnap.exists) {
+            const b = bSnap.data() as any;
+            if (b?.driverId) participants.push(b.driverId);
+            if (b?.passengerId) participants.push(b.passengerId);
+          }
+        }
+        await notifyUsers(participants, {
+          title: 'New Chat Created',
+          body: 'A chat was created for your booking',
+          data: { type: 'chat', chatId: snap.id, bookingId: data?.bookingId }
+        }, { excludeSender: creator });
+      } catch (err) {
+        console.error('notifyOnChatCreate error', err);
+      }
+      return null;
+    });
+
+  /**
+   * New chat message -> notify other participants with throttling
+   */
+  export const notifyOnMessageCreate = functions.firestore
+    .document('universities/{univ}/chats/{chatId}/messages/{msgId}')
+    .onCreate(async (snap, ctx) => {
+      const data = snap.data() as any;
+      const univ = ctx.params.univ as string;
+      const chatId = ctx.params.chatId as string;
+      const sender = data?.senderId as string | undefined;
+      try {
+        const chatRef = db.doc(`universities/${univ}/chats/${chatId}`);
+        const chatSnap = await chatRef.get();
+        if (!chatSnap.exists) return null;
+        const chat = chatSnap.data() as any;
+        let participants: string[] = Array.isArray(chat?.participants) ? chat.participants : [];
+        if (participants.length === 0 && chat?.bookingId) {
+          const bSnap = await db.doc(`universities/${univ}/bookings/${chat.bookingId}`).get();
+          if (bSnap.exists) {
+            const b = bSnap.data() as any;
+            if (b?.driverId) participants.push(b.driverId);
+            if (b?.passengerId) participants.push(b.passengerId);
+          }
+        }
+
+        const others = participants.filter((p: string) => p && p !== sender);
+        if (others.length === 0) return null;
+
+        const isMedia = data?.type === 'image' || data?.type === 'video' || !!data?.mediaUrl;
+        const title = isMedia ? 'New media message' : 'New message';
+        const body = isMedia ? 'Sent a photo or video' : (data?.content || 'Sent a new message');
+
+        // Notify each recipient with chat throttle (10s)
+        for (const uid of Array.from(new Set(others))) {
+          await createAndSendNotification(uid, { title, body, data: { type: 'chat', chatId, messageId: snap.id } }, { excludeSender: sender, throttleKey: 'chat', throttleSeconds: 10 });
+        }
+      } catch (err) {
+        console.error('notifyOnMessageCreate error', err);
+      }
+      return null;
+    });
+
+  /**
+   * Scheduled reminders: notify users 30 and 10 minutes before ride departure
+   */
+  export const rideReminders = functions.pubsub
+    .schedule('every 1 minutes')
+    .onRun(async () => {
+      const now = admin.firestore.Timestamp.now();
+      const in30 = admin.firestore.Timestamp.fromMillis(now.toMillis() + 30 * 60 * 1000);
+      const in10 = admin.firestore.Timestamp.fromMillis(now.toMillis() + 10 * 60 * 1000);
+
+      // Helper to query rides within +/- 60s window around target
+      async function notifyWindow(targetTs: admin.firestore.Timestamp, label: string) {
+        const start = admin.firestore.Timestamp.fromMillis(targetTs.toMillis() - 60 * 1000);
+        const end = admin.firestore.Timestamp.fromMillis(targetTs.toMillis() + 60 * 1000);
+        const ridesSnap = await db.collectionGroup('rides').where('departureTime', '>=', start).where('departureTime', '<=', end).get();
+        for (const r of ridesSnap.docs) {
+          const ride = r.data() as any;
+          const ridePath = r.ref.path; // universities/{univ}/rides/{rideId}
+          // extract university and rideId from path
+          const parts = ridePath.split('/');
+          const univ = parts[1];
+          const rideId = parts[3];
+
+          // notify driver and accepted passengers
+          const driver = ride.driverId as string | undefined;
+          const bookingsSnap = await db.collection(`universities/${univ}/bookings`).where('rideId', '==', rideId).where('status', '==', 'accepted').get();
+          const passengers: string[] = [];
+          bookingsSnap.forEach(b => { const d = b.data() as any; if (d?.passengerId) passengers.push(d.passengerId); });
+
+          const title = `Ride starting ${label}`;
+          const body = `Your ride departs in ${label}. Please prepare to depart.`;
+          if (driver) await createAndSendNotification(driver, { title, body, data: { type: 'reminder', rideId } });
+          if (passengers.length > 0) await notifyUsers(passengers, { title, body, data: { type: 'reminder', rideId } });
+        }
+      }
+
+      try {
+        await notifyWindow(in30, '30 minutes');
+        await notifyWindow(in10, '10 minutes');
+      } catch (err) {
+        console.error('rideReminders error', err);
+      }
+      return null;
+    });
+
 /**
  * Firestore trigger: when a ride's status becomes 'completed' or 'cancelled',
  * delete related chat rooms and their messages to keep chats temporary.

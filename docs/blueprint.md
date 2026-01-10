@@ -1,4 +1,4 @@
-# **App Name**: Campus Cruiser
+# **App Name**: Campus Ride
 
 ## Core Features:
 

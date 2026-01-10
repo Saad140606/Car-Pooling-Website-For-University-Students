@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { initializeFirebase } from './init';
 import { FirebaseErrorListener } from '@/components/FirebaseErrorListener';
+import { initMessaging } from './messaging';
 
 interface FirebaseContextValue {
   firebaseApp: FirebaseApp | undefined;
@@ -40,6 +41,15 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     }).catch((e) => {
       console.debug('SW getRegistration failed:', e);
     });
+  }, []);
+
+  // Initialize foreground messaging listener
+  useEffect(() => {
+    try {
+      initMessaging();
+    } catch (e) {
+      console.debug('initMessaging failed (non-fatal):', e);
+    }
   }, []);
 
   return (

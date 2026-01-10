@@ -53,7 +53,7 @@ export default function Home() {
         
         <section id="features" className="bg-background/80 py-20 sm:py-24">
           <div className="container mx-auto px-4">
-            <h2 className="font-headline text-center text-4xl font-bold">Why Campus Cruiser?</h2>
+            <h2 className="font-headline text-center text-4xl font-bold">Why Campus Ride?</h2>
             <div className="mt-12 grid grid-cols-1 gap-8 md:grid-cols-3">
               {features.map((feature) => (
                 <Card key={feature.title} className="bg-card/50 backdrop-blur-lg border-primary/20 text-center">
@@ -74,7 +74,7 @@ export default function Home() {
       </main>
       <footer className="container mx-auto px-4 py-6 text-center text-muted-foreground">
         <div className="flex items-center justify-center gap-4">
-          <p>&copy; {new Date().getFullYear()} Campus Cruiser. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} Campus Ride. All rights reserved.</p>
           <Link href="/contact-us" className="text-sm hover:underline">Contact</Link>
         </div>
       </footer>

@@ -40,12 +40,13 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const firestore = useFirestore();
   const { toast } = useToast();
 
+  // Read requests from the ride-scoped `requests` subcollection so ride owners
+  // can safely list only requests for their ride (rules allow listing here).
   const bookingsQuery = firestore ? query(
-    collection(firestore, `universities/${university}/bookings`),
-    where('rideId', '==', ride.id),
+    collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
     where('status', '==', 'pending')
   ) : null;
-  
+
   const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId' });
   const [processingIds, setProcessingIds] = React.useState<string[]>([]);
   const [shownBookings, setShownBookings] = React.useState<BookingType[]>([]);
@@ -74,6 +75,8 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       await runTransaction(firestore, async (transaction) => {
         const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
         const rideRef = doc(firestore, `universities/${university}/rides`, booking.rideId);
+        const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
+        const chatRef = doc(firestore, `universities/${university}/chats`, booking.id);
 
         // Re-read booking inside transaction and ensure it's still pending
         const bookingDoc = await transaction.get(bookingRef);
@@ -126,12 +129,20 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
           };
           transaction.set(chatRef, chatData);
           transaction.update(bookingRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
+          // Mirror status and metadata to the ride-scoped request doc as well
+          transaction.update(requestRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
           transaction.update(rideRef, {
             availableSeats: newAvailableSeats,
             ...(newAvailableSeats === 0 && { status: 'full' })
           });
         } else {
           transaction.update(bookingRef, { status: newStatus });
+          transaction.update(requestRef, { status: newStatus });
+          // If a chat exists for this booking (unlikely on reject), remove it to keep chats temporary
+          const chatDoc = await transaction.get(chatRef);
+          if (chatDoc.exists()) {
+            transaction.delete(chatRef);
+          }
         }
       });
 
@@ -260,6 +271,21 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
         const bookingsSnap = await getDocs(bookingsQuery);
         const batch = writeBatch(firestore);
         bookingsSnap.forEach((b) => batch.delete(doc(firestore, `universities/${university}/bookings`, b.id)));
+        // Also remove any ride-scoped requests
+        try {
+          const requestsSnap = await getDocs(collection(firestore, `universities/${university}/rides/${ride.id}/requests`));
+          requestsSnap.forEach((r) => batch.delete(doc(firestore, `universities/${university}/rides/${ride.id}/requests`, r.id)));
+        } catch (_) {
+          // ignore — some environments may not have requests yet
+        }
+        // Also remove any chats linked to this ride (created when bookings were accepted)
+        try {
+          const chatsQuery = query(collection(firestore, `universities/${university}/chats`), where('rideId', '==', ride.id));
+          const chatsSnap = await getDocs(chatsQuery);
+          chatsSnap.forEach((c) => batch.delete(doc(firestore, `universities/${university}/chats`, c.id)));
+        } catch (_) {
+          // ignore — chats may not exist
+        }
         batch.delete(doc(firestore, `universities/${university}/rides`, ride.id));
         await batch.commit();
 

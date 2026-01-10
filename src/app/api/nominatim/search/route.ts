@@ -9,7 +9,11 @@ export async function GET(req: Request) {
     if (!q) return NextResponse.json({ error: 'Missing query' }, { status: 400 });
 
     const params = new URLSearchParams({ q, format: 'json', limit, countrycodes: 'pk' });
-    if (viewbox) params.set('viewbox', viewbox);
+    if (viewbox) {
+      params.set('viewbox', viewbox);
+      // When a viewbox is provided, request results bounded to it
+      params.set('bounded', '1');
+    }
     // Nominatim usage policy asks for a valid User-Agent / Referer
     const nomUrl = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 

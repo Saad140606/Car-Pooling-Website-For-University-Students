@@ -50,7 +50,8 @@ export default function ReportPage() {
       };
       await addDoc(safeCollection(firestore!, 'reports'), doc);
       toast({ title: 'Report submitted', description: 'Thank you. Our admin team will review this.' });
-      router.push('/dashboard/support');
+      // Redirect to dashboard root (no dedicated /dashboard/support route exists)
+      router.push('/dashboard');
     } catch (err: any) {
       console.error('Report submit failed', err);
       toast({ variant: 'destructive', title: 'Could not submit report', description: err?.message || 'Try again later.' });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Waypoint, LatLng, encodePolyline, computeBounds } from '@/lib/route';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -6,13 +6,14 @@ import { Button } from '@/components/ui/button';
 type RouteEditorProps = {
   origin?: Waypoint | null;
   destination?: Waypoint | null;
-  onRouteGenerated?: (data: { waypoints: Waypoint[]; polyline: string; bounds: ReturnType<typeof computeBounds> | null }) => void;
+  onRouteGenerated?: (data: { waypoints: Waypoint[]; polyline: string; bounds: ReturnType<typeof computeBounds> | null; distanceMeters?: number | null; durationSeconds?: number | null }) => void;
 };
 
 export default function RouteEditor({ origin, destination, onRouteGenerated }: RouteEditorProps) {
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const debounceRef = useRef<number | null>(null);
   const [generating, setGenerating] = useState(false);
 
   const addWaypoint = (p: Waypoint) => setWaypoints((s) => [...s, p]);
@@ -29,13 +30,26 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
 
   useEffect(() => { setSuggestions([]); }, [query]);
 
+  // Default Karachi viewbox to restrict suggestions to Karachi area when using this editor
+  // Nominatim expects viewbox as: left_lon,top_lat,right_lon,bottom_lat
+  const KARACHI_VIEWBOX = '66.5,25.5,67.5,24.6';
+
   const searchPlaces = useCallback(async (q: string) => {
     if (!q || q.length < 2) return setSuggestions([]);
     try {
-      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q)}&limit=6`);
+      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q)}&limit=6&viewbox=${encodeURIComponent(KARACHI_VIEWBOX)}&bounded=1`);
       if (!res.ok) return setSuggestions([]);
       const json = await res.json();
-      setSuggestions(Array.isArray(json) ? json : []);
+      const results: any[] = Array.isArray(json) ? json : [];
+      // Parse KARACHI_VIEWBOX which is left_lon,top_lat,right_lon,bottom_lat
+      const [left, top, right, bottom] = KARACHI_VIEWBOX.split(',').map((v) => Number(v));
+      // Filter server results to strictly inside the Karachi bbox as a client-side safeguard
+      const filtered = results.filter((s) => {
+        const lat = Number(s.lat);
+        const lon = Number(s.lon);
+        return lon >= left && lon <= right && lat <= top && lat >= bottom;
+      });
+      setSuggestions(filtered);
     } catch (e) { setSuggestions([]); }
   }, []);
 
@@ -58,7 +72,11 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
         const latlngs: LatLng[] = coordsRes.map((c: any) => ({ lat: c[1], lng: c[0] }));
         const polyline = encodePolyline(latlngs);
         const bounds = computeBounds(latlngs);
-        onRouteGenerated?.({ waypoints, polyline, bounds });
+        // ORS returns summary in meters and seconds at features[0].properties.summary
+        const summary = (data?.features && data.features[0] && data.features[0].properties && data.features[0].properties.summary) || null;
+        const distanceMeters = summary?.distance ?? null;
+        const durationSeconds = summary?.duration ?? null;
+        onRouteGenerated?.({ waypoints, polyline, bounds, distanceMeters, durationSeconds });
       } catch (e) {
         console.error('Route generation failed', e);
       } finally { setGenerating(false); }
@@ -70,7 +88,19 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
     <div className="space-y-3">
       <h3 className="font-semibold">Add Route Points (Optional)</h3>
       <div className="flex gap-2">
-        <Input placeholder="Search place or address" value={query} onChange={(e) => { setQuery(e.target.value); searchPlaces(e.target.value); }} />
+        <Input
+          placeholder="Search place or address"
+          value={query}
+          onChange={(e) => {
+            const v = e.target.value;
+            setQuery(v);
+            // Debounce requests to avoid firing for every keystroke
+            if (debounceRef.current) window.clearTimeout(debounceRef.current);
+            debounceRef.current = window.setTimeout(() => {
+              searchPlaces(v);
+            }, 300) as unknown as number;
+          }}
+        />
         <Button onClick={() => { if (suggestions[0]) addWaypoint({ name: suggestions[0].display_name, lat: Number(suggestions[0].lat), lng: Number(suggestions[0].lon) }); }}>Add</Button>
       </div>
       {suggestions.length > 0 && (

@@ -24,6 +24,24 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     firestore: initial.firestore as any,
   });
 
+  // Register service worker for push notifications if available
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator)) return;
+    // Register a minimal firebase messaging service worker if present in /public
+    navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js').then((reg) => {
+      if (!reg) {
+        navigator.serviceWorker.register('/firebase-messaging-sw.js').then(() => {
+          console.debug('Registered firebase-messaging-sw.js');
+        }).catch((e) => console.debug('SW registration failed (optional):', e));
+      } else {
+        console.debug('firebase-messaging-sw.js already registered');
+      }
+    }).catch((e) => {
+      console.debug('SW getRegistration failed:', e);
+    });
+  }, []);
+
   return (
     <FirebaseContext.Provider value={firebaseInstances}>
       <FirebaseErrorListener />

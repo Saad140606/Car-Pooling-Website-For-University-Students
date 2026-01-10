@@ -26,14 +26,14 @@ export default function AdminSupportPage() {
       snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
       setReports(rows);
       setLoading(false);
-    });
+    }, (err) => { console.warn('reports snapshot error', err); setLoading(false); });
     const msgsCol = safeCollection(db, 'contact_messages');
     const q2 = query(msgsCol, orderBy('createdAt', 'desc'));
     const unsub2 = onSnapshot(q2, (snap) => {
       const rows: any[] = [];
       snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
       setMessages(rows);
-    });
+    }, (err) => { console.warn('contact_messages snapshot error', err); });
     return () => { unsub(); unsub2(); };
   }, [db, isAdmin]);
 

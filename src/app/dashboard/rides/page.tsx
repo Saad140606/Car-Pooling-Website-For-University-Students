@@ -1,6 +1,6 @@
 'use client';
 import { useUser, useFirestore } from '@/firebase';
-import { query, where, orderBy, Timestamp, doc, runTransaction, serverTimestamp, addDoc } from 'firebase/firestore';
+import { query, where, orderBy, Timestamp, doc, runTransaction, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -397,13 +397,27 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const bookingsQuery = firestore && user ? query(
-    safeCollection(firestore, `universities/${userData.university}/bookings`),
-    where('rideId', '==', ride.id),
-    where('passengerId', '==', user.uid)
-  ) : null;
-  const { data: bookings, loading: bookingsLoading } = useBookingsCollection(bookingsQuery);
-  const existingBooking = bookings?.[0];
+  const [existingBooking, setExistingBooking] = useState<any | null>(null);
+
+  // Check for an existing booking by deterministic id (rideId_userId) using a direct get.
+  React.useEffect(() => {
+    let mounted = true;
+    const check = async () => {
+      if (!firestore || !user || !userData) return setExistingBooking(null);
+      try {
+        const bookingId = `${ride.id}_${user.uid}`;
+        const ref = doc(firestore, `universities/${userData.university}/bookings`, bookingId);
+        const snap = await getDoc(ref);
+        if (!mounted) return;
+        setExistingBooking(snap.exists() ? ({ id: snap.id, ...snap.data() } as any) : null);
+      } catch (e) {
+        console.error('Failed to check existing booking', e);
+        if (mounted) setExistingBooking(null);
+      }
+    };
+    check();
+    return () => { mounted = false; };
+  }, [firestore, user, userData, ride.id]);
 
   const handleRequestSeat = async (pickupPoint: LatLng) => {
     if (!user || !firestore) return false;
@@ -463,20 +477,41 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
         if (!rideDoc.exists() || rideDoc.data().availableSeats <= 0) {
           throw new Error('This ride is no longer available or is full.');
         }
-        const newBookingRef = doc(safeCollection(firestore, `universities/${userData.university}/bookings`));
+        // Use a deterministic booking id to prevent duplicate bookings from the same user
+        const bookingId = `${ride.id}_${user.uid}`;
+        const newBookingRef = doc(firestore, `universities/${userData.university}/bookings`, bookingId);
+        const existingBookingDoc = await transaction.get(newBookingRef);
+        if (existingBookingDoc.exists()) {
+          throw new Error('You have already requested a seat on this ride.');
+        }
         transaction.set(newBookingRef, bookingData);
+        // Also create a mirror request document under the ride so the ride owner can
+        // query requests at `universities/{univId}/rides/{rideId}/requests` (rules allow this).
+        const requestRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', bookingId);
+        const requestData = Object.assign({}, bookingData, { bookingId });
+        transaction.set(requestRef, requestData);
       });
 
       toast({ title: 'Request Sent!', description: 'The ride provider has been notified of your request.' });
       return true;
     } catch (error: any) {
       console.error('Error requesting seat:', error);
-      const isTransactionError = !error.code;
       const permissionError = new FirestorePermissionError({ path: `universities/${userData.university}/bookings`, operation: 'create', requestResourceData: bookingData });
       errorEmitter.emit('permission-error', permissionError);
 
-      if (!isTransactionError) {
-        toast({ variant: 'destructive', title: 'Booking Failed', description: error.message || 'Could not request seat. Please try again.' });
+      const code = error?.code || 'unknown';
+      const msg = error?.message || String(error);
+
+      if (code === 'permission-denied') {
+        // Helpful guidance for missing rules deployment or profile issues
+        toast({
+          variant: 'destructive',
+          title: 'Booking Failed — Permission Denied',
+          description: `Ensure your Firestore rules allow creating bookings under universities/${userData.university}/bookings and requests under universities/${userData.university}/rides/${ride.id}/requests. Then run: firebase deploy --only firestore:rules`,
+        });
+        console.error('Permission denied details:', { code, msg, bookingPath: `universities/${userData.university}/bookings/${ride.id}_${user.uid}`, requestPath: `universities/${userData.university}/rides/${ride.id}/requests/${ride.id}_${user.uid}` });
+      } else {
+        toast({ variant: 'destructive', title: 'Booking Failed', description: msg });
       }
       return false;
     } finally {

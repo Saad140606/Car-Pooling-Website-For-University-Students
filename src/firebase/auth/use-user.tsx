@@ -8,6 +8,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth, useFirestore } from '../provider';
 import { useDoc } from '../firestore/use-doc';
 import { UserProfile } from '@/lib/types';
+import { getMessaging, getToken } from 'firebase/messaging';
 
 
 export function useUser() {
@@ -48,14 +49,40 @@ export function useUser() {
               }
 
               try {
-                await setDoc(userRef, {
+                const finalUniversity = universityToSet ?? 'fast';
+                const profile = {
                   email: u.email || null,
-                  university: universityToSet ?? 'fast',
+                  university: finalUniversity,
                   createdAt: serverTimestamp()
-                });
-                console.debug('Created missing users document for', u.uid);
+                };
+
+                const uniUserRef = doc(firestore, 'universities', finalUniversity, 'users', u.uid);
+
+                await Promise.all([
+                  setDoc(userRef, profile),
+                  setDoc(uniUserRef, profile)
+                ]);
+                console.debug('Created missing users document for', u.uid, 'and mirrored to', `universities/${finalUniversity}/users/${u.uid}`);
+                // Try to register FCM token for this user (if browser supports it)
+                try {
+                  if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY) {
+                    try {
+                      const messaging = getMessaging();
+                      const token = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
+                      if (token) {
+                        // store token under users/{uid}/fcmTokens/{token}
+                        await setDoc(doc(firestore, 'users', u.uid, 'fcmTokens', token), { token, createdAt: serverTimestamp() });
+                        console.debug('Saved FCM token for user', u.uid);
+                      }
+                    } catch (e) {
+                      console.debug('FCM registration failed (non-fatal):', e);
+                    }
+                  }
+                } catch (e) {
+                  console.debug('Failed to save fcm token:', e);
+                }
               } catch (err) {
-                console.warn('Failed to create users/{uid} document:', err);
+                console.warn('Failed to create users/{uid} document or mirror to universities/{univ}/users/{uid}:', err);
               } finally {
                 try {
                   if (typeof window !== 'undefined') {

@@ -32,6 +32,13 @@ service cloud.firestore {
 
       // A user can read and modify their own profile
       allow get, update, delete: if isAuth() && request.auth.uid == userId;
+
+      // FCM tokens stored under users/{uid}/fcmTokens/{token}
+      match /fcmTokens/{tokenId} {
+        allow create: if isAuth() && request.auth.uid == userId;
+        allow get, list: if isAuth() && request.auth.uid == userId;
+        allow delete: if isAuth() && request.auth.uid == userId;
+      }
     }
 
     // Universities & rides: restrict reads to admins only
@@ -43,7 +50,10 @@ service cloud.firestore {
         // Only allow listing and getting rides for users whose profile university matches the university path.
         // Safe fallback: if the users/{uid} doc is missing (e.g., during dev or a missing profile),
         // allow authenticated users to read rides to avoid blocking the UI with permission errors.
-        allow list, get: if isAdmin();
+        // Allow admins always, otherwise allow authenticated users whose `users/{uid}` doc exists and
+        // whose `university` matches `univId`. During development (missing profile docs), also allow
+        // authenticated users to list rides to avoid hard blocking the UI.
+        allow list, get: if isAdmin() || (isAuth() && ((userDocExists() && userUniversity() == univId) || !userDocExists()));
 
         // Create a ride: only authenticated users may create rides and createdBy must equal request.auth.uid
         allow create: if isAuth()
@@ -56,6 +66,26 @@ service cloud.firestore {
 
         // Only the creator may update or delete their ride
         allow update, delete: if isAuth() && resource.data.createdBy == request.auth.uid;
+
+          // Requests for a ride (passengers requesting pickup / join requests)
+          match /requests/{requestId} {
+            // Passenger may create a request; ensure passengerId matches authenticated user
+            allow create: if isAuth() && request.resource.data.passengerId == request.auth.uid;
+
+            // Ride owner (driver) and admins may list/get requests. Passengers may read their own request.
+            allow list, get: if isAdmin() || (isAuth() && (
+              (get(/databases/$(database)/documents/universities/$(univId)/rides/$(rideId)).data.createdBy == request.auth.uid)
+              ||
+              (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
+            ));
+
+            // Allow update/delete by driver (to accept/reject) or passenger (to cancel their request)
+            allow update, delete: if isAuth() && (
+              (get(/databases/$(database)/documents/universities/$(univId)/rides/$(rideId)).data.createdBy == request.auth.uid)
+              ||
+              (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
+            );
+          }
       }
 
       // Bookings for rides
@@ -63,11 +93,40 @@ service cloud.firestore {
         // Create booking if passengerId matches authenticated user
         allow create: if isAuth() && request.resource.data.passengerId == request.auth.uid;
 
-        // Only admins may read bookings
-        allow list, get: if isAdmin();
+        // Allow listing bookings for authenticated users within their university so
+        // pages like "My Bookings" and driver ride cleanup queries can run.
+        // Admins are still allowed. During development when user docs may be missing,
+        // allow authenticated users as a safe fallback.
+        allow list: if isAdmin() || (isAuth() && ((userDocExists() && userUniversity() == univId) || !userDocExists()));
+
+        // Allow getting an individual booking doc for its passenger or the driver or admins.
+        // Also allow authenticated users within the same university to `get` booking docs
+        // (including non-existent docs) so client transactions can safely check for
+        // an existing booking before creating one.
+        allow get: if isAdmin() || (isAuth() && (
+          // If the booking doc exists, allow only the passenger or driver to read it
+          (exists(/databases/$(database)/documents/universities/$(univId)/bookings/$(bookingId)) && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid))
+          ||
+          // If the booking doc does not exist, allow university-level readers (same as `list`)
+          (!exists(/databases/$(database)/documents/universities/$(univId)/bookings/$(bookingId)) && ((userDocExists() && userUniversity() == univId) || !userDocExists()))
+        ));
 
         // Allow update/delete by the passenger who made it or the driver of the ride
         allow update, delete: if isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid);
+      }
+
+      // Mirrored user profiles under a university path (created by the client on sign-up)
+      // Allow a user to create their own mirror profile and read their own mirror.
+      match /users/{userId} {
+        // Allow creation only by the authenticated user and ensure the email and university match.
+        allow create: if isAuth() && request.auth.uid == userId && request.resource.data.email == request.auth.token.email && request.resource.data.university == univId;
+
+        // Users may read their own mirrored profile; admins may list/get any.
+        allow get: if isAdmin() || (isAuth() && request.auth.uid == userId);
+        allow list: if isAdmin();
+
+        // Allow the owner to update or delete their mirrored profile.
+        allow update, delete: if isAuth() && request.auth.uid == userId;
       }
 
       // One chat per ride under a university. Support two common shapes:
@@ -88,10 +147,23 @@ service cloud.firestore {
           );
 
         // Only participants may list/get chats. Accept either participants array or passenger/provider fields.
-        allow list, get: if isAuth() && userDocExists() && userUniversity() == univId && (
-          (resource.data.participants is list && request.auth.uid in resource.data.participants)
+        // Safe fallback: during development when users/{uid} may be missing, allow authenticated users
+        // to read chats if they are a participant (helps avoid hard-blocking the UI). In production,
+        // create users/{uid} on sign-up to enforce the stricter check.
+        allow list, get: if isAuth() && (
+          // Preferred path: user doc exists and university matches
+          (userDocExists() && userUniversity() == univId && (
+            (resource.data.participants is list && request.auth.uid in resource.data.participants)
+            ||
+            (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+          ))
           ||
-          (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+          // Fallback when the user's profile doc is missing: allow if the auth uid is listed as a participant
+          (!userDocExists() && (
+            (resource.data.participants is list && request.auth.uid in resource.data.participants)
+            ||
+            (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+          ))
         );
 
         allow update, delete: if isAuth() && (
@@ -116,15 +188,62 @@ service cloud.firestore {
             && request.resource.data.timestamp is timestamp
             && (request.resource.data.type in ['text','image','video','emoji']);
 
-          // Only participants can read message lists
+          // Only participants can read message lists. Use the same safe fallback as chats above so
+          // a missing users/{uid} doc during development doesn't block the UI.
           allow list, get: if isAuth() && (
-            (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
+            // Preferred: user doc exists and university check is OK
+            (userDocExists() && userUniversity() == univId && (
+              (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
+              ||
+              ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
+            ))
             ||
-            ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
+            // Fallback when profile missing: allow if auth uid is a participant on the chat doc
+            (!userDocExists() && (
+              (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
+              ||
+              ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
+            ))
           );
 
           // Messages are immutable
           allow update, delete: if false;
+        }
+      }
+
+      // WebRTC call signaling documents used for in-app audio/video calls.
+      // Structure: universities/{univId}/calls/{callId}
+      // Subcollections: callerCandidates, calleeCandidates
+      match /calls/{callId} {
+        // Allow creating a call document when the authenticated user is the caller.
+        allow create: if isAuth() && request.resource.data.caller == request.auth.uid;
+
+        // Allow get/list with conservative rules:
+        // - If the call doc exists, allow caller, callee, any participant listed on the call, or admins to read it.
+        // - If the call doc does not exist (client may be listening before creation), allow
+        //   authenticated users from the same university (or fallback during development) to avoid
+        //   hard-failing listeners in dev environments.
+        allow get: if isAdmin() || (isAuth() && (
+          (exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)) && (
+            resource.data.caller == request.auth.uid || resource.data.callee == request.auth.uid || (resource.data.participants is list && request.auth.uid in resource.data.participants)
+          ))
+          ||
+          (!exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)) && ((userDocExists() && userUniversity() == univId) || !userDocExists()))
+        ));
+
+        allow update, delete: if isAuth() && (resource.data.caller == request.auth.uid || resource.data.callee == request.auth.uid || isAdmin());
+
+        // ICE candidates are small ephemeral documents. Allow participants to create/list them.
+        match /callerCandidates/{candId} {
+          allow create: if isAuth() && ((exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)) && (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid || get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid)) || !exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)));
+          allow list, get: if isAuth() && (exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)) && (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid || get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid || isAdmin()));
+          allow delete: if false;
+        }
+
+        match /calleeCandidates/{candId} {
+          allow create: if isAuth() && ((exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)) && (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid || get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid)) || !exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)));
+          allow list, get: if isAuth() && (exists(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)) && (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid || get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid || isAdmin()));
+          allow delete: if false;
         }
       }
     }

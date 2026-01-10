@@ -120,14 +120,18 @@ export default function RideCard({
   return (
     <div 
       className={clsx(
-            'group relative flex flex-col md:flex-row w-full max-w-full min-w-0 overflow-hidden rounded-lg bg-[#1c2237] text-white text-[0.78rem] shadow-sm transition-all border border-slate-700/30',
+            'group relative flex flex-col md:flex-row w-full max-w-full min-w-0 overflow-hidden rounded-lg bg-[#1c2237] text-white text-[0.78rem] shadow-sm transition-all border border-slate-700/30 md:max-w-[720px] lg:max-w-[900px]',
             className
           )}
     >
       {/* (moved initials into right panel to avoid overlap/overflow) */}
 
       {/* --- Left Section: Route & Map --- */}
-      <div className="flex-1 min-w-0 p-1 md:p-1 flex flex-col gap-1">
+      <div className="flex-1 min-w-0 p-1 md:p-2 flex flex-col gap-1 relative">
+        {/* Price badge moved into header for prominence */}
+        <div className="absolute top-2 right-2 z-30">
+          <div className="bg-primary/95 text-primary-foreground px-3 py-1 rounded-full font-bold text-sm shadow-sm border border-primary/20">PKR {price}</div>
+        </div>
         
         {/* Route Headers */}
         <div className="relative flex flex-col gap-1">
@@ -135,26 +139,26 @@ export default function RideCard({
           <div className="absolute left-[5px] top-2 bottom-2 w-0.5 border-l border-dashed border-slate-500/50" />
 
           {/* Start */}
-          <div className="flex items-center gap-2 relative z-10">
-            <div className="h-3 w-3 rounded-full bg-green-500 ring-2 ring-[#1c2237]" />
-              <div className="flex flex-col">
-              <span className="text-[clamp(0.82rem,1.05vw,0.9rem)] font-semibold text-white leading-tight max-w-[140px] truncate" title={startLocation}>{truncateChars(startLocation, 30)}</span>
-              <span className="text-[clamp(0.56rem,0.75vw,0.64rem)] text-slate-400">Karachi</span>
+          <div className="flex items-center gap-2 relative z-10 min-w-0">
+            <div className="h-3 w-3 rounded-full bg-green-500 ring-2 ring-[#1c2237] flex-shrink-0" />
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold text-white leading-tight truncate" title={startLocation}>{truncateChars(startLocation, 60)}</span>
+              <span className="text-xs text-slate-400">Karachi</span>
             </div>
           </div>
 
           {/* End */}
-          <div className="flex items-center gap-2 relative z-10">
-            <div className="h-3 w-3 rounded-full bg-red-500 ring-2 ring-[#1c2237]" />
-            <div className="flex flex-col">
-              <span className="text-[clamp(0.82rem,1.05vw,0.9rem)] font-semibold text-white leading-tight max-w-[140px] truncate" title={endLocation}>{truncateChars(endLocation, 30)}</span>
-               <span className="text-[clamp(0.56rem,0.75vw,0.64rem)] text-slate-400">Karachi</span>
+          <div className="flex items-center gap-2 relative z-10 min-w-0">
+            <div className="h-3 w-3 rounded-full bg-red-500 ring-2 ring-[#1c2237] flex-shrink-0" />
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold text-white leading-tight truncate" title={endLocation}>{truncateChars(endLocation, 60)}</span>
+              <span className="text-xs text-slate-400">Karachi</span>
             </div>
           </div>
         </div>
 
         {/* Map Area: use public/map.png as a background to match design */}
-        <div className="relative w-full h-[2.2rem] md:h-[2.6rem] rounded-md overflow-hidden group/map">
+        <div className="relative w-full h-[1.6rem] md:h-[2rem] rounded-md overflow-hidden group/map">
           <img src="/map.png" alt="map preview" className="w-full h-full object-cover" />
 
           {/* Decorative start/end markers positioned left/right */}
@@ -176,7 +180,7 @@ export default function RideCard({
         </div>
 
         {/* Footer Meta Data: compact single-line date/time, seats left, and gender */}
-        <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-1 text-[0.62rem] text-slate-300">
+        <div className="mt-1 grid grid-cols-1 md:grid-cols-3 gap-1 text-[0.62rem] text-slate-300">
           <div className="flex items-start gap-2">
             <Calendar className="w-3.5 h-3.5 text-slate-400 mt-0.5" />
             <div className="min-w-0">
@@ -196,7 +200,7 @@ export default function RideCard({
         </div>
         
         {/* Desktop View Route button below details (matches design) */}
-        <div className="mt-2 hidden md:flex">
+        <div className="mt-1 hidden md:flex">
           <button onClick={onViewRoute} className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-[#111827]/20 text-slate-200 border border-white/5 hover:bg-[#111827]/30">
             <Search className="w-4 h-4" />
             View Route
@@ -208,22 +212,15 @@ export default function RideCard({
       <div className="hidden md:block w-px bg-gradient-to-b from-transparent via-slate-600/30 to-transparent my-1" />
 
       {/* --- Right Section: Ride Provider & Actions (compact) --- */}
-      <div className="w-full md:w-[5rem] min-w-0 overflow-hidden bg-[#1c2237] p-1 flex flex-col justify-between border-t md:border-t-0 md:border-l border-slate-700/50 relative h-auto"> 
-        
-        {/* Price Badge (desktop inside right panel) */}
-        <div className="relative mb-4">
-          <div className="absolute top-0 right-0 transform translate-y-0 md:translate-y-0">
-             <div className="hidden md:inline-block bg-primary/95 text-primary-foreground px-2 py-0.5 rounded-full font-semibold text-[0.62rem] shadow-sm border border-primary/20">PKR {price}</div>
-           </div>
-        </div>
+      <div className="w-full md:w-40 lg:md:w-48 min-w-0 overflow-hidden bg-[#1c2237] p-2 flex flex-col justify-between border-t md:border-t-0 md:border-l border-slate-700/50 relative h-auto"> 
 
         {/* Ride Provider Info */}
         <div className="flex flex-col gap-1 mb-3 min-w-0">
             <div className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-full bg-[#334155] flex items-center justify-center text-white font-semibold text-[0.56rem] flex-shrink-0">{driverInitials}</div>
+              <div className="h-7 w-7 rounded-full bg-[#334155] flex items-center justify-center text-white font-semibold text-[0.64rem] flex-shrink-0">{driverInitials}</div>
               <div className="min-w-0">
-                <h3 className="text-[0.7rem] font-semibold text-white truncate max-w-[90px]" title={driverName}>{truncateChars(driverName, 24)}</h3>
-                <div className="text-[0.58rem] text-slate-400">DVR: {dvr}</div>
+                <h3 className="text-sm font-semibold text-white truncate max-w-[10rem]" title={driverName}>{truncateChars(driverName, 30)}</h3>
+                <div className="text-[0.64rem] text-slate-400">DVR: {dvr}</div>
               </div>
             </div>
         </div>
@@ -233,7 +230,7 @@ export default function RideCard({
             {/* Primary Book button (always visible) */}
             <button 
               onClick={onBook}
-              className="flex w-full py-1.5 rounded-md bg-[#4f46e5] hover:bg-[#4338ca] text-white font-semibold text-[0.78rem] shadow-sm transition-all flex items-center justify-center gap-2 px-2"
+              className="flex w-full py-1 rounded-md bg-[#4f46e5] hover:bg-[#4338ca] text-white font-semibold text-[0.78rem] shadow-sm transition-all items-center justify-center gap-2 px-2"
             >
                <div className="w-3.5 h-3.5 bg-white rounded-full flex items-center justify-center">
                  <span className="text-[#4f46e5] text-[9px]">✓</span>

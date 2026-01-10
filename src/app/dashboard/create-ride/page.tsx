@@ -15,7 +15,7 @@ import 'leaflet/dist/leaflet.css';
 import { Button } from '@/components/ui/button';
 import RouteEditor from '@/components/RouteEditor';
 import { encodePolyline, decodePolyline, LatLng as RouteLatLng, computeBounds } from '@/lib/route';
-import { calculatePricing, clampAdjustedPrice } from '@/lib/pricing';
+import { calculatePricing } from '@/lib/pricing';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -345,6 +345,29 @@ const MapComponent = forwardRef<MapComponentRef, {
         const polylineOutline = L.polyline(ll, { color: '#0b1220', weight: 13, opacity: 0.95 }).addTo(mapInstanceRef.current);
         const polyline = L.polyline(ll, { color: '#FFD166', weight: 7, opacity: 0.95 }).addTo(mapInstanceRef.current);
         routeLayerRef.current = polyline;
+        // Compute approximate distance (meters) from the polyline coordinates and estimate duration.
+        try {
+          let totalMeters = 0;
+          const toRad = (v: number) => (v * Math.PI) / 180;
+          const R = 6371e3; // meters
+          for (let i = 0; i < ll.length - 1; i++) {
+            const aLat = ll[i][0], aLng = ll[i][1];
+            const bLat = ll[i+1][0], bLng = ll[i+1][1];
+            const phi1 = toRad(aLat);
+            const phi2 = toRad(bLat);
+            const dPhi = toRad(bLat - aLat);
+            const dLambda = toRad(bLng - aLng);
+            const A = Math.sin(dPhi / 2) * Math.sin(dPhi / 2) + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) * Math.sin(dLambda / 2);
+            const C = 2 * Math.atan2(Math.sqrt(A), Math.sqrt(1 - A));
+            totalMeters += R * C;
+          }
+          const distanceKm = Math.round((totalMeters / 1000) * 100) / 100;
+          // Estimate duration assuming avg speed 40 km/h (adjustable later)
+          const durationMin = Math.round((distanceKm / 40) * 60);
+          props.onRouteUpdate(distanceKm, durationMin);
+        } catch (e) {
+          // ignore calculation errors
+        }
         if (!props.activeMapSelect) {
           try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (_) {}
         }
@@ -471,12 +494,12 @@ export default function CreateRidePage() {
   const departureTimeValue = form.watch('departureTime');
 
   useEffect(() => {
+    // Suggest sensible defaults when transport mode changes. Do not overwrite a user-modified price;
+    // pricing effect below will prefill price from calculated recommendation when appropriate.
     if (transportMode === 'bike') {
-        form.setValue('price', 100);
-        form.setValue('totalSeats', 1);
+      form.setValue('totalSeats', 2);
     } else if (transportMode === 'car') {
-        form.setValue('price', 200);
-        form.setValue('totalSeats', 4);
+      form.setValue('totalSeats', 4);
     }
   }, [transportMode, form]);
 
@@ -554,7 +577,7 @@ export default function CreateRidePage() {
       if(duration) setDurationMin(Math.round(duration));
   }, []);
 
-  const onRouteGenerated = useCallback((data: { waypoints: any[]; polyline: string; bounds: any } ) => {
+  const onRouteGenerated = useCallback((data: { waypoints: any[]; polyline: string; bounds: any; distanceMeters?: number | null; durationSeconds?: number | null } ) => {
     try {
       setRouteWaypoints(data.waypoints || []);
       setRoutePolyline(data.polyline || null);
@@ -565,6 +588,15 @@ export default function CreateRidePage() {
       setRouteLatLngs(latlngs);
       // instruct the map to draw the generated route
       try { mapRef.current?.setRoute(latlngs); } catch (e) { console.warn('Failed to set route on map', e); }
+      // Update distance and duration if ORS returned them
+      if (data.distanceMeters != null) {
+        const km = Math.round((data.distanceMeters / 1000) * 100) / 100;
+        setDistanceKm(km);
+      }
+      if (data.durationSeconds != null) {
+        const minutes = Math.round((data.durationSeconds / 60));
+        setDurationMin(minutes);
+      }
     } catch (e) {
       console.error('onRouteGenerated failed', e);
     }
@@ -658,11 +690,12 @@ export default function CreateRidePage() {
       setRecommendedPricePerSeat(pricing.recommendedPerSeat);
       setFinalPricePerSeat(pricing.finalPerSeat);
       setPricingBreakdown(pricing.breakdown);
-      // Pre-fill form price with recommended if user hasn't already changed it from default
+      // Pre-fill form price with recommended if user hasn't already changed it from the mode default
       try {
         const currentPrice = form.getValues('price');
-        // only overwrite if current price equals initial default (200) or empty
-        if (!currentPrice || Number(currentPrice) === 200) {
+        const DEFAULT_PRICE_BY_MODE: Record<string, number> = { car: 200, bike: 100 };
+        const modeDefault = DEFAULT_PRICE_BY_MODE[transportMode] ?? 200;
+        if (!currentPrice || Number(currentPrice) === modeDefault) {
           form.setValue('price', pricing.recommendedPerSeat);
         }
       } catch (_) {}
@@ -1048,6 +1081,16 @@ export default function CreateRidePage() {
                   )}
               </div>
 
+              {/* Route editor: add/reorder/remove waypoints and generate final polyline */}
+              <div className="mb-6">
+                <RouteEditor origin={fromCoords || null} destination={toCoords || null} onRouteGenerated={onRouteGenerated} />
+                {routePolyline ? (
+                  <div className="mt-2 text-xs text-muted-foreground">Route generated and ready. Bounds: {routeBounds ? `${routeBounds.minLat.toFixed(4)},${routeBounds.minLng.toFixed(4)} → ${routeBounds.maxLat.toFixed(4)},${routeBounds.maxLng.toFixed(4)}` : 'n/a'}</div>
+                ) : (
+                  <div className="mt-2 text-xs text-muted-foreground">No generated route yet. Add waypoints or ensure start/end are selected.</div>
+                )}
+              </div>
+
               <div className="mb-4 z-50">
                 <FormField
                   control={form.control}
@@ -1065,16 +1108,6 @@ export default function CreateRidePage() {
                     </FormItem>
                   )}
                 />
-              </div>
-
-              {/* Route editor: add/reorder/remove waypoints and generate final polyline */}
-              <div className="mb-6">
-                <RouteEditor origin={fromCoords || null} destination={toCoords || null} onRouteGenerated={onRouteGenerated} />
-                {routePolyline ? (
-                  <div className="mt-2 text-xs text-muted-foreground">Route generated and ready. Bounds: {routeBounds ? `${routeBounds.minLat.toFixed(4)},${routeBounds.minLng.toFixed(4)} → ${routeBounds.maxLat.toFixed(4)},${routeBounds.maxLng.toFixed(4)}` : 'n/a'}</div>
-                ) : (
-                  <div className="mt-2 text-xs text-muted-foreground">No generated route yet. Add waypoints or ensure start/end are selected.</div>
-                )}
               </div>
 
               {distanceKm != null && durationMin != null && (
@@ -1107,55 +1140,23 @@ export default function CreateRidePage() {
                 )}/>
 
                 <FormField control={form.control} name="price" render={({ field }: any) => {
-                    const recommended = recommendedPricePerSeat;
-                    const bounds = recommended ? clampAdjustedPrice(recommended, recommended) : { min: 1, max: 10000, clamped: Number(field.value) };
                     return (
                       <FormItem>
                         <FormLabel>Price per Seat (PKR)</FormLabel>
 
-                        {recommended != null && (
-                          <div className="mb-2 text-sm">
-                            <div>Recommended Price (Auto-calculated): <strong>PKR {recommended}</strong></div>
-                            <div className="text-xs text-muted-foreground">Based on distance {distanceKm ?? '—'} km • duration {durationMin ?? '—'} min</div>
-                          </div>
-                        )}
-
                         <FormControl>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="range"
-                              min={bounds.min}
-                              max={bounds.max}
-                              step={1}
-                              value={Number(field.value || bounds.clamped)}
-                              onChange={(e) => {
-                                const v = Number(e.target.value);
-                                const { clamped } = clampAdjustedPrice(recommended ?? v, v);
-                                field.onChange(clamped);
-                                setFinalPricePerSeat(clamped);
-                              }}
-                              className="flex-1"
-                            />
-
-                            <Input
-                              type="number"
-                              min={bounds.min}
-                              max={bounds.max}
-                              step="0.5"
-                              {...field}
-                              onChange={(e) => {
-                                const v = Number(e.target.value || 0);
-                                const { clamped } = clampAdjustedPrice(recommended ?? v, v);
-                                field.onChange(clamped);
-                                setFinalPricePerSeat(clamped);
-                              }}
-                            />
-                          </div>
+                          <Input
+                            type="number"
+                            {...field}
+                            min={0}
+                            step="0.5"
+                            onChange={(e) => {
+                              const v = Number(e.target.value || 0);
+                              field.onChange(v);
+                              setFinalPricePerSeat(v);
+                            }}
+                          />
                         </FormControl>
-
-                        {recommended != null && (
-                          <div className="text-xs text-muted-foreground mt-2">Minimum allowed: PKR {bounds.min} • Maximum allowed: PKR {bounds.max}</div>
-                        )}
 
                         <FormMessage />
                       </FormItem>

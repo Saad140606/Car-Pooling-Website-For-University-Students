@@ -7,6 +7,10 @@ import 'leaflet/dist/leaflet.css'; // CRITICAL: Import Leaflet CSS for markers, 
 export const metadata: Metadata = {
   title: 'Campus Ride',
   description: 'University carpooling, simplified.',
+  icons: [
+    { rel: 'icon', url: '/campus-rides-logo.png' },
+    { rel: 'apple-touch-icon', url: '/campus-rides-logo.png' },
+  ],
 };
 
 export default function RootLayout({

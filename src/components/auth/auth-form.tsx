@@ -61,8 +61,16 @@ export function AuthForm({ university, action }: AuthFormProps) {
     consent: action === 'register' ? z.boolean().refine(v => v === true, { message: 'You must accept the Terms & Regulations and Privacy Policy to register.' }) : z.optional(z.boolean()),
   });
 
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
+  type AuthFormValues = {
+    email: string;
+    password: string;
+    fullName?: string;
+    gender?: 'male' | 'female';
+    consent?: boolean;
+  };
+
+  const form = useForm({
+    resolver: zodResolver(formSchema as any),
     defaultValues: {
       email: "",
       password: "",
@@ -72,7 +80,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
     },
   });
 
-  async function onSubmit(values: z.infer<typeof formSchema>) {
+  async function onSubmit(values: AuthFormValues) {
     setLoading(true);
     if (!auth || !firestore) {
       toast({
@@ -89,9 +97,9 @@ export function AuthForm({ university, action }: AuthFormProps) {
         // Persist the intended university and selected gender so the onAuthStateChanged hook can use them
         try {
           setPendingUniversity(university);
-          // @ts-ignore - form value exists when registering
-          if (values && (values as any).gender) {
-            setPendingGender((values as any).gender);
+          // persist selected gender when registering
+          if (values && values.gender) {
+            setPendingGender(values.gender);
           }
         } catch (err) {
           console.warn('Could not set pending_university/pending_gender in localStorage', err);
@@ -132,11 +140,30 @@ export function AuthForm({ university, action }: AuthFormProps) {
         const u = cred.user;
 
         // Require email verification before allowing a login to proceed.
-        // If the user hasn't verified their email, sign them out and instruct them to verify first.
+        // Allow exception: if the user is a server-registered admin (admins/{uid}),
+        // permit sign-in even if the email is not verified. We check via the
+        // server endpoint which validates the ID token and admin record.
         if (!u.emailVerified) {
-          try { await signOut(auth); } catch (e) { /* ignore */ }
-          toast({ variant: 'destructive', title: 'Email Not Verified', description: 'Please verify your email address before signing in. Check your inbox (and spam) for the verification email.' });
-          return;
+          let allowUnverifiedAdmin = false;
+          try {
+            const idToken = await u.getIdToken();
+            const res = await fetch('/api/admin/isAdmin', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            });
+            if (res.ok) {
+              const body = await res.json();
+              if (body && body.isAdmin) allowUnverifiedAdmin = true;
+            }
+          } catch (e) {
+            console.debug('Admin check failed:', e);
+          }
+
+          if (!allowUnverifiedAdmin) {
+            try { await signOut(auth); } catch (e) { /* ignore */ }
+            toast({ variant: 'destructive', title: 'Email Not Verified', description: 'Please verify your email address before signing in. Check your inbox (and spam) for the verification email.' });
+            return;
+          }
         }
         if (!firestore) {
           toast({ variant: 'destructive', title: 'Error', description: 'Firestore not available.' });

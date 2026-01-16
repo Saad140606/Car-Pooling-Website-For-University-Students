@@ -39,11 +39,14 @@ export default function MapLeaflet({
   // Fix default icon paths (idempotent)
   if (typeof window !== 'undefined') {
     try {
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: '/marker-icon-2x.png',
-        iconUrl: '/marker-icon.png',
-        shadowUrl: '/marker-shadow.png',
-      });
+      const pinSvg = `
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+          <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
+          <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+        </svg>
+      `;
+      const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+      L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
     } catch (e) {
       // non-fatal if require fails in some build configs
     }
@@ -71,9 +74,9 @@ export default function MapLeaflet({
     }
     mapRef.current = map;
 
-    // Add base layer (default: CARTO Dark Matter for a professional dark theme)
-    const providerUrl = (typeof (map as any).__tileUrl === 'string' && (map as any).__tileUrl) || tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-    const providerAttribution = tileAttribution || '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+    // Add base layer (default: OpenStreetMap tiles for a plain, familiar basemap)
+    const providerUrl = (typeof (map as any).__tileUrl === 'string' && (map as any).__tileUrl) || tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const providerAttribution = tileAttribution || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
     const baseLayer = L.tileLayer(providerUrl, {
       attribution: providerAttribution,
@@ -123,6 +126,14 @@ export default function MapLeaflet({
     // Add initial markers (use circle markers for consistent high-contrast icons)
     if (markers && markers.length) {
       markerLayerRef.current = L.layerGroup().addTo(map);
+      // Custom image icon from public/ (map-marker.jpg)
+      const customIcon = L.icon({
+        iconUrl: '/map-marker.jpg',
+        iconSize: [28, 41],
+        iconAnchor: [14, 41],
+        popupAnchor: [0, -41],
+        tooltipAnchor: [0, -41],
+      });
       markers.forEach((m: any) => {
         let latlng: [number, number] | null = null;
         let label: string | undefined;
@@ -136,7 +147,7 @@ export default function MapLeaflet({
         }
 
         if (latlng) {
-          const marker = L.circleMarker(latlng as any, { radius: 7, color: '#0b1220', weight: 1, fillColor: '#FFD166', fillOpacity: 1, interactive: true });
+          const marker = L.marker(latlng as any, { icon: customIcon, interactive: true });
           if (label) {
             try { marker.bindTooltip(label, { direction: 'top', permanent: false }); } catch (_) {}
           }
@@ -247,7 +258,15 @@ export default function MapLeaflet({
           }
 
           if (latlng) {
-            const marker = L.circleMarker(latlng as any, { radius: 7, color: '#0b1220', weight: 1, fillColor: '#FFD166', fillOpacity: 1 });
+            // Use the same custom icon for updated markers
+            const customIcon2 = L.icon({
+              iconUrl: '/map-marker.jpg',
+              iconSize: [28, 41],
+              iconAnchor: [14, 41],
+              popupAnchor: [0, -41],
+              tooltipAnchor: [0, -41],
+            });
+            const marker = L.marker(latlng as any, { icon: customIcon2 });
             if (label) {
               try { marker.bindTooltip(label, { direction: 'top', permanent: false }); } catch (_) {}
             }
@@ -267,5 +286,5 @@ export default function MapLeaflet({
     try { if (bounds) map.fitBounds(bounds); } catch (_) {}
   }, [bounds]);
 
-  return <div ref={containerRef} className={className} style={{ width: '100%', height: '100%', backgroundColor: '#0b1220', ...style }} />;
+  return <div ref={containerRef} className={className} style={{ width: '100%', height: '100%', ...style }} />;
 }

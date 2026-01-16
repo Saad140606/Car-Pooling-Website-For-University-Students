@@ -1,6 +1,6 @@
 'use client';
 
-import { collection, query, where, orderBy, doc, writeBatch, runTransaction, getDocs, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, doc, writeBatch, runTransaction, getDocs, getDoc, serverTimestamp, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { useFirestore, useUser } from '@/firebase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -22,11 +22,14 @@ import React from 'react';
 // Fix for default icon not showing in Leaflet
 if (typeof window !== 'undefined') {
   try {
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl: '/marker-icon-2x.png',
-      iconUrl: '/marker-icon.png',
-      shadowUrl: '/marker-shadow.png',
-    });
+    const pinSvg = `
+      <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+        <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
+        <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+      </svg>
+    `;
+    const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+    L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
   } catch (e) {}
 }
 
@@ -73,35 +76,21 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
 
     try {
       await runTransaction(firestore, async (transaction) => {
-        const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
         const rideRef = doc(firestore, `universities/${university}/rides`, booking.rideId);
         const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
-        const chatRef = doc(firestore, `universities/${university}/chats`, booking.id);
-
-        // Re-read booking inside transaction and ensure it's still pending
-        const bookingDoc = await transaction.get(bookingRef);
-        if (!bookingDoc.exists()) throw new Error('Booking no longer exists');
-        const bookingData = bookingDoc.data() as BookingType & { status?: string };
-        if (bookingData.status !== 'pending') {
-          // Nothing to do — another action already processed this booking
-          return;
-        }
+        const requestDoc = await transaction.get(requestRef);
+        if (!requestDoc.exists()) throw new Error('Request no longer exists');
+        const requestData = requestDoc.data() as BookingType & { status?: string };
+        if (requestData.status !== 'pending') return;
 
         if (newStatus === 'accepted') {
           const rideDoc = await transaction.get(rideRef);
-          if (!rideDoc.exists()) {
-            throw new Error('Ride does not exist!');
-          }
+          if (!rideDoc.exists()) throw new Error('Ride does not exist!');
           const currentRideData = rideDoc.data() as RideType;
-          // Prevent accepting when no seats remain
           const currentAvailable = (currentRideData.availableSeats ?? 0);
-          if (currentAvailable <= 0) {
-            throw new Error('No seats available');
-          }
+          if (currentAvailable <= 0) throw new Error('No seats available');
           const newAvailableSeats = currentAvailable - 1;
 
-          // Include driver details and ride snapshot on the booking so the passenger
-          // can view provider info even if /users read is restricted later.
           const driverDetails = currentRideData.driverInfo || null;
           const rideSnapshot = {
             id: rideDoc.id,
@@ -114,39 +103,48 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             driverInfo: currentRideData.driverInfo,
           } as Partial<RideType>;
 
-          // Now perform the writes: set booking status and include driver/ride snapshot
-          // Also create a chat room (id = booking.id) so passenger and provider can chat once accepted.
-          const chatId = bookingDoc.id;
-          const chatRef = doc(firestore, `universities/${university}/chats`, chatId);
+          // Create booking doc only when accepted
+          const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
+          const chatId = booking.id;
+          const chatRef2 = doc(firestore, `universities/${university}/chats`, chatId);
           const chatData = {
-            bookingId: bookingDoc.id,
-            rideId: ride.id,
-            passengerId: bookingData.passengerId,
+            bookingId: booking.id,
+            rideId: booking.rideId,
+            passengerId: requestData.passengerId,
             providerId: currentRideData.driverId,
-            participants: [bookingData.passengerId, currentRideData.driverId],
+            participants: [requestData.passengerId, currentRideData.driverId],
             createdAt: serverTimestamp(),
             status: 'active'
           };
-          transaction.set(chatRef, chatData);
-          transaction.update(bookingRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
-          // Mirror status and metadata to the ride-scoped request doc as well
-          transaction.update(requestRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
-          transaction.update(rideRef, {
-            availableSeats: newAvailableSeats,
-            ...(newAvailableSeats === 0 && { status: 'full' })
+
+          const bookingPayload = Object.assign({}, requestData, {
+            status: 'accepted',
+            createdAt: serverTimestamp(),
+            driverDetails,
+            ride: rideSnapshot,
+            chatId,
           });
+
+          transaction.set(chatRef2, chatData);
+          transaction.set(bookingRef, bookingPayload);
+          transaction.update(requestRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
+          transaction.update(rideRef, { availableSeats: newAvailableSeats, ...(newAvailableSeats === 0 && { status: 'full' }) });
         } else {
-          transaction.update(bookingRef, { status: newStatus });
+          // For rejects: update request status only. Do not create a booking.
           transaction.update(requestRef, { status: newStatus });
-          // If a chat exists for this booking (unlikely on reject), remove it to keep chats temporary
-          const chatDoc = await transaction.get(chatRef);
-          if (chatDoc.exists()) {
-            transaction.delete(chatRef);
-          }
         }
       });
 
       onProcessed?.(booking.id, newStatus);
+
+      // After transaction succeeded, if this was a reject attempt, try to delete any chat (best-effort).
+      if (newStatus === 'rejected') {
+        try {
+          await deleteDoc(doc(firestore, `universities/${university}/chats`, booking.id));
+        } catch (e) {
+          console.debug('Could not delete chat after reject (may not exist or insufficient permissions)', e);
+        }
+      }
 
       toast({
         title: `Booking ${newStatus}`,
@@ -180,11 +178,15 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             {booking.passengerDetails?.phone ? (
               <p className="text-sm text-muted-foreground">{booking.passengerDetails.phone}</p>
             ) : null}
-             {booking.pickupPoint && (
+             {booking.pickupPlaceName ? (
               <p className="text-xs text-accent flex items-center mt-1">
-                <MapPin className="h-3 w-3 mr-1"/> Pickup Requested
+                <MapPin className="h-3 w-3 mr-1"/> {booking.pickupPlaceName}
               </p>
-             )}
+             ) : booking.pickupPoint ? (
+              <p className="text-xs text-accent flex items-center mt-1">
+                <MapPin className="h-3 w-3 mr-1"/> {((booking.pickupPoint as any).lat || '').toFixed ? `${(booking.pickupPoint as any).lat.toFixed(5)}, ${(booking.pickupPoint as any).lng.toFixed(5)}` : 'Pickup Requested'}
+              </p>
+             ) : null}
           </div>
           <div className="flex gap-2">
             <Button size="icon" variant="outline" className="h-8 w-8 bg-green-500/10 text-green-500 hover:bg-green-500/20" onClick={() => handleBooking(booking, 'accepted')} disabled={processingIds.includes(booking.id)}>
@@ -211,7 +213,15 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     ) : null;
     const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery);
 
-    const pickupPoints = acceptedBookings?.map(b => b.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
+    const pendingRequestsQuery = firestore ? query(
+      collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
+      where('status', '==', 'pending')
+    ) : null;
+    const { data: pendingRequests } = useBookingCollection<BookingType>(pendingRequestsQuery);
+
+    const acceptedPoints = acceptedBookings?.map(b => b.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
+    const pendingPoints = pendingRequests?.map(r => r.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
+    const pickupPoints = [...acceptedPoints, ...pendingPoints];
     const [isDeleting, setIsDeleting] = React.useState(false);
     const [deleteOpen, setDeleteOpen] = React.useState(false);
     const acceptedCount = acceptedBookings?.length || 0;
@@ -336,7 +346,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                   <div className="text-[0.72rem]">Seats Left: <span className="font-medium text-white">{availableSeats}</span></div>
                 </div>
                 <div className="text-right">
-                  <div className="text-[0.72rem]">{ride.genderAllowed === 'Both Men & Women' ? 'Both' : (String(ride.genderAllowed).includes('Men') ? 'Men' : String(ride.genderAllowed).includes('Women') ? 'Women' : ride.genderAllowed)}</div>
+                  <div className="text-[0.72rem]">{(typeof ride.genderAllowed === 'string' && (ride.genderAllowed === 'both' || ride.genderAllowed === 'Both')) ? 'Both' : (String(ride.genderAllowed).includes('Men') ? 'Men' : String(ride.genderAllowed).includes('Women') ? 'Women' : String(ride.genderAllowed))}</div>
                 </div>
               </div>
 
@@ -359,20 +369,20 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                   {acceptedBookings.map((b) => (
                     <div key={b.id} className="p-2 bg-secondary rounded-md text-sm flex items-start justify-between">
                       <div className="min-w-0">
-                        <div className="font-medium text-white truncate">{b.passengerDetails?.fullName || b.passengerDetails?.displayName || 'Unknown Student'}</div>
+                        <div className="font-medium text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
                         <div className="text-xs text-slate-300 truncate">{b.passengerDetails?.fullName ? '' : ''}</div>
                         <div className="text-xs text-accent mt-1">
-                          {b.pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
+                          {(b as any).pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
                         </div>
-                        <div className="text-xs text-slate-400 mt-1">Price: PKR {b.ride?.price ?? b.price ?? ride.price}</div>
+                        <div className="text-xs text-slate-400 mt-1">Price: PKR {(b.ride as any)?.price ?? (b as any).price ?? ride.price}</div>
                       </div>
                       <div className="flex flex-col items-end gap-2">
-                        {b.passengerDetails?.phone ? (
-                          <a href={`tel:${b.passengerDetails.phone}`} className="text-[0.72rem] px-2 py-1 rounded bg-primary/90 text-primary-foreground">Call</a>
+                        {(b.passengerDetails as any)?.phone ? (
+                          <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-[0.72rem] px-2 py-1 rounded bg-primary/90 text-primary-foreground">Call</a>
                         ) : null}
                         <div className="mt-2 flex flex-col items-end gap-2">
-                          {b.chatId ? (
-                            <ChatButton chatId={b.chatId} university={university} label="Chat" />
+                          {((b as any).chatId || b.id) ? (
+                            <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
                           ) : null}
                         </div>
                         <div className="text-[0.7rem] text-slate-400">{new Date((b.ride?.departureTime?.seconds ?? ride.departureTime.seconds) * 1000).toLocaleString()}</div>

@@ -13,6 +13,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Route, Calendar, Users, Search as SearchIcon } from 'lucide-react';
+import FullRideCard from '@/components/FullRideCard';
 import { useCollection as useBookingsCollection } from '@/firebase/firestore/use-collection';
 import L, { LatLng, LatLngExpression } from 'leaflet';
 
@@ -27,11 +28,14 @@ import { FirestorePermissionError } from '@/firebase/errors';
 // Fix for default icon not showing in Leaflet
 if (typeof window !== 'undefined') {
   try {
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl: '/marker-icon-2x.png',
-      iconUrl: '/marker-icon.png',
-      shadowUrl: '/marker-shadow.png',
-    });
+    const pinSvg = `
+      <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+        <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
+        <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+      </svg>
+    `;
+    const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+    L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
   } catch (e) {
     // silent fallback if mergeOptions isn't available in some environments
   }
@@ -48,6 +52,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
   const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const router = useRouter();
 
   // Controlled dialog state to manage when the MapContainer is mounted (avoids double-init)
   const [open, setOpen] = useState(false);
@@ -398,37 +403,52 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
   const { toast } = useToast();
 
   const [existingBooking, setExistingBooking] = useState<any | null>(null);
+  const [existingChecked, setExistingChecked] = useState(false);
 
-  // Check for an existing booking by deterministic id (rideId_userId) using a direct get.
+  // Check for an existing request by deterministic id (rideId_userId) using a direct get.
   React.useEffect(() => {
     let mounted = true;
     const check = async () => {
-      if (!firestore || !user || !userData) return setExistingBooking(null);
+      setExistingChecked(false);
+      if (!firestore || !user || !userData) {
+        if (mounted) setExistingBooking(null);
+        if (mounted) setExistingChecked(true);
+        return;
+      }
       try {
-        const bookingId = `${ride.id}_${user.uid}`;
-        const ref = doc(firestore, `universities/${userData.university}/bookings`, bookingId);
+        const requestId = `${ride.id}_${user.uid}`;
+        const ref = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', requestId);
         const snap = await getDoc(ref);
         if (!mounted) return;
         setExistingBooking(snap.exists() ? ({ id: snap.id, ...snap.data() } as any) : null);
       } catch (e) {
-        console.error('Failed to check existing booking', e);
+        console.error('Failed to check existing request', e);
         if (mounted) setExistingBooking(null);
+      } finally {
+        if (mounted) setExistingChecked(true);
       }
     };
     check();
     return () => { mounted = false; };
   }, [firestore, user, userData, ride.id]);
 
+  const existingRequestStatus = existingBooking ? existingBooking.status : null;
+  const hasBlockingRequest = existingBooking ? (existingRequestStatus && existingRequestStatus !== 'rejected') : false;
+
   const handleRequestSeat = async (pickupPoint: LatLng) => {
     if (!user || !firestore) return false;
+    if (!userData || !userData.university) {
+      toast({ variant: 'destructive', title: 'Profile incomplete', description: 'Please complete your profile and select your university before booking.' });
+      return false;
+    }
 
     if (ride.driverId === user.uid) {
       toast({ variant: 'destructive', title: "Can't book own ride" });
       return false;
     }
 
-    // Prevent double-requesting the same ride
-    if (existingBooking) {
+    // Prevent double-requesting the same ride (only block when request not rejected)
+    if (hasBlockingRequest) {
       toast({ variant: 'destructive', title: 'Already Requested', description: 'You have already requested a seat on this ride.' });
       return false;
     }
@@ -453,7 +473,7 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
       // ignore reverse geocode failures; we'll store coords at minimum
     }
 
-    const bookingData = {
+    const requestData = {
       rideId: ride.id,
       driverId: ride.driverId,
       passengerId: user.uid,
@@ -477,39 +497,37 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
         if (!rideDoc.exists() || rideDoc.data().availableSeats <= 0) {
           throw new Error('This ride is no longer available or is full.');
         }
-        // Use a deterministic booking id to prevent duplicate bookings from the same user
-        const bookingId = `${ride.id}_${user.uid}`;
-        const newBookingRef = doc(firestore, `universities/${userData.university}/bookings`, bookingId);
-        const existingBookingDoc = await transaction.get(newBookingRef);
-        if (existingBookingDoc.exists()) {
-          throw new Error('You have already requested a seat on this ride.');
+        // Use a deterministic request id to prevent duplicate requests from the same user
+        const requestId = `${ride.id}_${user.uid}`;
+        const requestRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', requestId);
+        const existingRequestDoc = await transaction.get(requestRef);
+        if (existingRequestDoc.exists()) {
+          const data = existingRequestDoc.data();
+          if (data && data.status && data.status !== 'rejected') {
+            throw new Error('You have already requested a seat on this ride.');
+          }
+          // If the existing request was rejected, allow overwriting so the user can request again.
         }
-        transaction.set(newBookingRef, bookingData);
-        // Also create a mirror request document under the ride so the ride owner can
-        // query requests at `universities/{univId}/rides/{rideId}/requests` (rules allow this).
-        const requestRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', bookingId);
-        const requestData = Object.assign({}, bookingData, { bookingId });
-        transaction.set(requestRef, requestData);
+        const requestPayload = Object.assign({}, requestData, { bookingId: requestId });
+        transaction.set(requestRef, requestPayload);
       });
 
       toast({ title: 'Request Sent!', description: 'The ride provider has been notified of your request.' });
       return true;
     } catch (error: any) {
       console.error('Error requesting seat:', error);
-      const permissionError = new FirestorePermissionError({ path: `universities/${userData.university}/bookings`, operation: 'create', requestResourceData: bookingData });
-      errorEmitter.emit('permission-error', permissionError);
-
-      const code = error?.code || 'unknown';
+      const code = error?.code || '';
       const msg = error?.message || String(error);
 
-      if (code === 'permission-denied') {
-        // Helpful guidance for missing rules deployment or profile issues
+      // Only emit a permission-error when the underlying error indicates a real permission denial.
+      if (code === 'permission-denied' || String(msg).toLowerCase().includes('permission')) {
+        const permissionError = new FirestorePermissionError({ path: `universities/${userData.university}/rides/${ride.id}/requests`, operation: 'create', requestResourceData: requestData });
+        errorEmitter.emit('permission-error', permissionError);
         toast({
           variant: 'destructive',
-          title: 'Booking Failed — Permission Denied',
-          description: `Ensure your Firestore rules allow creating bookings under universities/${userData.university}/bookings and requests under universities/${userData.university}/rides/${ride.id}/requests. Then run: firebase deploy --only firestore:rules`,
+          title: 'Request Failed — Permission Denied',
+          description: `Ensure your Firestore rules allow creating ride requests under universities/${userData.university}/rides/${ride.id}/requests. Then run: firebase deploy --only firestore:rules`,
         });
-        console.error('Permission denied details:', { code, msg, bookingPath: `universities/${userData.university}/bookings/${ride.id}_${user.uid}`, requestPath: `universities/${userData.university}/rides/${ride.id}/requests/${ride.id}_${user.uid}` });
       } else {
         toast({ variant: 'destructive', title: 'Booking Failed', description: msg });
       }
@@ -667,7 +685,7 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
             <div className="flex-1">
               <div className="rounded-md overflow-hidden border border-border bg-white p-1 h-10 md:h-12 shadow-sm">
                 {ride.route && ride.route.length > 0 ? (
-                  <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={!!existingBooking}>
+                  <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
                     <div className="relative w-full h-full rounded-md overflow-hidden pl-2 flex items-center">
                       <div className="flex-1 h-full min-h-0">
                         <PreviewInner route={ride.route} makeUrl={makeStaticMapUrl} />
@@ -696,12 +714,12 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
               </div>
 
               <div className="mt-2 w-full">
-                <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={!!existingBooking}>
+                <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
                   <Button className="mb-2 w-full text-sm bg-transparent hover:bg-white/5 border border-white/5 text-slate-200">View Route</Button>
                 </RouteMapModal>
 
-                <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={!!existingBooking}>
-                  <Button disabled={isDriver || isFull || !!existingBooking || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="w-full bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">Book</Button>
+                <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
+                  <Button disabled={!existingChecked || isDriver || isFull || hasBlockingRequest || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="w-full bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">Book</Button>
                 </RouteMapModal>
               </div>
             </div>
@@ -732,8 +750,8 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
             </div>
           </div>
 
-                <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={!!existingBooking}>
-                  <Button disabled={isDriver || isFull || !!existingBooking || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">Book</Button>
+                <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
+                  <Button disabled={!existingChecked || isDriver || isFull || hasBlockingRequest || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">Book</Button>
                 </RouteMapModal>
         </div>
       </div>
@@ -763,6 +781,14 @@ export default function RidesPage() {
   
   const isLoading = userLoading || ridesLoading;
 
+  // Check if the current user already has an active booking (any ride)
+  const myBookingsQuery = (user && firestore && userData) ? query(
+    safeCollection(firestore, 'universities', userData.university, 'bookings'),
+    where('passengerId', '==', user.uid)
+  ) : null;
+  const { data: myBookings } = useBookingsCollection(myBookingsQuery);
+  const hasActiveBooking = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected'));
+
   // --- Filters UI state (must be declared unconditionally to preserve Hooks order) ---
   const [filters, setFilters] = useState({
     transport: 'any' as 'any'|'car'|'bike',
@@ -780,7 +806,15 @@ export default function RidesPage() {
   // Sync filters from URL search params (so Filters page can set them via query string)
   useEffect(() => {
     try {
-      const params = Object.fromEntries(searchParams ? Array.from(searchParams.entries()) : []);
+      // Robustly convert ReadonlyURLSearchParams to a plain object without
+      // relying on `entries()` implementation differences across environments.
+      const params: Record<string, string> = {};
+      if (searchParams) {
+        for (const key of Array.from(searchParams.keys())) {
+          const v = searchParams.get(key);
+          if (v !== null) params[key] = v;
+        }
+      }
       const newFilters = {
         transport: (params.transport as any) || 'any',
         gender: (params.gender as any) || 'any',
@@ -923,10 +957,13 @@ export default function RidesPage() {
       </div>
 
       {filteredRides && filteredRides.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredRides.map((ride: any) => (
-            <RideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} />
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-6 items-stretch">
+          {filteredRides.map((ride: any) => {
+            const hasActiveBookingForOther = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected' && b.rideId !== ride.id));
+            return (
+              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} hasActiveBooking={hasActiveBookingForOther} myBookings={myBookings} />
+            );
+          })}
         </div>
       ) : (
         <div className="text-center py-16 border-dashed border-2 rounded-lg">

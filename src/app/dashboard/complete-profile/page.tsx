@@ -78,7 +78,7 @@ export default function CompleteProfilePage() {
 
     setSaving(true);
     try {
-      const userDocRef = doc(firestore, 'users', user.uid);
+      const userDocRef = doc(firestore, 'users', `${finalUniversity}_${user.uid}`);
       await setDoc(userDocRef, {
         uid: user.uid,
         email: user.email,

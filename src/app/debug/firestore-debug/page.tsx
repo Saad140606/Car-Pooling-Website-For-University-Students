@@ -31,9 +31,13 @@ export default function FirestoreDebugPage() {
       return;
     }
     try {
-      const ref = doc(firestore, 'users', user.uid);
-      const snap = await getDoc(ref);
-      append('users/{uid}', snap.exists() ? snap.data() : 'NOT FOUND');
+      const fastRef = doc(firestore, 'users', `fast_${user.uid}`);
+      const nedRef = doc(firestore, 'users', `ned_${user.uid}`);
+      const fastSnap = await getDoc(fastRef);
+      const nedSnap = await getDoc(nedRef);
+      if (fastSnap.exists()) append('users/fast/{uid}', fastSnap.data());
+      else if (nedSnap.exists()) append('users/ned/{uid}', nedSnap.data());
+      else append('users/{uid}', 'NOT FOUND');
     } catch (err: any) {
       append('checkUserDoc.error', { message: err?.message || String(err), code: err?.code || null });
     }
@@ -46,14 +50,17 @@ export default function FirestoreDebugPage() {
     }
 
     try {
-      const ref = doc(firestore, 'users', user.uid);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        append('createUserDoc', 'users/{uid} already exists, skipping');
+      const fastRef = doc(firestore, 'users', `fast_${user.uid}`);
+      const nedRef = doc(firestore, 'users', `ned_${user.uid}`);
+      const fastSnap = await getDoc(fastRef);
+      const nedSnap = await getDoc(nedRef);
+      if (fastSnap.exists() || nedSnap.exists()) {
+        append('createUserDoc', 'users/{university}/{uid} already exists, skipping');
         return;
       }
-      await setDoc(ref, { email: user.email || null, university: 'fast', createdAt: serverTimestamp() });
-      append('createUserDoc', 'Created users/{uid}');
+      const target = (userData && userData.university) ? userData.university : 'fast';
+      await setDoc(doc(firestore, 'users', `${target}_${user.uid}`), { email: user.email || null, university: target, createdAt: serverTimestamp() });
+      append('createUserDoc', `Created users/${target}/{uid}`);
     } catch (err: any) {
       append('createUserDoc.error', { message: err?.message || String(err), code: err?.code || null });
     }

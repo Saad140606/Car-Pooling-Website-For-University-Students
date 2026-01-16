@@ -17,16 +17,26 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
       try {
         const providerId = meta.providerId || meta.driverId || meta.provider?.uid;
         const passengerId = meta.passengerId || meta.passenger?.uid;
+        const fetchUserContact = async (uid: string) => {
+          try {
+            const fastSnap = await getDoc(doc(firestore, 'users', `fast_${uid}`));
+            if (fastSnap.exists()) return (fastSnap.data() as any).contactNumber || null;
+            const nedSnap = await getDoc(doc(firestore, 'users', `ned_${uid}`));
+            if (nedSnap.exists()) return (nedSnap.data() as any).contactNumber || null;
+          } catch (_) { /* ignore */ }
+          return null;
+        };
+
         if (providerId) {
           try {
-            const pSnap = await getDoc(doc(firestore, 'users', providerId));
-            if (mounted && pSnap.exists()) setProviderContact((pSnap.data() as any).contactNumber || null);
+            const contact = await fetchUserContact(providerId);
+            if (mounted) setProviderContact(contact);
           } catch (_) { /* ignore */ }
         }
         if (passengerId) {
           try {
-            const sSnap = await getDoc(doc(firestore, 'users', passengerId));
-            if (mounted && sSnap.exists()) setPassengerContact((sSnap.data() as any).contactNumber || null);
+            const contact = await fetchUserContact(passengerId);
+            if (mounted) setPassengerContact(contact);
           } catch (_) { /* ignore */ }
         }
       } catch (e) {

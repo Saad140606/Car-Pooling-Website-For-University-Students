@@ -74,7 +74,9 @@ function BookingCard({ booking, university }: { booking: BookingType, university
               </div>
             </DialogContent>
           </Dialog>
-          {booking.chatId ? <ChatButton chatId={booking.chatId} university={university} label="Chat" /> : null}
+          {booking.status === 'accepted' && (booking.chatId || booking.id) ? (
+            <ChatButton chatId={booking.chatId || booking.id} university={university} label="Chat" />
+          ) : null}
         </div>
         <div className="text-sm text-slate-400">Status: <Badge className="ml-2">{booking.status}</Badge></div>
       </div>

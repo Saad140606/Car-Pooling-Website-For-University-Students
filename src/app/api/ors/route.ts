@@ -3,8 +3,10 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
-  const ORS_API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY;
+  // Try both server-side and public env names to support different local setups
+  const ORS_API_KEY = process.env.ORS_API_KEY || process.env.NEXT_PUBLIC_ORS_API_KEY;
   if (!ORS_API_KEY) {
+    console.error('ORS API key missing. Set ORS_API_KEY or NEXT_PUBLIC_ORS_API_KEY in environment.');
     return NextResponse.json({ error: 'ORS API key is not configured.' }, { status: 500 });
   }
 
@@ -42,9 +44,19 @@ export async function POST(req: NextRequest) {
         if (!response.ok) {
           // Try to parse JSON error body, otherwise fall back to text
           let errorBody: any = null;
-          try { errorBody = await response.json(); } catch (e) { errorBody = await response.text().catch(() => null); }
+          let bodyText: string | null = null;
+          try { bodyText = await response.text().catch(() => null); } catch (e) { bodyText = null; }
+          try { errorBody = bodyText ? JSON.parse(bodyText) : null; } catch (e) { errorBody = bodyText; }
 
-          console.error('ORS API Error', { status: response.status, attempt, body: typeof errorBody === 'string' ? errorBody.slice(0, 1000) : errorBody });
+          // Build a compact headers snapshot
+          let hdrs: Record<string, string> = {};
+          try {
+            if (response.headers && typeof response.headers.entries === 'function') {
+              for (const [k, v] of Array.from(response.headers.entries()).slice(0, 6)) hdrs[k] = v;
+            }
+          } catch (e) { /* ignore */ }
+
+          console.error('ORS API Error', { status: response.status, statusText: response.statusText, attempt, body: errorBody ?? bodyText, headers: hdrs });
 
           // Retry on server errors
           if (response.status >= 500 && attempt < maxAttempts) {
@@ -52,7 +64,12 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          return NextResponse.json({ error: 'ORS upstream error', status: response.status, details: errorBody }, { status: response.status });
+          // Prepare details for client: prefer structured body, otherwise provide text/status
+          const detailsForClient = (errorBody && typeof errorBody === 'object' && Object.keys(errorBody).length === 0)
+            ? { message: 'Empty upstream JSON body', statusText: response.statusText || null, headers: hdrs }
+            : (errorBody ?? bodyText ?? null);
+
+          return NextResponse.json({ error: 'ORS upstream error', status: response.status, statusText: response.statusText, details: detailsForClient }, { status: response.status });
         }
 
         const routeData = await response.json();

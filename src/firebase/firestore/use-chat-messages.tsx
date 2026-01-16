@@ -30,9 +30,14 @@ export function useChatMessages(db: Firestore | null, universityId: string | nul
       return () => unsub && typeof unsub === 'function' ? unsub() : undefined;
     } catch (err: any) {
       console.error('Chat messages subscription error', err);
-      const perm = new FirestorePermissionError({ path: `chats/${chatId}/messages`, operation: 'list', hint: 'Ensure you are a participant of this chat and that the chat exists.' });
-      errorEmitter.emit('permission-error', perm);
-      setError(perm);
+      const code = err?.code || '';
+      if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+        const perm = new FirestorePermissionError({ path: `chats/${chatId}/messages`, operation: 'list', hint: 'Ensure you are a participant of this chat and that the chat exists.' });
+        errorEmitter.emit('permission-error', perm);
+        setError(perm);
+      } else {
+        setError(err);
+      }
       setLoading(false);
     }
   }, [db, chatId]);

@@ -289,8 +289,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
-    </div>
-      {mapRoute ? (
+        {mapRoute ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-3xl h-[70vh] bg-white rounded shadow-lg overflow-hidden">
             <div className="flex items-center justify-between p-3 border-b">
@@ -307,5 +306,6 @@ export default function AnalyticsPage() {
       ) : null}
 
       <RideDetailModal ride={selectedRide} onClose={() => setSelectedRide(null)} />
+    </div>
   );
 }

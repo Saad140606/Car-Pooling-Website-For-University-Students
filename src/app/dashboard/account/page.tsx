@@ -51,7 +51,8 @@ export default function AccountPage() {
     }
     setSaving(true);
     try {
-      const userDocRef = doc(firestore, 'users', user.uid);
+      const university = userData?.university || 'fast';
+      const userDocRef = doc(firestore, 'users', `${university}_${user.uid}`);
       await setDoc(userDocRef, {
         uid: user.uid,
         email: user.email,

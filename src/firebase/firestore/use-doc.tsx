@@ -2,7 +2,8 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { onSnapshot, DocumentReference, DocumentData } from 'firebase/firestore';
+import { onSnapshot } from 'firebase/firestore';
+import type { DocumentReference, DocumentData } from 'firebase/firestore';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError } from '../errors';
 
@@ -38,13 +39,18 @@ export function useDoc<T extends DocumentData>(
           setError(null);
         },
         (err) => {
-          const permissionError = new FirestorePermissionError({
-            path: docRef.path,
-            operation: 'get',
-            hint: 'Ensure users/{uid} exists and your Firestore rules allow access to this document. See docs/firestore-rules.md for guidance.'
-          });
-          errorEmitter.emit('permission-error', permissionError);
-          setError(permissionError);
+          const code = err?.code || '';
+          if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+            const permissionError = new FirestorePermissionError({
+              path: docRef.path,
+              operation: 'get',
+              hint: 'Ensure users/{uid} exists and your Firestore rules allow access to this document. See docs/firestore-rules.md for guidance.'
+            });
+            errorEmitter.emit('permission-error', permissionError);
+            setError(permissionError);
+          } else {
+            setError(err);
+          }
           setLoading(false);
         }
       );
@@ -54,13 +60,18 @@ export function useDoc<T extends DocumentData>(
         setData(doc.exists() ? ({ id: doc.id, ...doc.data() } as T) : null);
         setLoading(false);
       }).catch((err) => {
-         const permissionError = new FirestorePermissionError({
-            path: docRef.path,
-            operation: 'get',
-          });
-          errorEmitter.emit('permission-error', permissionError);
-          setError(permissionError);
-          setLoading(false);
+         const code = err?.code || '';
+         if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+           const permissionError = new FirestorePermissionError({
+             path: docRef.path,
+             operation: 'get',
+           });
+           errorEmitter.emit('permission-error', permissionError);
+           setError(permissionError);
+         } else {
+           setError(err);
+         }
+         setLoading(false);
       });
     }
   }, [docRefPath, options.listen]);

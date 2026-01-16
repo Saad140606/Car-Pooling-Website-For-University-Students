@@ -3,9 +3,9 @@
 'use client';
 
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
+import { z } from 'zod';
 import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
@@ -14,7 +14,8 @@ import 'leaflet/dist/leaflet.css';
 
 import { Button } from '@/components/ui/button';
 import RouteEditor from '@/components/RouteEditor';
-import { encodePolyline, decodePolyline, LatLng as RouteLatLng, computeBounds } from '@/lib/route';
+import { decodePolyline } from '@/lib/route';
+import type { LatLng as RouteLatLng } from '@/lib/route';
 import { calculatePricing } from '@/lib/pricing';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
@@ -22,7 +23,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useUser } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
-import { ToastAction } from '@/components/ui/toast';
 import { Loader2, MapPin, Lock } from 'lucide-react';
 import { LeavingTimePicker } from '@/components/ui/leaving-time-picker';
 import { errorEmitter } from '@/firebase/error-emitter';
@@ -34,7 +34,7 @@ const rideSchema = z.object({
   to: z.string().min(3, 'Destination is required.'),
   departureTime: z.date({ required_error: 'Please select a departure date and time.' }),
   transportMode: z.enum(['car', 'bike']),
-  price: z.coerce.number().positive('Price must be a positive number.'),
+  price: z.coerce.number().int().min(0, 'Price must be a non-negative integer.'),
   totalSeats: z.coerce.number().int().min(1, 'There must be at least 1 seat.'),
   genderAllowed: z.enum(['male', 'female', 'both']),
 }).refine(data => data.from.toLowerCase() !== data.to.toLowerCase(), {
@@ -80,24 +80,26 @@ const MapComponent = forwardRef<MapComponentRef, {
     // Ensure marker icons are available in Next.js by pointing to public/ assets
     if (typeof window !== 'undefined') {
       try {
-        L.Icon.Default.mergeOptions({
-          iconRetinaUrl: '/marker-icon-2x.png',
-          iconUrl: '/marker-icon.png',
-          shadowUrl: '/marker-shadow.png',
-        });
+          const pinSvg = `
+            <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+              <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
+              <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+            </svg>
+          `;
+          const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+          L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
       } catch (e) {
         // ignore
       }
     }
     
-    // Use CartoDB Dark Matter tiles for a professional dark theme and consistent UI
-    if (mapContainerRef.current) mapContainerRef.current.style.backgroundColor = '#0b1220';
+    // Use OpenStreetMap tiles (plain/default style used elsewhere)
     mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 16);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
       detectRetina: true,
-      subdomains: 'abcd',
+      subdomains: 'abc',
     }).addTo(mapInstanceRef.current);
 
     mapInstanceRef.current.on('click', async (e: L.LeafletMouseEvent) => {
@@ -395,7 +397,7 @@ export default function CreateRidePage() {
   const [fromCoords, setFromCoords] = useState<LatLngLiteral | null>(null);
   const [toCoords, setToCoords] = useState<LatLngLiteral | null>(null);
   const [routePolyline, setRoutePolyline] = useState<string | null>(null);
-  const [routeBounds, setRouteBounds] = useState<ReturnType<typeof computeBounds> | null>(null);
+  const [routeBounds, setRouteBounds] = useState<any | null>(null);
   const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
   const [routeLatLngs, setRouteLatLngs] = useState<RouteLatLng[] | null>(null);
   const [recommendedPricePerSeat, setRecommendedPricePerSeat] = useState<number | null>(null);
@@ -812,6 +814,36 @@ export default function CreateRidePage() {
       ...(pricingBreakdown && { pricingBreakdown }),
     };
 
+    // Auto-generate a sensible `stops` array for the ride document.
+    // Prefer explicit route waypoints (named) returned by the directions generator;
+    // otherwise sample the decoded route lat/lngs to pick a few main stops.
+    try {
+      const maxStops = 6;
+      let stops: { name?: string; lat: number; lng: number }[] | null = null;
+
+      if (routeWaypoints && Array.isArray(routeWaypoints) && routeWaypoints.length > 0) {
+        stops = routeWaypoints.map((w: any) => ({ name: w.name || undefined, lat: Number(w.lat ?? (w[0] ?? 0)), lng: Number(w.lng ?? (w[1] ?? 0)) })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+      }
+
+      if ((!stops || stops.length === 0) && routeLatLngs && Array.isArray(routeLatLngs) && routeLatLngs.length > 0) {
+        const n = routeLatLngs.length;
+        const step = Math.max(1, Math.floor((n - 1) / (maxStops - 1)));
+        const idxs: number[] = [];
+        for (let i = 0; i < n; i += step) {
+          idxs.push(i);
+        }
+        if (idxs[idxs.length - 1] !== n - 1) idxs.push(n - 1);
+        stops = idxs.map(i => ({ lat: routeLatLngs![i].lat, lng: routeLatLngs![i].lng }));
+      }
+
+      if (stops && stops.length > 0) {
+        // Trim to maxStops and attach to rideData
+        (rideData as any).stops = stops.slice(0, maxStops);
+      }
+    } catch (stopsErr) {
+      console.warn('Failed to auto-generate stops for ride:', stopsErr);
+    }
+
     try {
       console.debug('Creating ride: writing to Firestore', { university: userData!.university, rideData });
       const ridesCollection = collection(firestore!, 'universities', userData!.university, 'rides');
@@ -1146,14 +1178,25 @@ export default function CreateRidePage() {
 
                         <FormControl>
                           <Input
-                            type="number"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
                             {...field}
-                            min={0}
-                            step="0.5"
                             onChange={(e) => {
-                              const v = Number(e.target.value || 0);
-                              field.onChange(v);
-                              setFinalPricePerSeat(v);
+                              // Keep only digits, remove decimals and non-numeric chars
+                              let s = String(e.target.value || '');
+                              // Remove non-digit characters
+                              s = s.replace(/\D+/g, '');
+                              // Remove leading zeros when more than one digit
+                              if (s.length > 1) s = s.replace(/^0+/, '');
+                              if (s === '') {
+                                field.onChange(0);
+                                setFinalPricePerSeat(0);
+                              } else {
+                                const n = Number(s);
+                                field.onChange(n);
+                                setFinalPricePerSeat(n);
+                              }
                             }}
                           />
                         </FormControl>

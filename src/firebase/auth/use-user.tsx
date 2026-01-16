@@ -3,7 +3,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, deleteDoc, runTransaction } from 'firebase/firestore';
+import { getPendingUniversity, clearPendingUniversity, isValidUniversity, getPendingGender, clearPendingGender } from '@/lib/university';
 
 import { useAuth, useFirestore } from '../provider';
 import { useDoc } from '../firestore/use-doc';
@@ -30,52 +31,35 @@ export function useUser() {
       console.debug('onAuthStateChanged:', { user: u, currentUser: auth.currentUser });
       setUser(u);
 
-      // Ensure a users/{uid} document exists for the signed-in user. Run once on sign-in and do not overwrite existing data.
+      // Ensure a users/{university}/{uid} document exists for the signed-in user. Run once on sign-in and do not overwrite existing data.
       if (u && firestore) {
         try {
-          const userRef = doc(firestore, 'users', u.uid);
-          const snap = await getDoc(userRef);
-          if (!snap.exists()) {
-            // Only create a users/{uid} document if the user's email is verified. If not verified yet, skip creation and wait for the user to verify and sign in again.
+          const userFastRef = doc(firestore, 'users', `fast_${u.uid}`);
+          const userNedRef = doc(firestore, 'users', `ned_${u.uid}`);
+          const snapFast = await getDoc(userFastRef);
+          const snapNed = await getDoc(userNedRef);
+
+          // If user doc exists in either university, do nothing here — the app will read it below.
+          if (!snapFast.exists() && !snapNed.exists()) {
+            // Only create profile if email verified
             if (!u.emailVerified) {
-              console.debug('User is unverified; skipping users/{uid} creation for', u.uid);
+              console.debug('User is unverified; skipping users/{university}/{uid} creation for', u.uid);
             } else {
-              // Prefer a pending university stored in localStorage (set at registration time), otherwise fall back to 'fast'
+              // Prefer pending university, otherwise fall back to 'fast'
               let universityToSet: string | null = null;
-              try {
-                if (typeof window !== 'undefined') {
-                  universityToSet = localStorage.getItem('pending_university');
-                }
-              } catch (err) {
-                console.warn('Could not read pending_university from localStorage', err);
-              }
+              try { universityToSet = getPendingUniversity(); } catch (err) { console.warn('Could not read pending_university from localStorage', err); }
+              const finalUniversity = isValidUniversity(universityToSet) ? universityToSet as string : 'fast';
+              const pendingGender = getPendingGender();
+              const profile: any = { email: u.email || null, university: finalUniversity, createdAt: serverTimestamp() };
+              if (pendingGender) profile.gender = pendingGender;
 
               try {
-                const finalUniversity = universityToSet ?? 'fast';
-                const profile = {
-                  email: u.email || null,
-                  university: finalUniversity,
-                  createdAt: serverTimestamp()
-                };
-
-                const uniUserRef = doc(firestore, 'universities', finalUniversity, 'users', u.uid);
-
-                await Promise.all([
-                  setDoc(userRef, profile),
-                  setDoc(uniUserRef, profile)
-                ]);
-                console.debug('Created missing users document for', u.uid, 'and mirrored to', `universities/${finalUniversity}/users/${u.uid}`);
-                // Note: token registration moved to global sign-in handling below.
+                await setDoc(doc(firestore, 'users', `${finalUniversity}_${u.uid}`), profile);
+                console.debug('Created university-scoped users document for', u.uid, 'under', finalUniversity);
               } catch (err) {
-                console.warn('Failed to create users/{uid} document or mirror to universities/{univ}/users/{uid}:', err);
+                console.warn('Failed to create users/{university}/{uid} document:', err);
               } finally {
-                try {
-                  if (typeof window !== 'undefined') {
-                    localStorage.removeItem('pending_university');
-                  }
-                } catch (err) {
-                  /* ignore */
-                }
+                try { clearPendingUniversity(); clearPendingGender(); } catch (err) { /* ignore */ }
               }
             }
           }
@@ -99,9 +83,29 @@ export function useUser() {
 
               const token = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
               if (token) {
-                await setDoc(doc(firestore, 'users', u.uid, 'fcmTokens', token), { token, createdAt: serverTimestamp() });
-                prevUidRef.current = u.uid;
-                console.debug('Saved FCM token for user', u.uid);
+                // Determine the university for this user doc (prefer existing docs)
+                const fastSnap = await getDoc(doc(firestore, 'users', `fast_${u.uid}`));
+                const nedSnap = await getDoc(doc(firestore, 'users', `ned_${u.uid}`));
+                let finalUniversity = 'fast';
+                if (fastSnap.exists()) finalUniversity = 'fast';
+                else if (nedSnap.exists()) finalUniversity = 'ned';
+                else {
+                  // Fall back to pending university if available
+                  try { const pending = getPendingUniversity(); if (isValidUniversity(pending)) finalUniversity = pending as string; } catch (_) {}
+                }
+
+                // Atomically update a single token document per user that only the server should read.
+                const tokenDocRef = doc(firestore, 'fcm_tokens', u.uid);
+                try {
+                  await runTransaction(firestore, async (tx) => {
+                    const cur = await tx.get(tokenDocRef);
+                    tx.set(tokenDocRef, { token, university: finalUniversity, updatedAt: serverTimestamp(), lastLoginAt: serverTimestamp() }, { merge: true });
+                  });
+                  prevUidRef.current = u.uid;
+                  console.debug('Saved/updated FCM token for user', u.uid);
+                } catch (e) {
+                  console.debug('Failed to write FCM token transactionally:', e);
+                }
               }
             } catch (e) {
               console.debug('FCM registration failed (non-fatal):', e);
@@ -111,17 +115,12 @@ export function useUser() {
             try {
               const prevUid = prevUidRef.current;
               if (prevUid) {
-                // Attempt to obtain current token from the browser and delete both the token and its doc
                 try {
-                  const currentToken = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
-                  if (currentToken) {
-                    // remove doc at users/{prevUid}/fcmTokens/{token}
-                    await deleteDoc(doc(firestore, 'users', prevUid, 'fcmTokens', currentToken));
-                    try { await deleteToken(messaging); } catch (e) { /* ignore */ }
-                    console.debug('Removed FCM token for previous user', prevUid);
-                  }
+                  await deleteDoc(doc(firestore, 'fcm_tokens', prevUid));
+                  try { await deleteToken(messaging); } catch (e) { /* ignore */ }
+                  console.debug('Removed FCM token doc for previous user', prevUid);
                 } catch (e) {
-                  console.debug('Failed to remove FCM token on sign-out (non-fatal):', e);
+                  console.debug('Failed to remove fcm_tokens doc on sign-out (non-fatal):', e);
                 }
               }
             } catch (e) {
@@ -145,14 +144,20 @@ export function useUser() {
     return () => unsubscribe();
   }, [auth, initialized]);
 
-  const userDocRef = user && firestore ? doc(firestore, 'users', user.uid) : null;
-  const { data, loading: dataLoading, error } = useDoc<UserProfile>(userDocRef);
+  const fastRef = user && firestore ? doc(firestore, 'users', `fast_${user.uid}`) : null;
+  const nedRef = user && firestore ? doc(firestore, 'users', `ned_${user.uid}`) : null;
+  const { data: fastData, loading: fastLoading, error: fastError } = useDoc<UserProfile>(fastRef);
+  const { data: nedData, loading: nedLoading, error: nedError } = useDoc<UserProfile>(nedRef);
 
-  return { 
-    user, 
-    loading: loading || (user && dataLoading), // only be loading for data if a user exists
-    data, 
-    error, 
-    initialized // Expose initialized state
+  const data = fastData || nedData || null;
+  const dataLoading = (fastLoading || nedLoading);
+  const error = fastError || nedError || null;
+
+  return {
+    user,
+    loading: loading || (user && dataLoading),
+    data,
+    error,
+    initialized,
   };
 }

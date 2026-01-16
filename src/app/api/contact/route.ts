@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     const docSnap = await keyRef.get();
     if (docSnap.exists) {
       const data = docSnap.data() as any;
-      const last = data?.lastSubmitted as admin.firestore.Timestamp | undefined;
+      const last = data?.lastSubmitted as any | undefined;
       if (last) {
         const secondsSince = now.seconds - last.seconds;
         if (secondsSince < RATE_LIMIT_SECONDS) {

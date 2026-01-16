@@ -2,7 +2,8 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { onSnapshot, getDocs, getDoc, doc, DocumentData, Query, collection, where, query as firestoreQueryFn } from 'firebase/firestore';
+import { onSnapshot, getDocs, getDoc, doc, collection, where, query as firestoreQueryFn } from 'firebase/firestore';
+import type { DocumentData, Query } from 'firebase/firestore';
 import { useFirestore } from '../provider';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError } from '../errors';
@@ -95,9 +96,13 @@ export function useCollection<T extends DocumentData>(
           const userMap = new Map<string, any>();
           await Promise.all(userIds.map(async (uid: string) => {
             try {
-              const ref = doc(firestore, 'users', uid);
-              const snap = await getDoc(ref);
-              if (snap.exists()) userMap.set(uid, snap.data());
+              // Try university-scoped paths (fast then ned)
+              const fastRef = doc(firestore, 'users', `fast_${uid}`);
+              const fastSnap = await getDoc(fastRef);
+              if (fastSnap.exists()) { userMap.set(uid, fastSnap.data()); return; }
+              const nedRef = doc(firestore, 'users', `ned_${uid}`);
+              const nedSnap = await getDoc(nedRef);
+              if (nedSnap.exists()) { userMap.set(uid, nedSnap.data()); return; }
             } catch (err) {
               // Likely a permission-denied for this user; skip details for this uid but do not
               // emit a global permission error as that's noisy and expected in many setups.
@@ -136,13 +141,18 @@ export function useCollection<T extends DocumentData>(
         },
         (err) => {
           console.error("onSnapshot error:", err);
-          const permissionError = new FirestorePermissionError({
-            path: (firestoreQuery as any)?._query?.path?.segments?.join('/') ?? 'unknown',
-            operation: 'list',
-            hint: 'Make sure users/{uid} exists and your Firestore security rules allow listing this collection. See docs/firestore-rules.md for guidance.'
-          });
-          errorEmitter.emit('permission-error', permissionError);
-          setError(permissionError);
+          const code = (err && (err.code || err.code === 0)) ? err.code : (err?.message ? String(err.message) : '');
+          if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+            const permissionError = new FirestorePermissionError({
+              path: (firestoreQuery as any)?._query?.path?.segments?.join('/') ?? 'unknown',
+              operation: 'list',
+              hint: 'Make sure users/{uid} exists and your Firestore security rules allow listing this collection. See docs/firestore-rules.md for guidance.'
+            });
+            errorEmitter.emit('permission-error', permissionError);
+            setError(permissionError);
+          } else {
+            setError(err);
+          }
           setLoading(false);
         }
       );
@@ -152,13 +162,18 @@ export function useCollection<T extends DocumentData>(
         .then(processSnapshot)
         .catch((err) => {
           console.error("getDocs error:", err);
-          const permissionError = new FirestorePermissionError({
-            path: (firestoreQuery as any)?._query?.path?.segments?.join('/') ?? 'unknown',
-            operation: 'list',
-            hint: 'Make sure users/{uid} exists and your Firestore security rules allow listing this collection. See docs/firestore-rules.md for guidance.'
-          });
-          errorEmitter.emit('permission-error', permissionError);
-          setError(permissionError);
+          const code = err?.code || '';
+          if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+            const permissionError = new FirestorePermissionError({
+              path: (firestoreQuery as any)?._query?.path?.segments?.join('/') ?? 'unknown',
+              operation: 'list',
+              hint: 'Make sure users/{uid} exists and your Firestore security rules allow listing this collection. See docs/firestore-rules.md for guidance.'
+            });
+            errorEmitter.emit('permission-error', permissionError);
+            setError(permissionError);
+          } else {
+            setError(err);
+          }
           setLoading(false);
         });
     }

@@ -15,6 +15,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const debounceRef = useRef<number | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
 
   const addWaypoint = (p: Waypoint) => setWaypoints((s) => [...s, p]);
   const removeWaypoint = (i: number) => setWaypoints((s) => s.filter((_, idx) => idx !== i));
@@ -58,15 +59,35 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
     const doGenerate = async () => {
       if (!origin || !destination) return;
       setGenerating(true);
+      let coords: [number, number][] = [];
       try {
         // Prepare coordinates in [lng,lat] for ORS
-        const coords: [number, number][] = [ [origin.lng, origin.lat], ...waypoints.map(w => [w.lng, w.lat]), [destination.lng, destination.lat] ];
+        coords = [ [origin.lng, origin.lat] as [number, number], ...waypoints.map(w => [w.lng, w.lat] as [number, number]), [destination.lng, destination.lat] as [number, number] ];
         const resp = await fetch('/api/ors', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ coordinates: coords })
         });
-        if (!resp.ok) throw new Error('Route service failed');
+        if (!resp.ok) {
+          let bodyText: string | null = null;
+          let parsed: any = null;
+          try { bodyText = await resp.text(); } catch (e) { /* ignore */ }
+          try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch (e) { parsed = bodyText; }
+          const details = parsed && typeof parsed === 'object' ? parsed : (bodyText || 'No details');
+          console.error('ORS proxy responded with error', { status: resp.status, details });
+          setRouteError(typeof details === 'string' ? details : JSON.stringify(details));
+          // Provide a graceful fallback: generate a straight-line route from provided coords
+          try {
+            const fallbackLatLngs: LatLng[] = coords.map((c) => ({ lat: c[1], lng: c[0] }));
+            const fallbackPolyline = encodePolyline(fallbackLatLngs);
+            const fallbackBounds = computeBounds(fallbackLatLngs);
+            onRouteGenerated?.({ waypoints, polyline: fallbackPolyline, bounds: fallbackBounds, distanceMeters: null, durationSeconds: null });
+          } catch (e) {
+            // ignore fallback errors
+          }
+          return;
+        }
         const data = await resp.json();
+        setRouteError(null);
         // ORS may return geometry coordinates as [lng,lat]
         const coordsRes: any[] = (data?.features?.[0]?.geometry?.coordinates) || (data?.geometry?.coordinates) || [];
         const latlngs: LatLng[] = coordsRes.map((c: any) => ({ lat: c[1], lng: c[0] }));
@@ -77,8 +98,16 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
         const distanceMeters = summary?.distance ?? null;
         const durationSeconds = summary?.duration ?? null;
         onRouteGenerated?.({ waypoints, polyline, bounds, distanceMeters, durationSeconds });
-      } catch (e) {
+      } catch (e: any) {
         console.error('Route generation failed', e);
+        setRouteError(String(e?.message || e));
+        // Fallback straight-line route so user still sees a path
+        try {
+          const fallbackLatLngs: LatLng[] = coords.map((c) => ({ lat: c[1], lng: c[0] }));
+          const fallbackPolyline = encodePolyline(fallbackLatLngs);
+          const fallbackBounds = computeBounds(fallbackLatLngs);
+          onRouteGenerated?.({ waypoints, polyline: fallbackPolyline, bounds: fallbackBounds, distanceMeters: null, durationSeconds: null });
+        } catch (err) { /* ignore */ }
       } finally { setGenerating(false); }
     };
     doGenerate();
@@ -128,6 +157,9 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
 
       <div>
         <div className="text-xs text-muted-foreground">Route generation: {generating ? 'calculating...' : 'ready'}</div>
+        {routeError ? (
+          <div className="text-sm text-red-400 mt-2">Route error: {routeError}</div>
+        ) : null}
       </div>
     </div>
   );

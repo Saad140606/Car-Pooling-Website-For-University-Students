@@ -42,6 +42,57 @@ export const expireRides = functions.pubsub
     return null;
   });
 
+
+  /**
+   * Booking deleted -> clean up associated chat and messages (best-effort).
+   * This ensures when a booking document is removed (for example passenger cancels),
+   * any chat created for that booking is also removed to avoid orphaned chat docs.
+   */
+  export const cleanupChatOnBookingDelete = functions.firestore
+    .document('universities/{univ}/bookings/{bookingId}')
+    .onDelete(async (snap, ctx) => {
+      const univ = ctx.params.univ as string;
+      const bookingId = ctx.params.bookingId as string;
+      const db = admin.firestore();
+      try {
+        const chatRef = db.doc(`universities/${univ}/chats/${bookingId}`);
+        const chatSnap = await chatRef.get();
+        if (chatSnap.exists) {
+          const msgsRef = db.collection(`universities/${univ}/chats/${bookingId}/messages`);
+          const msgsSnap = await msgsRef.get();
+          // delete messages in batches
+          const chunkSize = 400;
+          const docs = msgsSnap.docs;
+          for (let i = 0; i < docs.length; i += chunkSize) {
+            const batch = db.batch();
+            docs.slice(i, i + chunkSize).forEach(d => batch.delete(d.ref));
+            batch.delete(chatRef);
+            await batch.commit();
+          }
+          console.log(`Deleted chat ${bookingId} and ${docs.length} messages for university ${univ}`);
+        } else {
+          // try legacy top-level chat collection
+          const legacyChatRef = db.doc(`chats/${bookingId}`);
+          const legacySnap = await legacyChatRef.get();
+          if (legacySnap.exists) {
+            const msgsSnap = await db.collection(`chats/${bookingId}/messages`).get();
+            const chunkSize = 400;
+            const docs = msgsSnap.docs;
+            for (let i = 0; i < docs.length; i += chunkSize) {
+              const batch = db.batch();
+              docs.slice(i, i + chunkSize).forEach(d => batch.delete(d.ref));
+              batch.delete(legacyChatRef);
+              await batch.commit();
+            }
+            console.log(`Deleted legacy chat ${bookingId} and ${docs.length} messages`);
+          }
+        }
+      } catch (err) {
+        console.error('cleanupChatOnBookingDelete error', err);
+      }
+      return null;
+    });
+
   /**
    * Notification helpers + triggers
    */
@@ -49,18 +100,20 @@ export const expireRides = functions.pubsub
   // Helper: get FCM tokens for a user
   async function getUserTokens(uid: string) {
     const tokens: { id: string; token: string }[] = [];
-    const snap = await db.collection(`users/${uid}/fcmTokens`).get();
-    snap.forEach((d) => {
-      const data = d.data() as any;
-      if (data && data.token) tokens.push({ id: d.id, token: data.token as string });
-    });
+    const docRef = db.doc(`fcm_tokens/${uid}`);
+    const snap = await docRef.get();
+    if (snap.exists) {
+      const data = snap.data() as any;
+      if (data && data.token) tokens.push({ id: snap.id, token: data.token as string });
+    }
     return tokens;
   }
 
   // Helper: remove a token doc
   async function removeToken(uid: string, tokenDocId: string) {
     try {
-      await db.doc(`users/${uid}/fcmTokens/${tokenDocId}`).delete();
+      // With the single-token-per-user design we store tokens at `fcm_tokens/{uid}`
+      await db.doc(`fcm_tokens/${uid}`).delete();
     } catch (e) {
       console.warn('Failed removing token doc', tokenDocId, e);
     }
@@ -482,13 +535,14 @@ export const notifyOnCall = functions.firestore
       const targets = Array.from(new Set(participants));
       if (targets.length === 0) return null;
 
-      // gather FCM tokens for each target from users/{uid}/fcmTokens
+      // gather FCM tokens for each target from root `fcm_tokens/{uid}` docs
       const tokens: string[] = [];
       for (const uid of targets) {
-        const tSnap = await db.collection(`users/${uid}/fcmTokens`).get();
-        tSnap.forEach(doc => {
-          const d = doc.data(); if (d && d.token) tokens.push(d.token as string);
-        });
+        const tDoc = await db.doc(`fcm_tokens/${uid}`).get();
+        if (tDoc.exists) {
+          const d = tDoc.data() as any;
+          if (d && d.token) tokens.push(d.token as string);
+        }
       }
 
       if (tokens.length === 0) return null;

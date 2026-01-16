@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { setSelectedUniversity } from "@/lib/university";
 import { PlaceHolderImages } from "@/lib/placeholder-images";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowRight } from "lucide-react";
@@ -19,6 +23,13 @@ const universities = [
 ];
 
 export default function SelectUniversityPage() {
+  const router = useRouter();
+
+  function goToUniversity(slug: string) {
+    try { setSelectedUniversity(slug as any); } catch (e) { /* ignore */ }
+    router.push(`/auth/${slug}/login`);
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center p-4">
       <div className="mb-12">
@@ -31,7 +42,8 @@ export default function SelectUniversityPage() {
 
       <div className="mt-10 grid w-full max-w-4xl grid-cols-1 gap-8 md:grid-cols-2">
         {universities.map((uni) => (
-          <Link href={`/auth/${uni.slug}/login`} key={uni.slug} className="group">
+          <div key={uni.slug} className="group">
+            <button onClick={() => goToUniversity(uni.slug)} className="w-full text-left">
             <Card className="overflow-hidden transition-all duration-300 group-hover:scale-105 group-hover:shadow-2xl group-hover:shadow-primary/20">
               <div className="relative h-60 w-full">
                 {uni.image && (
@@ -53,7 +65,8 @@ export default function SelectUniversityPage() {
                 <ArrowRight className="h-5 w-5 text-primary transition-transform duration-300 group-hover:translate-x-1" />
               </CardContent>
             </Card>
-          </Link>
+            </button>
+          </div>
         ))}
       </div>
     </div>

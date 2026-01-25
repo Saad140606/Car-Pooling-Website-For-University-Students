@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
@@ -14,7 +14,7 @@ import Logo from '@/components/logo';
 // Mark this page as dynamic so Next.js doesn't try to prerender it
 export const dynamic = 'force-dynamic';
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const auth = useAuth();
@@ -200,5 +200,24 @@ export default function VerifyEmailPage() {
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={
+      <main className="flex min-h-screen flex-col items-center justify-center p-4">
+        <div className="absolute top-8 left-8">
+          <Logo />
+        </div>
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Loading...</CardTitle>
+          </CardHeader>
+        </Card>
+      </main>
+    }>
+      <VerifyEmailContent />
+    </Suspense>
   );
 }

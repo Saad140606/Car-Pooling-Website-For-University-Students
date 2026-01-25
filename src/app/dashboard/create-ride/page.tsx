@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallba
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, doc, getDoc, Timestamp } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
@@ -14,9 +14,11 @@ import 'leaflet/dist/leaflet.css';
 
 import { Button } from '@/components/ui/button';
 import RouteEditor from '@/components/RouteEditor';
+import StopsViewer from '@/components/StopsViewer';
 import { decodePolyline } from '@/lib/route';
 import type { LatLng as RouteLatLng } from '@/lib/route';
 import { calculatePricing } from '@/lib/pricing';
+import { extractMeaningfulStopName, filterImportantStops, deduplicateNearbyStops, deduplicateByName } from '@/lib/stopFiltering';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -56,23 +58,78 @@ export interface MapComponentRef {
 type LatLngLiteral = { lat: number; lng: number; name?: string };
 
 const MapComponent = forwardRef<MapComponentRef, {
-    onMapClick: (lat: number, lng: number, name: string) => void;
-    onRouteUpdate: (distance: number | null, duration: number | null) => void;
-    onRouteError?: (err: Error) => void;
-    from: LatLngLiteral | null;
-    to: LatLngLiteral | null;
-    activeMapSelect: 'from' | 'to' | null;
+  onMapClick: (lat: number, lng: number, name: string) => void;
+  onRouteUpdate: (distance: number | null, duration: number | null) => void;
+  // Called on any map click (regardless of selection mode) so parent can hide UI like popups
+  onAnyMapClick?: () => void;
+  onRouteError?: (err: Error) => void;
+  from: LatLngLiteral | null;
+  to: LatLngLiteral | null;
+  activeMapSelect: 'from' | 'to' | null;
+  // initialSelection allows the parent to request centering/selection on mount
+  initialSelection?: { center: L.LatLngExpression; bounds?: L.LatLngBoundsExpression; radius?: number } | null;
+  lockedPin?: boolean;
+  // If present, this position will be rendered as a permanent locked marker on the map
+  lockedPosition?: { lat: number; lng: number; name?: string } | null;
 }>((props, ref) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   
   const mapInstanceRef = useRef<LeafletMap | null>(null);
-  const fromMarkerRef = useRef<L.Marker | null>(null);
-  const toMarkerRef = useRef<L.Marker | null>(null);
+  // Primary origin/destination markers so selected points are visible
+  const startMarkerRef = useRef<L.Marker | null>(null);
+  const endMarkerRef = useRef<L.Marker | null>(null);
+  // Permanent locked marker (uni) which must not be removed during selection or map movements
+  const lockedMarkerRef = useRef<L.Marker | null>(null);
   const routeLayerRef = useRef<L.Polyline | null>(null);
   // Ref for the temporary marker used in selection mode
   const tempMarkerRef = useRef<L.Marker | null>(null);
   // Semi-transparent selection circle to indicate allowed campus radius during selection
   const selectionCircleRef = useRef<L.Circle | null>(null);
+  // Preserve previous main marker location while in selection mode
+  const prevMainLocRef = useRef<L.LatLng | null>(null);
+
+  // SSR-safe cached image icon for markers (uses public/map-marker.png)
+  const imageIconRef = useRef<L.Icon | null>(null);
+  const getImageIcon = () => {
+    if (imageIconRef.current) return imageIconRef.current;
+    if (typeof window === 'undefined') return null;
+    try {
+      // Create a lucide-style MapPin SVG in a dark-blue color and use as data URL
+      const color = '#2b2f67';
+      const pinSvg = `
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+          <path d='M21 10c0 7-9 12-9 12S3 17 3 10a9 9 0 1 1 18 0z' fill='none' stroke='${color}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' />
+          <circle cx='12' cy='10' r='3.2' fill='none' stroke='${color}' stroke-width='2' />
+        </svg>
+      `;
+      const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+      // larger/thicker icon to match provided design
+      imageIconRef.current = L.icon({ iconUrl: dataUrl, iconSize: [40, 62], iconAnchor: [20, 52], popupAnchor: [0, -44] });
+      return imageIconRef.current;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Simple SVG pin generator so we can color-code origin/destination
+  const makePinIcon = (fill: string, inner: string = '#ffffff') => {
+    try {
+      const pinSvg = `
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='40' height='56'>
+          <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='${fill}' stroke='#0b1220' stroke-width='1.2' />
+          <circle cx='12' cy='9' r='2.8' fill='${inner}' stroke='#0b1220' stroke-width='1.2' />
+        </svg>
+      `;
+      return L.divIcon({ 
+        className: '', 
+        html: pinSvg,
+        iconAnchor: [20, 50],
+        popupAnchor: [0, -50]
+      });
+    } catch {
+      return (getImageIcon() as any) || undefined;
+    }
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined' || !mapContainerRef.current || mapInstanceRef.current) return;
@@ -93,8 +150,71 @@ const MapComponent = forwardRef<MapComponentRef, {
       }
     }
     
+      // Create helper to generate an SVG data URL for colored pin icons
+      const makePinDataUrl = (color: string, innerColor = '#0b1220') => {
+        const pinSvg = `
+          <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+            <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='${color}' stroke='%23ffffff' stroke-width='1.2' />
+            <circle cx='12' cy='9' r='2.5' fill='${innerColor}' />
+          </svg>
+        `;
+        return `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+      };
+
+      // Pre-create a couple of icon styles to use across the map (avoid black default)
+      const yellowPinUrl = makePinDataUrl('#FFD166', '#0b1220');
+      const bluePinUrl = makePinDataUrl('#2563EB', '#ffffff');
+
+      const DEFAULT_PIN_ICON = L.icon({ iconUrl: yellowPinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
+      const ALT_PIN_ICON = L.icon({ iconUrl: bluePinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
+
+      // Use public map marker image if available to avoid default black markers
+      const IMAGE_MARKER_URL = '/map-marker.png';
+      // create a local image icon but prefer the cached getter elsewhere
+      try {
+        // Use L.icon only if L is available
+        getImageIcon();
+      } catch (_) {}
+    
     // Use OpenStreetMap tiles (plain/default style used elsewhere)
     mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 16);
+    // If parent requested an initial selection (e.g., university lock), apply it immediately
+    if (props.initialSelection && props.activeMapSelect) {
+      try {
+        const { center, bounds, radius } = props.initialSelection;
+        try { mapInstanceRef.current.setView(center as any, 15, { animate: false }); } catch (_) {}
+        // temp marker at center (only when parent explicitly entered selection mode)
+        if (props.activeMapSelect) {
+          if (tempMarkerRef.current) {
+            tempMarkerRef.current.setLatLng(center as any);
+          } else {
+            tempMarkerRef.current = L.marker(center as any, { interactive: false, icon: (getImageIcon() as any) || undefined }).addTo(mapInstanceRef.current);
+          }
+        }
+        // Draw selection circle if radius provided
+        try {
+          if (typeof radius === 'number') {
+            if (selectionCircleRef.current) {
+              selectionCircleRef.current.setLatLng(center as any).setRadius(radius as number);
+            } else {
+              selectionCircleRef.current = L.circle(center as any, {
+                radius,
+                color: '#FFD166',
+                weight: 2,
+                dashArray: '6 8',
+                fillColor: '#FFD166',
+                fillOpacity: 0.06,
+                interactive: false,
+              }).addTo(mapInstanceRef.current);
+            }
+          }
+        } catch (_) {}
+        // Fit bounds if supplied
+        try { if (bounds) mapInstanceRef.current.fitBounds(bounds); } catch (_) {}
+      } catch (e) {
+        console.debug('initialSelection apply failed', e);
+      }
+    }
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
@@ -103,14 +223,27 @@ const MapComponent = forwardRef<MapComponentRef, {
     }).addTo(mapInstanceRef.current);
 
     mapInstanceRef.current.on('click', async (e: L.LeafletMouseEvent) => {
-        if (!props.activeMapSelect) return; // Only handle clicks in selection mode
-        const { lat, lng } = e.latlng;
+      // Inform parent about any map click so it can hide UI like locked-pin popups
+      try { props.onAnyMapClick?.(); } catch (_) {}
+      if (!props.activeMapSelect) return; // Only handle clicks in selection mode
+      const { lat, lng } = e.latlng;
         try {
           // Use server-side proxy to avoid CORS and ensure a valid User-Agent
           const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`);
           if (res.ok) {
             const data = await res.json();
-            const name = data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+            let name = data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+            // If a lockedPosition is provided and the clicked coordinates are very close to it,
+            // prefer the locked position's canonical name to avoid reverse-geocode mismatches.
+            try {
+              const lp = props.lockedPosition;
+              if (lp) {
+                const tol = 0.0005; // ~50m tolerance
+                if (Math.abs(lat - (lp.lat || 0)) <= tol && Math.abs(lng - (lp.lng || 0)) <= tol) {
+                  name = lp.name || name;
+                }
+              }
+            } catch (_) {}
             props.onMapClick(lat, lng, name);
             return;
           } else {
@@ -120,15 +253,26 @@ const MapComponent = forwardRef<MapComponentRef, {
           console.error('Nominatim reverse failed', err);
         }
 
-        // Fallback: use coordinates as the name if proxy fails
-        props.onMapClick(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+        // Fallback: use coordinates as the name if proxy fails. Also prefer lockedPosition when nearby.
+        let fallbackName = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        try {
+          const lp = props.lockedPosition;
+          if (lp) {
+            const tol = 0.0005;
+            if (Math.abs(lat - (lp.lat || 0)) <= tol && Math.abs(lng - (lp.lng || 0)) <= tol) {
+              fallbackName = lp.name || fallbackName;
+            }
+          }
+        } catch (_) {}
+        props.onMapClick(lat, lng, fallbackName);
     });
 
     // Update temp marker on map move during selection mode
     mapInstanceRef.current.on('move', () => {
-        if (tempMarkerRef.current) {
-            tempMarkerRef.current.setLatLng(mapInstanceRef.current!.getCenter());
-        }
+      if (!props.activeMapSelect) return; // only update while actively selecting
+      if (tempMarkerRef.current) {
+        tempMarkerRef.current.setLatLng(mapInstanceRef.current!.getCenter());
+      }
     });
 
     const map = mapInstanceRef.current;
@@ -141,34 +285,58 @@ const MapComponent = forwardRef<MapComponentRef, {
 
   useEffect(() => {
     if (!mapInstanceRef.current) return;
-    
-    // FROM marker
-    if (props.from) {
-      if (fromMarkerRef.current) {
-        fromMarkerRef.current.setLatLng(props.from);
+
+    // Create or update a permanent locked marker if requested
+    const lockedPos = props.lockedPosition;
+    if (lockedPos) {
+      if (lockedMarkerRef.current) {
+        try { lockedMarkerRef.current.setLatLng([lockedPos.lat, lockedPos.lng]); } catch (_) {}
       } else {
-        fromMarkerRef.current = L.marker(props.from).addTo(mapInstanceRef.current);
+        try {
+          lockedMarkerRef.current = L.marker([lockedPos.lat, lockedPos.lng], { icon: (getImageIcon() as any) || undefined }).addTo(mapInstanceRef.current!);
+          try { lockedMarkerRef.current.bindPopup(lockedPos.name || 'University'); } catch (_) {}
+        } catch (_) {}
       }
-      // Avoid auto-panning when marking a location. Opening popups will not auto-pan the map.
-      try { fromMarkerRef.current.bindPopup(props.from.name || 'Starting Point'); } catch (_) {}
-    } else if (fromMarkerRef.current) {
-        mapInstanceRef.current.removeLayer(fromMarkerRef.current);
-        fromMarkerRef.current = null;
+    } else if (lockedMarkerRef.current) {
+      try { mapInstanceRef.current.removeLayer(lockedMarkerRef.current); } catch (_) {}
+      lockedMarkerRef.current = null;
     }
 
-    // TO marker
-    if (props.to) {
-      if (toMarkerRef.current) {
-        toMarkerRef.current.setLatLng(props.to);
+    // Update origin/destination markers so selected points are visible on the map
+    const tol = 5e-5; // ~5m tolerance for overlapping with locked marker
+    const lp = props.lockedPosition;
+    const sameAsLocked = (p?: LatLngLiteral | null) => !!(lp && p && Math.abs(p.lat - lp.lat) <= tol && Math.abs(p.lng - lp.lng) <= tol);
+
+    // Origin marker
+    if (props.from && !sameAsLocked(props.from)) {
+      if (startMarkerRef.current) {
+        try { startMarkerRef.current.setLatLng([props.from.lat, props.from.lng]); } catch (_) {}
       } else {
-        toMarkerRef.current = L.marker(props.to).addTo(mapInstanceRef.current);
+        try {
+          startMarkerRef.current = L.marker([props.from.lat, props.from.lng], { icon: makePinIcon('#22c55e') }).addTo(mapInstanceRef.current!);
+          try { startMarkerRef.current.bindPopup(props.from.name || 'Start'); } catch (_) {}
+        } catch (_) {}
       }
-      try { toMarkerRef.current.bindPopup(props.to.name || 'Destination'); } catch (_) {}
-    } else if (toMarkerRef.current) {
-        mapInstanceRef.current.removeLayer(toMarkerRef.current);
-        toMarkerRef.current = null;
+    } else if (startMarkerRef.current) {
+      try { mapInstanceRef.current.removeLayer(startMarkerRef.current); } catch (_) {}
+      startMarkerRef.current = null;
     }
-  }, [props.from, props.to]);
+
+    // Destination marker
+    if (props.to && !sameAsLocked(props.to)) {
+      if (endMarkerRef.current) {
+        try { endMarkerRef.current.setLatLng([props.to.lat, props.to.lng]); } catch (_) {}
+      } else {
+        try {
+          endMarkerRef.current = L.marker([props.to.lat, props.to.lng], { icon: makePinIcon('#ef4444') }).addTo(mapInstanceRef.current!);
+          try { endMarkerRef.current.bindPopup(props.to.name || 'Destination'); } catch (_) {}
+        } catch (_) {}
+      }
+    } else if (endMarkerRef.current) {
+      try { mapInstanceRef.current.removeLayer(endMarkerRef.current); } catch (_) {}
+      endMarkerRef.current = null;
+    }
+  }, [props.from, props.to, props.lockedPin, props.lockedPosition]);
 
 
   useEffect(() => {
@@ -228,14 +396,19 @@ const MapComponent = forwardRef<MapComponentRef, {
 
                 if (routeData.features && routeData.features.length > 0) {
                     const coordinates = routeData.features[0].geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
-                    // Draw outline + foreground polyline for contrast on dark basemap
-                    const polylineOutline = L.polyline(coordinates, { color: '#0b1220', weight: 13, opacity: 0.95 }).addTo(mapInstanceRef.current);
-                    const polyline = L.polyline(coordinates, { color: '#FFD166', weight: 7, opacity: 0.95 }).addTo(mapInstanceRef.current);
+                    // Decide route color: if one endpoint equals lockedPosition, use primary (blue)
+                    const lockedPos = props.lockedPosition;
+                    const startIsLocked = lockedPos && start && Math.abs(start.lat - lockedPos.lat) < 1e-6 && Math.abs(start.lng - lockedPos.lng) < 1e-6;
+                    const endIsLocked = lockedPos && end && Math.abs(end.lat - lockedPos.lat) < 1e-6 && Math.abs(end.lng - lockedPos.lng) < 1e-6;
+                    const routeColor = (lockedPos && (startIsLocked || endIsLocked)) ? '#3F51B5' : '#9575CD';
+                    // Draw outline + foreground polyline for contrast on light basemap
+                    const polylineOutline = L.polyline(coordinates, { color: '#ffffff', weight: 10, opacity: 0.7 }).addTo(mapInstanceRef.current);
+                    const polyline = L.polyline(coordinates, { color: routeColor, weight: 6, opacity: 0.95 }).addTo(mapInstanceRef.current);
                     routeLayerRef.current = polyline;
                     // Only fit the map to the route if the user is NOT actively selecting a point — avoid interrupting selection
-                    if (!props.activeMapSelect) {
-                      try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (_) {}
-                    }
+                                if (!props.activeMapSelect) {
+                                  try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (_) {}
+                                }
                     routeLayerRef.current = polyline;
 
                     const summary = routeData.features[0].properties.summary;
@@ -270,12 +443,12 @@ const MapComponent = forwardRef<MapComponentRef, {
   useImperativeHandle(ref, () => ({
     resetMap: () => {
       if (mapInstanceRef.current) {
-        if (fromMarkerRef.current) mapInstanceRef.current.removeLayer(fromMarkerRef.current);
-        if (toMarkerRef.current) mapInstanceRef.current.removeLayer(toMarkerRef.current);
+        if (startMarkerRef.current) mapInstanceRef.current.removeLayer(startMarkerRef.current);
+        if (endMarkerRef.current) mapInstanceRef.current.removeLayer(endMarkerRef.current);
         if (routeLayerRef.current) mapInstanceRef.current.removeLayer(routeLayerRef.current);
       }
-      fromMarkerRef.current = null;
-      toMarkerRef.current = null;
+      startMarkerRef.current = null;
+      endMarkerRef.current = null;
       routeLayerRef.current = null;
       mapInstanceRef.current?.setView([24.8607, 67.0011], 13);
       props.onRouteUpdate(null, null);
@@ -290,30 +463,36 @@ const MapComponent = forwardRef<MapComponentRef, {
         if (!mapInstanceRef.current) return;
         // center the map on the university/selection point so user sees the boundary
         mapInstanceRef.current.setView(center, 15, { animate: true });
-        // show temp marker at center
-        if (tempMarkerRef.current) {
-          tempMarkerRef.current.setLatLng(center as any);
-        } else {
-          tempMarkerRef.current = L.marker(center as any, { interactive: false }).addTo(mapInstanceRef.current);
-        }
-        // Draw a semi-transparent selection circle when radius provided
-        try {
-          if (typeof radius === 'number') {
-            if (selectionCircleRef.current) {
-              selectionCircleRef.current.setLatLng(center as any).setRadius(radius);
-            } else {
-              selectionCircleRef.current = L.circle(center as any, {
-                radius,
-                color: '#FFD166',
-                weight: 2,
-                dashArray: '6 8',
-                fillColor: '#FFD166',
-                fillOpacity: 0.06,
-                interactive: false,
-              }).addTo(mapInstanceRef.current);
-            }
+        // Only show selection UI if the parent has entered selection mode.
+        // This prevents automatic pendingSelection from creating a visible temp pin.
+        if (props.activeMapSelect) {
+          // Keep existing origin/destination pins visible; only show a temporary center pin for selection
+
+          // show temp marker at center
+          if (tempMarkerRef.current) {
+            tempMarkerRef.current.setLatLng(center as any);
+          } else {
+            tempMarkerRef.current = L.marker(center as any, { interactive: false, icon: (getImageIcon() as any) || undefined }).addTo(mapInstanceRef.current);
           }
-        } catch (_) {}
+          // Draw a semi-transparent selection circle when radius provided
+          try {
+            if (typeof radius === 'number') {
+              if (selectionCircleRef.current) {
+                selectionCircleRef.current.setLatLng(center as any).setRadius(radius);
+              } else {
+                selectionCircleRef.current = L.circle(center as any, {
+                  radius,
+                  color: '#FFD166',
+                  weight: 2,
+                  dashArray: '6 8',
+                  fillColor: '#FFD166',
+                  fillOpacity: 0.06,
+                  interactive: false,
+                }).addTo(mapInstanceRef.current);
+              }
+            }
+          } catch (_) {}
+        }
         // NOTE: we intentionally do NOT set max bounds here — allowing free panning makes selection easier.
         // University bounds are validated on confirm (see handleConfirmSelection).
     },
@@ -328,6 +507,7 @@ const MapComponent = forwardRef<MapComponentRef, {
             try { mapInstanceRef.current.removeLayer(selectionCircleRef.current); } catch (_) {}
             selectionCircleRef.current = null;
         }
+        // No need to restore any main marker; origin/destination pins persist outside selection
         // leave max-bounds untouched; no cleanup needed since we never set it
     },
     getTempMarkerLatLng: () => {
@@ -344,8 +524,15 @@ const MapComponent = forwardRef<MapComponentRef, {
         }
         if (!coords || coords.length === 0) return;
         const ll = coords.map(c => [c.lat, c.lng] as [number, number]);
-        const polylineOutline = L.polyline(ll, { color: '#0b1220', weight: 13, opacity: 0.95 }).addTo(mapInstanceRef.current);
-        const polyline = L.polyline(ll, { color: '#FFD166', weight: 7, opacity: 0.95 }).addTo(mapInstanceRef.current);
+        // Choose color blue if one endpoint matches locked position
+        const lockedPos2 = props.lockedPosition;
+        const start = ll[0] ? { lat: ll[0][0], lng: ll[0][1] } : null;
+        const end = ll[ll.length - 1] ? { lat: ll[ll.length - 1][0], lng: ll[ll.length - 1][1] } : null;
+        const startLocked = lockedPos2 && start && Math.abs(start.lat - lockedPos2.lat) < 1e-6 && Math.abs(start.lng - lockedPos2.lng) < 1e-6;
+        const endLocked = lockedPos2 && end && Math.abs(end.lat - lockedPos2.lat) < 1e-6 && Math.abs(end.lng - lockedPos2.lng) < 1e-6;
+        const color = (lockedPos2 && (startLocked || endLocked)) ? '#3F51B5' : '#9575CD';
+        const polylineOutline = L.polyline(ll, { color: '#ffffff', weight: 10, opacity: 0.7 }).addTo(mapInstanceRef.current);
+        const polyline = L.polyline(ll, { color, weight: 6, opacity: 0.95 }).addTo(mapInstanceRef.current);
         routeLayerRef.current = polyline;
         // Compute approximate distance (meters) from the polyline coordinates and estimate duration.
         try {
@@ -400,6 +587,7 @@ export default function CreateRidePage() {
   const [routeBounds, setRouteBounds] = useState<any | null>(null);
   const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
   const [routeLatLngs, setRouteLatLngs] = useState<RouteLatLng[] | null>(null);
+  const [generatedStops, setGeneratedStops] = useState<any[] | null>(null);
   const [recommendedPricePerSeat, setRecommendedPricePerSeat] = useState<number | null>(null);
   const [finalPricePerSeat, setFinalPricePerSeat] = useState<number | null>(null);
   const [pricingBreakdown, setPricingBreakdown] = useState<any | null>(null);
@@ -414,15 +602,16 @@ export default function CreateRidePage() {
     name: 'FAST National University of Computer and Emerging Sciences, Bin Qasim Town, Malir District, Karachi Division, Sindh, 75030, Pakistan',
   };
   const NED_UNI: LatLngLiteral = {
-    lat: 24.9368,
-    lng: 67.0580,
-    name: 'NED UET, University Road, Billys Homes, Gul Houses, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
+    lat: 24.9302091,
+    lng: 67.1148119,
+    name: 'NED UET, University Road, Sui Gas Company Karachi Society, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
   };
 
   const UNI_MAX_RADIUS_METERS = 4000; // allow ~4km radius from campus center
 
   const getCurrentUniversity = () => {
-    if (userData?.university === 'ned') return NED_UNI;
+    const uni = (userData?.university || '').toString().toLowerCase();
+    if (uni === 'ned') return NED_UNI;
     return FAST_UNI;
   };
 
@@ -458,7 +647,7 @@ export default function CreateRidePage() {
       const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
       const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(uni.lat * Math.PI / 180));
       const bounds: L.LatLngBoundsExpression = [[uni.lat - deltaLat, uni.lng - deltaLng], [uni.lat + deltaLat, uni.lng + deltaLng]];
-      mapRef.current?.enterSelectionMode([uni.lat, uni.lng], bounds, UNI_MAX_RADIUS_METERS);
+      setPendingSelection?.({ center: [uni.lat, uni.lng], bounds, radius: UNI_MAX_RADIUS_METERS });
     } else if (sel === 'fromUni') {
       // Set starting point to the student's university and clear the destination (always)
       if (!form.getValues('from')) form.setValue('from', String(uni.name ?? ''));
@@ -469,7 +658,7 @@ export default function CreateRidePage() {
       const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
       const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(uni.lat * Math.PI / 180));
       const bounds: L.LatLngBoundsExpression = [[uni.lat - deltaLat, uni.lng - deltaLng], [uni.lat + deltaLat, uni.lng + deltaLng]];
-      mapRef.current?.enterSelectionMode([uni.lat, uni.lng], bounds, UNI_MAX_RADIUS_METERS);
+      setPendingSelection?.({ center: [uni.lat, uni.lng], bounds, radius: UNI_MAX_RADIUS_METERS });
     }
   };
 
@@ -485,7 +674,28 @@ export default function CreateRidePage() {
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [durationMin, setDurationMin] = useState<number | null>(null);
   
+  // Clear stops when route endpoints change to trigger regeneration
+  useEffect(() => {
+    // Clear stops when coordinates change (route will regenerate)
+    setGeneratedStops(null);
+  }, [fromCoords?.lat, fromCoords?.lng, toCoords?.lat, toCoords?.lng]);
+  
   const [activeMapSelect, setActiveMapSelect] = useState<'from' | 'to' | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<{ center: L.LatLngExpression; bounds?: L.LatLngBoundsExpression; radius?: number } | null>(null);
+  
+
+  // When the MapComponent becomes ready, apply any pending university-centered selection
+  useEffect(() => {
+    if (!pendingSelection) return;
+    try {
+      if (mapRef.current && typeof mapRef.current.enterSelectionMode === 'function') {
+        mapRef.current.enterSelectionMode(pendingSelection.center, pendingSelection.bounds, pendingSelection.radius);
+        setPendingSelection(null);
+      }
+    } catch (e) {
+      console.debug('Failed to apply pendingSelection; will retry on next render.', e);
+    }
+  }, [pendingSelection, mapRef.current]);
 
   const form = useForm<z.infer<typeof rideSchema>>({
     resolver: zodResolver(rideSchema),
@@ -527,7 +737,7 @@ export default function CreateRidePage() {
           }
         }
 
-        form.setValue(activeMapSelect!, name);
+        form.setValue(activeMapSelect!, name, { shouldValidate: true, shouldDirty: true });
         if (activeMapSelect === 'from') {
           setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
         } else {
@@ -545,6 +755,32 @@ export default function CreateRidePage() {
 
     // Proceed with reverse geocoding and finalization regardless of distance
     await finalizeSelection(latLng);
+  };
+
+  // Handle a click from the map component (reverse geocode result provided by MapComponent)
+  const handleMapClick = (lat: number, lng: number, name: string) => {
+    if (!activeMapSelect) return;
+
+    // Prefer canonical university names when the clicked point lies within a university radius
+    const ned = NED_UNI;
+    const fast = FAST_UNI;
+    const clicked = { lat, lng };
+    const nearNed = distanceInMeters(clicked, { lat: ned.lat, lng: ned.lng }) <= UNI_MAX_RADIUS_METERS;
+    const nearFast = distanceInMeters(clicked, { lat: fast.lat, lng: fast.lng }) <= UNI_MAX_RADIUS_METERS;
+
+    const finalName = nearNed ? ned.name : (nearFast ? fast.name : name);
+
+    // Apply immediately and exit selection mode
+    if (activeMapSelect === 'from') {
+      form.setValue('from', finalName, { shouldValidate: true, shouldDirty: true });
+      setFromCoords({ lat, lng, name: finalName });
+    } else {
+      form.setValue('to', finalName, { shouldValidate: true, shouldDirty: true });
+      setToCoords({ lat, lng, name: finalName });
+    }
+
+    try { mapRef.current?.exitSelectionMode(); } catch (_) {}
+    setActiveMapSelect(null);
   };
   
   const handleChooseOnMap = (field: 'from' | 'to') => {
@@ -588,6 +824,170 @@ export default function CreateRidePage() {
       // lazy import decode to avoid circulars
       const latlngs = decodePolyline(data.polyline || '');
       setRouteLatLngs(latlngs);
+      
+      // Generate stops from waypoints or sample route points
+      try {
+        // Dynamic stop count based on route distance
+        const routeDistanceKm = data.distanceMeters ? data.distanceMeters / 1000 : 0;
+        const maxStops = Math.max(3, Math.min(12, Math.ceil(routeDistanceKm / 2))); // 1 stop per 2km, min 3, max 12
+        
+        let stops: any[] = [];
+        
+        if (data.waypoints && data.waypoints.length > 0) {
+          stops = data.waypoints.map((w: any, idx: number) => ({
+            id: `stop_${Date.now()}_${idx}`,
+            name: w.name || `Stop ${idx + 1}`,
+            lat: Number(w.lat ?? (w[0] ?? 0)),
+            lng: Number(w.lng ?? (w[1] ?? 0)),
+            order: idx,
+            distanceFromStart: 0,
+            type: 'waypoint',
+            isCustom: false,
+            isAutoGenerated: true
+          })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+        }
+        
+        if ((!stops || stops.length === 0) && latlngs && latlngs.length > 0) {
+          const n = latlngs.length;
+          
+          // Calculate cumulative distances first
+          let cumulativeDistance = 0;
+          const distances: number[] = [0];
+          for (let i = 1; i < latlngs.length; i++) {
+            const lat1 = latlngs[i-1].lat, lng1 = latlngs[i-1].lng;
+            const lat2 = latlngs[i].lat, lng2 = latlngs[i].lng;
+            const R = 6371e3; // meters
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            cumulativeDistance += R * c;
+            distances.push(cumulativeDistance);
+          }
+          
+          const totalDistance = distances[distances.length - 1];
+          const targetStopDistance = totalDistance / (maxStops - 1); // Distance between stops
+          
+          // Select stops at regular intervals
+          const idxs: number[] = [0]; // Always include start
+          let targetDist = targetStopDistance;
+          
+          for (let i = 1; i < n - 1; i++) {
+            if (distances[i] >= targetDist) {
+              idxs.push(i);
+              targetDist += targetStopDistance;
+            }
+          }
+          idxs.push(n - 1); // Always include end
+          
+          stops = idxs.map((i, idx) => ({
+            id: `stop_${Date.now()}_${idx}_${Math.random()}`,
+            name: `Stop ${idx + 1}`,
+            lat: latlngs[i].lat,
+            lng: latlngs[i].lng,
+            order: idx,
+            distanceFromStart: Math.round(distances[i] || 0),
+            type: 'route',
+            isCustom: false,
+            isAutoGenerated: true
+          }));
+        }
+        
+        if (stops && stops.length > 0) {
+          const finalStops = stops;
+          
+          // Set initial stops with basic names immediately
+          setGeneratedStops([...finalStops]);
+          
+          // Fetch place names for all stops asynchronously
+          (async () => {
+            try {
+              const stopsWithNames = [...finalStops];
+              
+              console.log('Fetching names for', stopsWithNames.length, 'stops...');
+              
+              // Fetch all names in parallel with rate limiting
+              const promises = stopsWithNames.map(async (stop, idx) => {
+                try {
+                  // Add staggered delay to avoid rate limiting
+                  await new Promise(resolve => setTimeout(resolve, idx * 150));
+                  
+                  const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    console.log(`Stop ${idx + 1} API response:`, data.display_name);
+                    if (data.display_name) {
+                      const displayName = extractMeaningfulStopName(data.display_name);
+                      console.log(`Stop ${idx + 1} extracted name:`, displayName);
+                      return { idx, name: displayName };
+                    } else {
+                      return { idx, name: `Location ${idx + 1}` };
+                    }
+                  } else {
+                    console.warn(`Failed to fetch name for stop ${idx + 1}, status: ${res.status}`);
+                    return { idx, name: `Location ${idx + 1}` };
+                  }
+                } catch (e) {
+                  console.error('Failed to fetch name for stop', idx + 1, e);
+                  return { idx, name: `Location ${idx + 1}` };
+                }
+              });
+              
+              const results = await Promise.all(promises);
+              
+              // Update all stops with their names
+              for (const result of results) {
+                stopsWithNames[result.idx] = { ...stopsWithNames[result.idx], name: result.name };
+              }
+              
+              console.log('All stops named:', stopsWithNames.map(s => s.name));
+              
+              // Don't filter too aggressively - we want to keep most stops
+              // First deduplicate stops that are very close together
+              let filteredStops = deduplicateNearbyStops(stopsWithNames, 300);
+              console.log('After distance deduplication:', filteredStops.length, 'stops:', filteredStops.map(s => s.name));
+              
+              // Remove consecutive stops with same names (e.g., "National Highway" appearing 5 times)
+              filteredStops = deduplicateByName(filteredStops);
+              console.log('After name deduplication:', filteredStops.length, 'stops:', filteredStops.map(s => s.name));
+              
+              // Try to filter to important stops, but keep all if filtering removes too many
+              const importantStops = filterImportantStops(filteredStops);
+              console.log('Important stops filtered:', importantStops.length, 'stops:', importantStops.map(s => s.name));
+              
+              // Only use filtered stops if we have at least 5, otherwise keep all deduplicated stops
+              if (importantStops.length >= 5) {
+                filteredStops = importantStops;
+              } else {
+                console.log('Keeping all deduplicated stops since important filter was too aggressive');
+              }
+              
+              console.log('Final stops to display:', filteredStops.length, 'stops:', filteredStops.map(s => s.name));
+              
+              // Update final stops
+              setGeneratedStops([...filteredStops]);
+            } catch (e) {
+              console.error('Failed to fetch stop names', e);
+              // Set fallback names
+              const fallbackStops = finalStops.map((s: any, idx: number) => ({
+                ...s,
+                name: `Location ${idx + 1}`
+              }));
+              setGeneratedStops([...fallbackStops]);
+            }
+          })();
+        } else {
+          setGeneratedStops(null);
+        }
+      } catch (stopsErr) {
+        console.warn('Failed to generate stops preview:', stopsErr);
+        setGeneratedStops(null);
+      }
+      
       // instruct the map to draw the generated route
       try { mapRef.current?.setRoute(latlngs); } catch (e) { console.warn('Failed to set route on map', e); }
       // Update distance and duration if ORS returned them
@@ -606,26 +1006,24 @@ export default function CreateRidePage() {
 
   const [query, setQuery] = useState({ field: '', text: '' });
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [suggestLimit, setSuggestLimit] = useState<number>(20);
   const [searchLoading, setSearchLoading] = useState(false);
   const searchTimeoutRef = useRef<number | null>(null);
   
-  const searchNominatim = async (q: string) => {
-    if (q.length < 3) return [];
+  const searchNominatim = async (q: string, limit: number) => {
+    // Show suggestions for even a single character; special-case 'all' to broaden results
+    if (q.length < 1) return [];
+    const queryText = q.trim().toLowerCase() === 'all' ? 'karachi' : q;
     try {
-        // Restrict search area by university bounds where possible to surface local results
-        // Karachi bounding box (lon/lat). We'll strictly filter results to this box
-        // to avoid showing out-of-city suggestions.
-        const KARACHI_VIEWBOX = { minLon: 66.8, minLat: 24.7, maxLon: 67.4, maxLat: 25.1 };
-        // Tight viewbox around NED University when the user is from NED
-        let viewbox = `${KARACHI_VIEWBOX.minLon},${KARACHI_VIEWBOX.minLat},${KARACHI_VIEWBOX.maxLon},${KARACHI_VIEWBOX.maxLat}`;
-        if (userData?.university === 'ned') {
-          viewbox = '67.00,24.84,67.06,24.88';
-        }
+        // Karachi-wide bounding box to include large and small places
+        const KARACHI_VIEWBOX = { minLon: 66.5, minLat: 24.6, maxLon: 67.5, maxLat: 25.5 };
+        const viewbox = `${KARACHI_VIEWBOX.minLon},${KARACHI_VIEWBOX.maxLat},${KARACHI_VIEWBOX.maxLon},${KARACHI_VIEWBOX.minLat}`; // lon,lat ordering per Nominatim
         const params = new URLSearchParams({
-            q,
+            q: queryText,
             format: 'jsonv2',
-            limit: '8',
+        limit: String(Math.max(1, Math.min(500, limit || 100))),
             countrycodes: 'pk',
+        addressdetails: '1',
             viewbox: viewbox,
             bounded: '1'
         });
@@ -636,18 +1034,8 @@ export default function CreateRidePage() {
             return [];
         }
         const results = await res.json();
-        // Filter results to ensure they lie within Karachi box (fallback safety) so
-        // we never show results outside Karachi even if the proxy returns extras.
-        const filtered = (results || []).filter((p: any) => {
-            const lat = parseFloat(p.lat);
-            const lon = parseFloat(p.lon);
-            // If we're using the tight NED viewbox, use that box as bounds
-            if (userData?.university === 'ned') {
-              return lon >= 67.00 && lon <= 67.06 && lat >= 24.84 && lat <= 24.88;
-            }
-            return lon >= KARACHI_VIEWBOX.minLon && lon <= KARACHI_VIEWBOX.maxLon && lat >= KARACHI_VIEWBOX.minLat && lat <= KARACHI_VIEWBOX.maxLat;
-        });
-        return filtered;
+        // Return as-is; the server viewbox already bounds to Karachi, so include all small places
+        return Array.isArray(results) ? results : [];
     } catch (e) {
         console.error('Nominatim search failed', e);
         return [];
@@ -655,22 +1043,26 @@ export default function CreateRidePage() {
   };
 
   useEffect(() => {
-    if (query.text.length < 3) {
+    if (query.text.length < 1) {
       setSuggestions([]);
       return;
     }
+    // Reset limit when new search starts
+    setSuggestLimit(20);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     
     setSearchLoading(true);
     if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
+    // Fast debounce for responsive suggestions without overwhelming the API
+    const delay = 200;
     searchTimeoutRef.current = window.setTimeout(async () => {
-      const results = await searchNominatim(query.text);
+      const results = await searchNominatim(query.text, suggestLimit);
       setSuggestions(results);
       setSearchLoading(false);
-    }, 500);
+    }, delay);
 
     return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
-  }, [query]);
+  }, [query, suggestLimit]);
 
   // Recalculate pricing whenever transportMode, route distance/duration or departure time changes
   useEffect(() => {
@@ -689,8 +1081,8 @@ export default function CreateRidePage() {
         departureTime: departureTimeValue || null,
       });
 
-      setRecommendedPricePerSeat(pricing.recommendedPerSeat);
-      setFinalPricePerSeat(pricing.finalPerSeat);
+      setRecommendedPricePerSeat(Math.round(pricing.recommendedPerSeat));
+      setFinalPricePerSeat(Math.round(pricing.finalPerSeat));
       setPricingBreakdown(pricing.breakdown);
       // Pre-fill form price with recommended if user hasn't already changed it from the mode default
       try {
@@ -698,7 +1090,7 @@ export default function CreateRidePage() {
         const DEFAULT_PRICE_BY_MODE: Record<string, number> = { car: 200, bike: 100 };
         const modeDefault = DEFAULT_PRICE_BY_MODE[transportMode] ?? 200;
         if (!currentPrice || Number(currentPrice) === modeDefault) {
-          form.setValue('price', pricing.recommendedPerSeat);
+          form.setValue('price', Math.round(pricing.recommendedPerSeat));
         }
       } catch (_) {}
     } catch (e) {
@@ -711,7 +1103,7 @@ export default function CreateRidePage() {
     const lat = parseFloat(place.lat);
     const lng = parseFloat(place.lon);
     
-    form.setValue(field, name);
+    form.setValue(field, name, { shouldValidate: true, shouldDirty: true });
     if (field === 'from') {
         setFromCoords({ lat, lng, name });
     } else {
@@ -754,6 +1146,12 @@ export default function CreateRidePage() {
     const uid = user!.uid;
     const ud = userData!;
     const db = firestore!;
+    // Ensure the user's profile has required fields (fullName) before proceeding
+    if (!ud.fullName) {
+      toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please add your full name to your profile before creating a ride.' });
+      router.push('/dashboard/complete-profile');
+      return;
+    }
     if (!mapRef.current) {
       toast({ variant: "destructive", title: "Map Error", description: "Map component is not ready. Please wait a moment." });
       return;
@@ -781,18 +1179,30 @@ export default function CreateRidePage() {
         return;
     }
 
+    const universityId = (userData?.university || '').toLowerCase();
+    if (!universityId) {
+      setIsSubmitting(false);
+      toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please add your university before creating a ride.' });
+      router.push('/dashboard/complete-profile');
+      return;
+    }
+
+    const totalSeats = Math.max(1, Math.trunc(values.totalSeats));
+
     const rideData = {
+      university: universityId,
       driverId: uid,
       createdBy: uid, // canonical
       from: values.from,
       to: values.to,
-      time: values.departureTime, // canonical
-      departureTime: values.departureTime,
+      time: values.departureTime,
+      // Firestore rules require timestamp type for departureTime
+      departureTime: Timestamp.fromDate(values.departureTime),
       transportMode: values.transportMode,
-      price: values.price,
-      seats: values.totalSeats, // canonical
-      totalSeats: values.totalSeats,
-      availableSeats: values.totalSeats,
+      price: Math.trunc(values.price),
+      seats: totalSeats, // canonical
+      totalSeats,
+      availableSeats: totalSeats,
       genderAllowed: values.genderAllowed,
       status: 'active' as 'active',
       // Keep legacy `route` (array of lat/lng) for compatibility, but store canonical encoded polyline and bounds
@@ -802,8 +1212,8 @@ export default function CreateRidePage() {
       waypoints: routeWaypoints || null,
       createdAt: serverTimestamp(),
       driverInfo: {
-        fullName: ud.fullName,
-        gender: ud.gender,
+        ...(ud.fullName && { fullName: ud.fullName }),
+        ...(ud.gender && { gender: ud.gender }),
         ...(ud.contactNumber && { contactNumber: ud.contactNumber }),
         ...(ud.transport && { transport: ud.transport }),
       },
@@ -814,18 +1224,59 @@ export default function CreateRidePage() {
       ...(pricingBreakdown && { pricingBreakdown }),
     };
 
-    // Auto-generate a sensible `stops` array for the ride document.
-    // Prefer explicit route waypoints (named) returned by the directions generator;
-    // otherwise sample the decoded route lat/lngs to pick a few main stops.
-    try {
-      const maxStops = 6;
-      let stops: { name?: string; lat: number; lng: number }[] | null = null;
+    // Remove undefined values recursively to satisfy Firestore's validation (no undefined allowed)
+    // Preserve Firestore sentinel types (serverTimestamp, increment, arrayUnion, Timestamp, etc.)
+    const removeUndefined = (obj: any): any => {
+      if (obj === undefined) return undefined;
+      if (obj === null) return null;
 
-      if (routeWaypoints && Array.isArray(routeWaypoints) && routeWaypoints.length > 0) {
-        stops = routeWaypoints.map((w: any) => ({ name: w.name || undefined, lat: Number(w.lat ?? (w[0] ?? 0)), lng: Number(w.lng ?? (w[1] ?? 0)) })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+      // Keep Firestore Timestamp intact
+      if (obj instanceof Timestamp) return obj;
+
+      // Preserve Firestore FieldValue sentinels (detected by internal _methodName)
+      if (typeof obj === 'object' && obj !== null && typeof (obj as any)._methodName === 'string') {
+        return obj;
       }
 
-      if ((!stops || stops.length === 0) && routeLatLngs && Array.isArray(routeLatLngs) && routeLatLngs.length > 0) {
+      if (Array.isArray(obj)) return obj.map(v => removeUndefined(v)).filter(v => v !== undefined);
+      if (typeof obj === 'object') {
+        const out: any = {};
+        for (const k of Object.keys(obj)) {
+          const v = removeUndefined((obj as any)[k]);
+          if (v !== undefined) out[k] = v;
+        }
+        return out;
+      }
+      return obj;
+    };
+
+    const sanitizedRideData = removeUndefined(rideData);
+
+    // Auto-generate a sensible `stops` array for the ride document.
+    // Prefer using generatedStops (which have names fetched) if available;
+    // otherwise use route waypoints or sample the route lat/lngs.
+    try {
+      const maxStops = 12;
+      let stops: { name?: string; lat: number; lng: number; distanceFromStart?: number; type?: string; isCustom?: boolean; isAutoGenerated?: boolean }[] | null = null;
+
+      // First priority: use generatedStops if they have been created (they have names!)
+      if (generatedStops && generatedStops.length > 0) {
+        stops = generatedStops.map((s: any) => ({
+          name: s.name || undefined,
+          lat: Number(s.lat),
+          lng: Number(s.lng),
+          distanceFromStart: s.distanceFromStart,
+          type: s.type,
+          isCustom: s.isCustom,
+          isAutoGenerated: s.isAutoGenerated
+        })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+      }
+      // Second priority: route waypoints
+      else if (routeWaypoints && Array.isArray(routeWaypoints) && routeWaypoints.length > 0) {
+        stops = routeWaypoints.map((w: any) => ({ name: w.name || undefined, lat: Number(w.lat ?? (w[0] ?? 0)), lng: Number(w.lng ?? (w[1] ?? 0)) })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+      }
+      // Last resort: sample route points
+      else if (routeLatLngs && Array.isArray(routeLatLngs) && routeLatLngs.length > 0) {
         const n = routeLatLngs.length;
         const step = Math.max(1, Math.floor((n - 1) / (maxStops - 1)));
         const idxs: number[] = [];
@@ -844,9 +1295,9 @@ export default function CreateRidePage() {
       console.warn('Failed to auto-generate stops for ride:', stopsErr);
     }
 
-    try {
-      console.debug('Creating ride: writing to Firestore', { university: userData!.university, rideData });
-      const ridesCollection = collection(firestore!, 'universities', userData!.university, 'rides');
+      try {
+        console.debug('Creating ride: writing to Firestore', { university: userData!.university, rideData: sanitizedRideData });
+        const ridesCollection = collection(firestore!, 'universities', universityId, 'rides');
 
       const writeStart = Date.now();
 
@@ -862,7 +1313,15 @@ export default function CreateRidePage() {
         console.warn('Firestore SDK preflight skipped due to missing firestore or user', { firestoreAvailable: !!firestore, uid: user?.uid });
       } else {
         try {
-          const preflightPromise = getDoc(doc(db, 'users', uid));
+          // Require the university-scoped user doc. Do NOT read or fall back to top-level `users/{uid}`.
+          if (!userData || !userData.university) {
+            setIsSubmitting(false);
+            toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile with your university before creating rides.' });
+            router.push('/dashboard/complete-profile');
+            return;
+          }
+          const userDocRefForPreflight = doc(db, 'universities', userData.university, 'users', uid);
+          const preflightPromise = getDoc(userDocRefForPreflight);
           const res = await Promise.race([preflightPromise, new Promise((_, rej) => setTimeout(() => rej(new Error('preflight-timeout')), 5000))]);
           // If getDoc resolves, the client can reach Firestore and auth is valid (though rules may still restrict the read)
           if ((res as any)?.exists && (res as any).exists()) {
@@ -914,8 +1373,8 @@ export default function CreateRidePage() {
               reject(new Error('write-timeout'));
             }, 20000);
 
-            try {
-              const res = await addDoc(ridesCollection, rideData);
+              try {
+              const res = await addDoc(ridesCollection, sanitizedRideData as any);
               clearTimeout(timer);
               resolve(res);
             } catch (err) {
@@ -998,9 +1457,21 @@ export default function CreateRidePage() {
                   onMouseDown={() => handleSelectSuggestion(field, s)}
                 >
                     <div className="text-sm font-medium truncate">{s.display_name}</div>
-                    {s.type && <div className="text-xs text-muted-foreground truncate">{s.type}</div>}
+                    {(() => {
+                      const a = s.address || {};
+                      const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
+                      const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+                      const city = a.city || a.town || a.village || a.county;
+                      const parts = [road, hood, city].filter(Boolean);
+                      return parts.length ? <div className="text-xs text-muted-foreground truncate">{parts.join(', ')}</div> : null;
+                    })()}
                 </button>
             ))}
+        {suggestions.length >= suggestLimit && (
+          <div className="p-2 border-t bg-card sticky bottom-0">
+            <button type="button" className="text-xs text-accent hover:underline" onMouseDown={() => setSuggestLimit((v) => Math.min(200, v + 30))}>Show more results</button>
+          </div>
+        )}
         {suggestions.length === 0 && (
           <div className="p-3 text-sm text-muted-foreground">No nearby results. Try a different query.</div>
         )}
@@ -1045,7 +1516,7 @@ export default function CreateRidePage() {
                         <FormLabel>From</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Search for starting point" {...field} readOnly={uniAuto === 'fromUni'} className={uniAuto === 'fromUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              <Input placeholder="Search for starting point" {...field} value={uniAuto === 'fromUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'fromUni'} className={uniAuto === 'fromUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
                               {searchLoading && query.field === 'from' && uniAuto !== 'fromUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
                               {uniAuto === 'fromUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
@@ -1063,7 +1534,7 @@ export default function CreateRidePage() {
                         <FormLabel>To</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Search for destination" {...field} readOnly={uniAuto === 'toUni'} className={uniAuto === 'toUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              <Input placeholder="Search for destination" {...field} value={uniAuto === 'toUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'toUni'} className={uniAuto === 'toUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
                               {searchLoading && query.field === 'to' && uniAuto !== 'toUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
                               {uniAuto === 'toUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
@@ -1080,7 +1551,7 @@ export default function CreateRidePage() {
               <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden border shadow-sm relative">
                   <MapComponent 
                     ref={mapRef} 
-                    onMapClick={() => {}}
+                    onMapClick={handleMapClick}
                     onRouteUpdate={handleRouteUpdate}
                     onRouteError={(err) => {
                       const msg = err?.message || 'Could not fetch route. Please try again.';
@@ -1097,8 +1568,11 @@ export default function CreateRidePage() {
                     from={fromCoords}
                     to={toCoords}
                     activeMapSelect={activeMapSelect}
+                    lockedPin={(uniAuto === 'toUni' || uniAuto === 'fromUni')}
+                    lockedPosition={(uniAuto === 'toUni' || uniAuto === 'fromUni') ? getCurrentUniversity() : null}
+                    onAnyMapClick={() => { /* noop - map clicks handled in MapComponent */ }}
                   />
-
+                  
                   {activeMapSelect && (
                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full z-[1000] pointer-events-none">
                          <MapPin className="h-10 w-10 text-primary drop-shadow-lg"/>
@@ -1117,9 +1591,35 @@ export default function CreateRidePage() {
               <div className="mb-6">
                 <RouteEditor origin={fromCoords || null} destination={toCoords || null} onRouteGenerated={onRouteGenerated} />
                 {routePolyline ? (
-                  <div className="mt-2 text-xs text-muted-foreground">Route generated and ready. Bounds: {routeBounds ? `${routeBounds.minLat.toFixed(4)},${routeBounds.minLng.toFixed(4)} → ${routeBounds.maxLat.toFixed(4)},${routeBounds.maxLng.toFixed(4)}` : 'n/a'}</div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {(() => {
+                      const short = (s?: string | null) => {
+                        if (!s) return '—';
+                        const parts = String(s).split(',').map(p => p.trim()).filter(Boolean);
+                        return parts.slice(0, 2).join(', ');
+                      };
+                      return `Route generated and ready. From: ${short(fromCoords?.name)} → To: ${short(toCoords?.name)}`;
+                    })()}
+                  </div>
                 ) : (
                   <div className="mt-2 text-xs text-muted-foreground">No generated route yet. Add waypoints or ensure start/end are selected.</div>
+                )}
+                
+                {/* Display and edit generated stops */}
+                {generatedStops && generatedStops.length > 0 && (
+                  <div className="mt-3">
+                    <StopsViewer
+                      stops={generatedStops}
+                      routePolyline={routePolyline || undefined}
+                      routeCoordinates={routeLatLngs}
+                      isCreator={true}
+                      onUpdateStops={async (updatedStops) => {
+                        setGeneratedStops(updatedStops);
+                      }}
+                      triggerText={`Manage Stops (${generatedStops.length})`}
+                    />
+                    <div className="text-xs text-muted-foreground mt-2">Click to view, edit, add or remove stops. These will be saved with your ride.</div>
+                  </div>
                 )}
               </div>
 
@@ -1240,6 +1740,7 @@ export default function CreateRidePage() {
                       form.reset();
                       setFromCoords(null);
                       setToCoords(null);
+                      setGeneratedStops(null);
                       mapRef.current?.resetMap(); 
                   }}>Reset Form & Route</Button>
               </div>

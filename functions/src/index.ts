@@ -125,7 +125,10 @@ export const expireRides = functions.pubsub
 
     // Throttle support stored per-user
     if (opts?.throttleKey && opts?.throttleSeconds) {
-      const throttleRef = db.doc(`users/${targetUid}/notificationThrottles/${opts.throttleKey}`);
+      // Store throttle metadata alongside fcm_tokens to avoid depending on
+      // client-side user document layout. This keeps throttle behavior independent
+      // from user profile document shape or location.
+      const throttleRef = db.doc(`fcm_tokens/${targetUid}/throttles/${opts.throttleKey}`);
       await db.runTransaction(async (tx) => {
         const tSnap = await tx.get(throttleRef);
         const now = admin.firestore.Timestamp.now();

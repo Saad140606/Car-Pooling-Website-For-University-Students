@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from 'next/navigation';
 import { useUser, useAuth, useFirestore } from '@/firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { getUniversityShortLabel } from '@/lib/universities';
@@ -10,8 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { updateProfile, reauthenticateWithCredential, EmailAuthProvider, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
+import { Mail, CheckCircle2, InfoIcon } from 'lucide-react';
+import { VerificationBadge } from '@/components/VerificationBadge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getUniversityEmailDomain, isValidUniversityEmail, getVerificationEmailMessage } from '@/lib/university-verification';
 
 export default function AccountPage() {
+  const router = useRouter();
   const { user, data: userData } = useUser();
   const auth = useAuth();
   const firestore = useFirestore();
@@ -20,8 +26,16 @@ export default function AccountPage() {
   const [fullName, setFullName] = useState('');
   const [gender, setGender] = useState<'male' | 'female' | undefined>(undefined);
   const [contactNumber, setContactNumber] = useState('');
-  const [transport, setTransport] = useState<'car' | 'bike' | undefined>(undefined);
   const [saving, setSaving] = useState(false);
+
+  // University email verification
+  const [universityEmail, setUniversityEmail] = useState('');
+  const [sendingVerification, setSendingVerification] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [verifiedLocal, setVerifiedLocal] = useState(false);
 
   // Password change
   const [showPwForm, setShowPwForm] = useState(false);
@@ -34,34 +48,73 @@ export default function AccountPage() {
     if (userData) {
       setFullName(userData.fullName || '');
       setGender((userData.gender as any) || undefined);
-      setContactNumber(userData.contactNumber || '');
-      setTransport((userData.transport as any) || undefined);
+      setContactNumber((userData.contactNumber || '').toString().replace(/\D/g, '').slice(0, 11));
+      if (userData.universityEmail) setUniversityEmail(userData.universityEmail);
+      setVerifiedLocal(Boolean(userData.universityEmailVerified));
+      if (userData.universityEmailVerified) {
+        setVerificationSent(false);
+      }
     }
     if (user && user.displayName && !userData?.fullName) {
       setFullName(user.displayName);
     }
   }, [userData, user]);
 
+  useEffect(() => {
+    if (!verificationSent || timeLeft <= 0) return;
+    const timer = setInterval(() => setTimeLeft((t) => (t > 0 ? t - 1 : 0)), 1000);
+    return () => clearInterval(timer);
+  }, [verificationSent, timeLeft]);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !firestore) return;
-    if (!fullName || !gender || !contactNumber || !transport) {
-      toast({ variant: 'destructive', title: 'Missing fields', description: 'Please fill all fields.' });
+    if (!fullName || !gender || !contactNumber) {
+      toast({ variant: 'destructive', title: 'Missing fields', description: 'Please fill all required fields.' });
       return;
     }
     setSaving(true);
     try {
       const university = userData?.university || 'fast';
-      const userDocRef = doc(firestore, 'users', `${university}_${user.uid}`);
-      await setDoc(userDocRef, {
+      const userDocRef = doc(firestore, 'universities', university, 'users', user.uid);
+      const existingSnap = await getDoc(userDocRef);
+      const baseUpdate = {
         uid: user.uid,
-        email: user.email,
         fullName,
         gender,
         contactNumber: contactNumber.replace(/\s|-/g, ''),
-        transport,
         updatedAt: serverTimestamp(),
-      }, { merge: true });
+      };
+      if (existingSnap.exists()) {
+        const existing = existingSnap.data() as any;
+        
+        // Check if document is corrupted (missing email or university)
+        if (!existing.email || !existing.university) {
+          console.warn('Document is corrupted (missing email/university). Overwriting with complete data...');
+          // Overwrite the corrupted document completely (merge: false acts like create)
+          await setDoc(userDocRef, { 
+            ...baseUpdate, 
+            email: user.email, 
+            university, 
+            createdAt: serverTimestamp() 
+          }, { merge: false });
+        } else {
+          // Document has valid email/university, proceed with update
+          await setDoc(userDocRef, {
+            ...baseUpdate,
+            email: existing.email,
+            university: existing.university
+          }, { merge: true });
+        }
+      } else {
+        // For create: use auth email (required by Firestore rules)
+        await setDoc(userDocRef, { 
+          ...baseUpdate, 
+          email: user.email, 
+          university, 
+          createdAt: serverTimestamp() 
+        });
+      }
 
       // Also update auth profile displayName for convenience
       if (auth && auth.currentUser) {
@@ -164,6 +217,113 @@ export default function AccountPage() {
     }
   }; 
 
+  const otpInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleSendVerification = async () => {
+    if (!user || !firestore || !userData?.university) return;
+    
+    if (!universityEmail) {
+      toast({ variant: 'destructive', title: 'Missing email', description: 'Please enter your university email.' });
+      return;
+    }
+
+    if (!isValidUniversityEmail(universityEmail, userData.university)) {
+      const domain = getUniversityEmailDomain(userData.university);
+      toast({ 
+        variant: 'destructive', 
+        title: 'Invalid university email', 
+        description: `Please enter a valid ${userData.university.toUpperCase()} email ending with ${domain}` 
+      });
+      return;
+    }
+
+    setSendingVerification(true);
+    try {
+      const response = await fetch('/api/send-verification-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid: user.uid,
+          universityEmail: universityEmail.toLowerCase(),
+          university: userData.university,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error?.error || 'Failed to send verification code');
+      }
+
+      const data = await response.json();
+      // Avoid client-side write for unverified users; server persists on verification.
+
+      setVerificationSent(true);
+      setTimeLeft(600);
+      setOtp('');
+      toast({ 
+        title: 'Code sent', 
+        description: data.otp 
+          ? `Dev only: OTP ${data.otp}. Check your inbox and spam/junk folder.` 
+          : `Verification code sent to ${universityEmail}. Check your inbox and spam/junk folder.` 
+      });
+      // Focus OTP input to help the user enter the code
+      setTimeout(() => otpInputRef.current?.focus(), 0);
+    } catch (e: any) {
+      console.error('Error sending verification:', e);
+      toast({ 
+        variant: 'destructive', 
+        title: 'Error', 
+        description: e.message || 'Could not send verification code.' 
+      });
+    } finally {
+      setSendingVerification(false);
+    }
+  }; 
+
+  const handleVerifyOtp = async () => {
+    if (!user) return;
+    if (!otp || otp.length !== 6) {
+      toast({ variant: 'destructive', title: 'Invalid code', description: 'Enter the 6-digit code sent to your email.' });
+      return;
+    }
+    setVerifying(true);
+    try {
+      const response = await fetch('/api/verify-university-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: user.uid, otp, universityEmail: universityEmail.toLowerCase() }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = String(payload?.error || 'Verification failed');
+        if (/invalid code/i.test(msg)) {
+          toast({ variant: 'destructive', title: 'Invalid code', description: 'Please try again.' });
+        } else {
+          toast({ variant: 'destructive', title: 'Verification failed', description: msg });
+        }
+        setVerifying(false);
+        return;
+      }
+
+      setVerifiedLocal(true);
+      setVerificationSent(false);
+      setOtp('');
+      toast({ title: 'Email verified', description: 'You earned the trusted badge.' });
+      router.refresh();
+    } catch (e: any) {
+      console.error('Error verifying OTP:', e);
+      toast({ variant: 'destructive', title: 'Verification failed', description: e?.message || 'Please try again.' });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const formatTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
   return (
     <div className="max-w-2xl mx-auto">
       <Card>
@@ -192,30 +352,112 @@ export default function AccountPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">Gender</label>
-                <Select value={gender} onValueChange={(v) => setGender(v as any)}>
+                <Select value={gender} onValueChange={(v) => setGender(v as any)} disabled={Boolean(userData?.gender)}>
                   <SelectTrigger className="w-full"><SelectValue placeholder="Select Gender" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="male">Male</SelectItem>
                     <SelectItem value="female">Female</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Transport</label>
-                <Select value={transport} onValueChange={(v) => setTransport(v as any)}>
-                  <SelectTrigger className="w-full"><SelectValue placeholder="Select Transport" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="car">Car</SelectItem>
-                    <SelectItem value="bike">Bike</SelectItem>
-                  </SelectContent>
-                </Select>
+                {userData?.gender && <p className="text-xs text-muted-foreground mt-1">Your gender is locked and cannot be changed.</p>}
               </div>
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">Contact Number</label>
-              <Input value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} />
+              <Input
+                value={contactNumber}
+                onChange={(e) => setContactNumber(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                maxLength={11}
+                inputMode="numeric"
+                pattern="\d*"
+              />
+            </div>
+
+            {/* University Email Verification Section */}
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-start gap-2 mb-3">
+                <InfoIcon className="h-4 w-4 text-blue-500 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-semibold">Verify Your University Email (Optional)</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Verify your university email to gain a trusted badge and increase your acceptance rate.
+                  </p>
+                </div>
+              </div>
+
+              {verifiedLocal ? (
+                <Alert className="bg-green-500/10 border-green-500/30">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-green-700">{userData?.universityEmail || 'Verified'}</div>
+                      <div className="text-xs text-green-600">Your university email is verified</div>
+                    </div>
+                    <VerificationBadge verified={true} />
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium">
+                      University Email {userData?.university && `(${getUniversityEmailDomain(userData.university)})`}
+                    </label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="email"
+                        placeholder={userData?.university ? `yourname${getUniversityEmailDomain(userData.university)}` : 'Enter university email'}
+                        value={universityEmail}
+                        onChange={(e) => setUniversityEmail(e.target.value)}
+                        disabled={!userData?.university || sendingVerification}
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        onClick={handleSendVerification}
+                        disabled={!universityEmail || !userData?.university || sendingVerification || (verificationSent && timeLeft > 0)}
+                        variant="outline"
+                        size="sm"
+                      >
+                        <Mail className="h-4 w-4 mr-2" />
+                        {sendingVerification
+                          ? 'Sending...'
+                          : verificationSent && timeLeft > 0
+                            ? `Resend in ${formatTimer(timeLeft)}`
+                            : 'Send Code'}
+                      </Button>
+                    </div>
+                    {userData?.university && (
+                      <p className="text-xs text-muted-foreground">
+                        {getVerificationEmailMessage(userData.university)}
+                      </p>
+                    )}
+                    {verificationSent && (
+                      <Alert className="bg-blue-500/10 border-blue-500/30">
+                        <Mail className="h-4 w-4 text-blue-600" />
+                        <AlertDescription className="space-y-2 text-sm text-blue-700">
+                          <p>Enter the 6-digit code we sent to your university email.</p>
+                          <div className="flex gap-2 items-center">
+                            <Input
+                              ref={otpInputRef as any}
+                              value={otp}
+                              onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                              maxLength={6}
+                              placeholder="123456"
+                              inputMode="numeric"
+                              className="w-32"
+                            />
+                            <Button type="button" size="sm" onClick={handleVerifyOtp} disabled={verifying || otp.length !== 6}>
+                              {verifying ? 'Verifying...' : 'Verify'}
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Resend available after the timer ends.</p>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2">
@@ -223,8 +465,7 @@ export default function AccountPage() {
               <Button variant="ghost" onClick={() => {
                 setFullName(userData?.fullName || '');
                 setGender(userData?.gender || undefined);
-                setContactNumber(userData?.contactNumber || '');
-                setTransport(userData?.transport || undefined);
+                setContactNumber((userData?.contactNumber || '').toString().replace(/\D/g, '').slice(0, 11));
               }}>Reset</Button>
               <Button variant="outline" onClick={() => setShowPwForm(s => !s)}>Change Password</Button>
             </div>

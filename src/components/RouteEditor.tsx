@@ -13,6 +13,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [suggestLimit, setSuggestLimit] = useState<number>(20);
   const debounceRef = useRef<number | null>(null);
   const [generating, setGenerating] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -35,22 +36,16 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
   // Nominatim expects viewbox as: left_lon,top_lat,right_lon,bottom_lat
   const KARACHI_VIEWBOX = '66.5,25.5,67.5,24.6';
 
-  const searchPlaces = useCallback(async (q: string) => {
-    if (!q || q.length < 2) return setSuggestions([]);
+  const searchPlaces = useCallback(async (q: string, limit: number) => {
+    if (!q || q.length < 1) return setSuggestions([]);
     try {
-      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q)}&limit=6&viewbox=${encodeURIComponent(KARACHI_VIEWBOX)}&bounded=1`);
+      // Show more comprehensive results within Karachi; include small places
+      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q.trim().toLowerCase() === 'all' ? 'karachi' : q)}&limit=${encodeURIComponent(String(Math.max(1, Math.min(500, limit || 100))))}&addressdetails=1&viewbox=${encodeURIComponent(KARACHI_VIEWBOX)}&bounded=1`);
       if (!res.ok) return setSuggestions([]);
       const json = await res.json();
       const results: any[] = Array.isArray(json) ? json : [];
-      // Parse KARACHI_VIEWBOX which is left_lon,top_lat,right_lon,bottom_lat
-      const [left, top, right, bottom] = KARACHI_VIEWBOX.split(',').map((v) => Number(v));
-      // Filter server results to strictly inside the Karachi bbox as a client-side safeguard
-      const filtered = results.filter((s) => {
-        const lat = Number(s.lat);
-        const lon = Number(s.lon);
-        return lon >= left && lon <= right && lat <= top && lat >= bottom;
-      });
-      setSuggestions(filtered);
+      // Server-side viewbox already bounds results to Karachi; include as-is
+      setSuggestions(results);
     } catch (e) { setSuggestions([]); }
   }, []);
 
@@ -72,18 +67,17 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
           let parsed: any = null;
           try { bodyText = await resp.text(); } catch (e) { /* ignore */ }
           try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch (e) { parsed = bodyText; }
-          const details = parsed && typeof parsed === 'object' ? parsed : (bodyText || 'No details');
-          console.error('ORS proxy responded with error', { status: resp.status, details });
-          setRouteError(typeof details === 'string' ? details : JSON.stringify(details));
-          // Provide a graceful fallback: generate a straight-line route from provided coords
-          try {
-            const fallbackLatLngs: LatLng[] = coords.map((c) => ({ lat: c[1], lng: c[0] }));
-            const fallbackPolyline = encodePolyline(fallbackLatLngs);
-            const fallbackBounds = computeBounds(fallbackLatLngs);
-            onRouteGenerated?.({ waypoints, polyline: fallbackPolyline, bounds: fallbackBounds, distanceMeters: null, durationSeconds: null });
-          } catch (e) {
-            // ignore fallback errors
+          const details = parsed && typeof parsed === 'object' ? parsed : (bodyText || '');
+          const friendly = 'No route found between these locations. Try different points or adjust the route.';
+          // Treat client-status errors as no-route, avoid console errors.
+          if (resp.status >= 400 && resp.status < 500) {
+            console.warn('Route service returned client error (no route/bad request)', { status: resp.status, details });
+            setRouteError(friendly);
+            return; // do not draw fallback straight line
           }
+          // For other statuses, also surface friendly message without throwing
+          console.warn('Route service error', { status: resp.status, details });
+          setRouteError(friendly);
           return;
         }
         const data = await resp.json();
@@ -99,15 +93,9 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
         const durationSeconds = summary?.duration ?? null;
         onRouteGenerated?.({ waypoints, polyline, bounds, distanceMeters, durationSeconds });
       } catch (e: any) {
-        console.error('Route generation failed', e);
-        setRouteError(String(e?.message || e));
-        // Fallback straight-line route so user still sees a path
-        try {
-          const fallbackLatLngs: LatLng[] = coords.map((c) => ({ lat: c[1], lng: c[0] }));
-          const fallbackPolyline = encodePolyline(fallbackLatLngs);
-          const fallbackBounds = computeBounds(fallbackLatLngs);
-          onRouteGenerated?.({ waypoints, polyline: fallbackPolyline, bounds: fallbackBounds, distanceMeters: null, durationSeconds: null });
-        } catch (err) { /* ignore */ }
+        console.warn('Route generation failed', e);
+        setRouteError('No route found between these locations. Try different points or adjust the route.');
+        // Do not draw fallback straight line — show friendly message instead
       } finally { setGenerating(false); }
     };
     doGenerate();
@@ -125,9 +113,11 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
             setQuery(v);
             // Debounce requests to avoid firing for every keystroke
             if (debounceRef.current) window.clearTimeout(debounceRef.current);
+            // Fast debounce for responsive suggestions
+            const delay = 200;
             debounceRef.current = window.setTimeout(() => {
-              searchPlaces(v);
-            }, 300) as unknown as number;
+              searchPlaces(v, suggestLimit);
+            }, delay) as unknown as number;
           }}
         />
         <Button onClick={() => { if (suggestions[0]) addWaypoint({ name: suggestions[0].display_name, lat: Number(suggestions[0].lat), lng: Number(suggestions[0].lon) }); }}>Add</Button>
@@ -137,8 +127,21 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
           {suggestions.map((s) => (
             <div key={s.place_id} className="p-1 hover:bg-muted cursor-pointer" onClick={() => { addWaypoint({ name: s.display_name, lat: Number(s.lat), lng: Number(s.lon) }); setQuery(''); setSuggestions([]); }}>
               <div className="text-sm">{s.display_name}</div>
+              {(() => {
+                const a = (s as any).address || {};
+                const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
+                const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+                const city = a.city || a.town || a.village || a.county;
+                const parts = [road, hood, city].filter(Boolean);
+                return parts.length ? <div className="text-xs text-muted-foreground truncate">{parts.join(', ')}</div> : null;
+              })()}
             </div>
           ))}
+          {suggestions.length >= suggestLimit && (
+            <div className="p-2 border-t">
+              <button type="button" className="text-xs text-accent hover:underline" onClick={() => setSuggestLimit((v) => Math.min(200, v + 30))}>Show more results</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -158,7 +161,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
       <div>
         <div className="text-xs text-muted-foreground">Route generation: {generating ? 'calculating...' : 'ready'}</div>
         {routeError ? (
-          <div className="text-sm text-red-400 mt-2">Route error: {routeError}</div>
+          <div className="text-sm text-red-400 mt-2">{routeError}</div>
         ) : null}
       </div>
     </div>

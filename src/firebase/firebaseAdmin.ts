@@ -48,8 +48,15 @@ function initAdmin() {
 
 const adminApp = initAdmin();
 
-// Final sanity log: ensure admin SDK was initialized and report mode
-// Do not log sensitive operational details in production code here.
-// Consumers can detect adminApp.apps.length as needed.
+// Convenience exports for Firestore/Auth when admin SDK is available.
+// These may be undefined if initialization failed (e.g., missing creds), so
+// callers should handle that case when used outside controlled environments.
+export const adminDb = (() => {
+  try { return adminApp.firestore(); } catch (_) { return undefined as any; }
+})();
+
+export const adminAuth = (() => {
+  try { return adminApp.auth(); } catch (_) { return undefined as any; }
+})();
 
 export default adminApp;

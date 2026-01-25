@@ -16,6 +16,7 @@ export type MapLeafletProps = {
   tileUrl?: string;
   tileAttribution?: string;
   maxZoom?: number;
+  startEndPins?: boolean;             // when true, render start/end pins derived from the route
 };
 
 export default function MapLeaflet({
@@ -29,20 +30,23 @@ export default function MapLeaflet({
   tileUrl,
   tileAttribution,
   maxZoom,
+  startEndPins = true,
 }: MapLeafletProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const polyRef = useRef<L.Polyline | null>(null);
   const polyOutlineRef = useRef<L.Polyline | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
+  const startMarkerRef = useRef<L.Marker | null>(null);
+  const endMarkerRef = useRef<L.Marker | null>(null);
 
-  // Fix default icon paths (idempotent)
+  // Fix default icon paths (idempotent) and align marker visuals with create-ride map
   if (typeof window !== 'undefined') {
     try {
       const pinSvg = `
         <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-          <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
-          <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+          <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%232b2f67' stroke='%23ffffff' stroke-width='1.2' />
+          <circle cx='12' cy='9' r='2.5' fill='%23FFD166' />
         </svg>
       `;
       const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
@@ -74,16 +78,28 @@ export default function MapLeaflet({
     }
     mapRef.current = map;
 
-    // Add base layer (default: OpenStreetMap tiles for a plain, familiar basemap)
-    const providerUrl = (typeof (map as any).__tileUrl === 'string' && (map as any).__tileUrl) || tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    const providerAttribution = tileAttribution || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+    // Add base layer (default: OpenStreetMap with fallback to Carto Voyager to avoid blank tiles)
+    let providerUrl = (typeof (map as any).__tileUrl === 'string' && (map as any).__tileUrl) || tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const fallbackUrl = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+    const providerAttribution = tileAttribution || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Tiles: Carto Voyager fallback';
 
     const baseLayer = L.tileLayer(providerUrl, {
       attribution: providerAttribution,
       maxZoom: maxZoom ?? 19,
       detectRetina: true,
-      subdomains: 'abcd'
+      subdomains: 'abcd',
+      crossOrigin: true,
+      updateWhenIdle: true,
+      keepBuffer: 2,
     }).addTo(map);
+
+    baseLayer.on('tileerror', () => {
+      // Switch to fallback provider if primary tiles fail (prevents gray squares)
+      if (providerUrl !== fallbackUrl) {
+        providerUrl = fallbackUrl;
+        try { baseLayer.setUrl(fallbackUrl); } catch (_) {}
+      }
+    });
 
     // Ensure attribution control is visible on the map
     try { if (map.attributionControl) map.attributionControl.setPrefix(''); } catch (_) {}
@@ -112,28 +128,72 @@ export default function MapLeaflet({
     // Add initial route / polyline (outline + highlight for contrast)
     if (route && route.length) {
       // Use SVG renderer explicitly to avoid canvas draw errors on teardown in Strict Mode
+      const mainColor = '#2563eb'; // blue to match UI
+      const outlineColor = '#0b1220';
       try {
         // Outline behind the visible route for better contrast over labels
-        polyOutlineRef.current = L.polyline(route, { color: '#0b1220', weight: 11, opacity: 0.95, renderer: L.svg() }).addTo(map);
-        polyRef.current = L.polyline(route, { color: '#FFD166', weight: 5, renderer: L.svg() }).addTo(map);
+        polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.9, renderer: L.svg() }).addTo(map);
+        polyRef.current = L.polyline(route, { color: mainColor, weight: 6, renderer: L.svg() }).addTo(map);
       } catch (e) {
         // fallback to default if svg renderer isn't available
-        polyOutlineRef.current = L.polyline(route, { color: '#0b1220', weight: 11, opacity: 0.95 }).addTo(map);
-        polyRef.current = L.polyline(route, { color: '#FFD166', weight: 5 }).addTo(map);
+        polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.9 }).addTo(map);
+        polyRef.current = L.polyline(route, { color: mainColor, weight: 6 }).addTo(map);
       }
     }
 
-    // Add initial markers (use circle markers for consistent high-contrast icons)
+    // Add initial markers (pickup pins) plus optional start/end pins
+    markerLayerRef.current = L.layerGroup().addTo(map);
+
+    const pickupIcon = L.icon({
+      iconUrl: (L.Icon.Default.prototype as any).options.iconUrl,
+      iconRetinaUrl: (L.Icon.Default.prototype as any).options.iconRetinaUrl,
+      iconSize: [32, 50],
+      iconAnchor: [16, 46],
+      popupAnchor: [0, -46],
+      tooltipAnchor: [0, -46],
+    });
+
+    const startIcon = L.divIcon({
+      className: '',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
+        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#16a34a" stroke="#0b1220" stroke-width="1.2" />
+        <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
+      </svg>`,
+      iconAnchor: [20, 50],
+      popupAnchor: [0, -50],
+      tooltipAnchor: [0, -50],
+    });
+
+    const endIcon = L.divIcon({
+      className: '',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
+        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#2563eb" stroke="#0b1220" stroke-width="1.2" />
+        <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
+      </svg>`,
+      iconAnchor: [20, 50],
+      popupAnchor: [0, -50],
+      tooltipAnchor: [0, -50],
+    });
+
+    // Start pin
+    if (startEndPins && route && route.length) {
+      try {
+        const startLatLng = L.latLng(route[0] as any);
+        startMarkerRef.current = L.marker(startLatLng, { icon: startIcon, interactive: true }).addTo(map);
+        try { startMarkerRef.current.bindTooltip('Start', { direction: 'top', permanent: false }); } catch (_) {}
+      } catch (_) {}
+    }
+
+    // End pin
+    if (startEndPins && route && route.length) {
+      try {
+        const endLatLng = L.latLng(route[route.length - 1] as any);
+        endMarkerRef.current = L.marker(endLatLng, { icon: endIcon, interactive: true }).addTo(map);
+        try { endMarkerRef.current.bindTooltip('Destination', { direction: 'top', permanent: false }); } catch (_) {}
+      } catch (_) {}
+    }
+
     if (markers && markers.length) {
-      markerLayerRef.current = L.layerGroup().addTo(map);
-      // Custom image icon from public/ (map-marker.jpg)
-      const customIcon = L.icon({
-        iconUrl: '/map-marker.jpg',
-        iconSize: [28, 41],
-        iconAnchor: [14, 41],
-        popupAnchor: [0, -41],
-        tooltipAnchor: [0, -41],
-      });
       markers.forEach((m: any) => {
         let latlng: [number, number] | null = null;
         let label: string | undefined;
@@ -147,7 +207,7 @@ export default function MapLeaflet({
         }
 
         if (latlng) {
-          const marker = L.marker(latlng as any, { icon: customIcon, interactive: true });
+          const marker = L.marker(latlng as any, { icon: pickupIcon, interactive: true });
           if (label) {
             try { marker.bindTooltip(label, { direction: 'top', permanent: false }); } catch (_) {}
           }
@@ -179,6 +239,12 @@ export default function MapLeaflet({
           map.removeLayer(markerLayerRef.current);
         }
       } catch (_) {}
+      try {
+        if (startMarkerRef.current && map.hasLayer(startMarkerRef.current)) map.removeLayer(startMarkerRef.current);
+      } catch (_) {}
+      try {
+        if (endMarkerRef.current && map.hasLayer(endMarkerRef.current)) map.removeLayer(endMarkerRef.current);
+      } catch (_) {}
 
       try {
         // Disconnect ResizeObserver and remove window resize listener if present
@@ -199,6 +265,8 @@ export default function MapLeaflet({
       mapRef.current = null;
       polyRef.current = null;
       markerLayerRef.current = null;
+      startMarkerRef.current = null;
+      endMarkerRef.current = null;
     };
     // Intentionally empty deps: initialize once per mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,7 +297,7 @@ export default function MapLeaflet({
     }
   }, [route]);
 
-  // Update markers when `markers` changes (replace layer)
+  // Update markers when `markers` or `route` changes (replace layer) and keep start/end pins
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -238,17 +306,22 @@ export default function MapLeaflet({
       if (!markerLayerRef.current) markerLayerRef.current = L.layerGroup().addTo(map);
       else markerLayerRef.current.clearLayers();
 
-      // Normalize and add markers as circle markers for consistent high-contrast icons.
+      // Recreate pickup markers
       if (markers && markers.length) {
+        const pickupIcon = L.icon({
+          iconUrl: (L.Icon.Default.prototype as any).options.iconUrl,
+          iconRetinaUrl: (L.Icon.Default.prototype as any).options.iconRetinaUrl,
+          iconSize: [32, 50],
+          iconAnchor: [16, 46],
+          popupAnchor: [0, -46],
+          tooltipAnchor: [0, -46],
+        });
         markers.forEach((m: any) => {
           let latlng: [number, number] | null = null;
           let label: string | undefined;
 
-          // Array form [lat, lng]
-          if (Array.isArray(m) && m.length >= 2) {
-            latlng = [Number(m[0]), Number(m[1])];
-          } else if (typeof m === 'object' && m !== null) {
-            // Object with lat/lng keys
+          if (Array.isArray(m) && m.length >= 2) latlng = [Number(m[0]), Number(m[1])];
+          else if (typeof m === 'object' && m !== null) {
             if (typeof m.lat === 'number' && typeof m.lng === 'number') {
               latlng = [m.lat, m.lng];
               label = m.label;
@@ -258,15 +331,7 @@ export default function MapLeaflet({
           }
 
           if (latlng) {
-            // Use the same custom icon for updated markers
-            const customIcon2 = L.icon({
-              iconUrl: '/map-marker.jpg',
-              iconSize: [28, 41],
-              iconAnchor: [14, 41],
-              popupAnchor: [0, -41],
-              tooltipAnchor: [0, -41],
-            });
-            const marker = L.marker(latlng as any, { icon: customIcon2 });
+            const marker = L.marker(latlng as any, { icon: pickupIcon });
             if (label) {
               try { marker.bindTooltip(label, { direction: 'top', permanent: false }); } catch (_) {}
             }
@@ -274,10 +339,45 @@ export default function MapLeaflet({
           }
         });
       }
+
+      // Recreate start/end pins when enabled
+      if (startEndPins && route && route.length) {
+        const startIcon = L.divIcon({
+          className: '',
+          html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
+            <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#16a34a" stroke="#0b1220" stroke-width="1.2" />
+            <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
+          </svg>`,
+          iconAnchor: [20, 50],
+          popupAnchor: [0, -50],
+          tooltipAnchor: [0, -50],
+        });
+
+        const endIcon = L.divIcon({
+          className: '',
+          html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
+            <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#2563eb" stroke="#0b1220" stroke-width="1.2" />
+            <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
+          </svg>`,
+          iconAnchor: [20, 50],
+          popupAnchor: [0, -50],
+          tooltipAnchor: [0, -50],
+        });
+
+        const startLatLng = L.latLng(route[0] as any);
+        startMarkerRef.current = L.marker(startLatLng, { icon: startIcon }).addTo(map);
+        try { startMarkerRef.current.bindTooltip('Start', { direction: 'top', permanent: false }); } catch (_) {}
+
+        if (route.length > 1) {
+          const endLatLng = L.latLng(route[route.length - 1] as any);
+          endMarkerRef.current = L.marker(endLatLng, { icon: endIcon }).addTo(map);
+          try { endMarkerRef.current.bindTooltip('Destination', { direction: 'top', permanent: false }); } catch (_) {}
+        }
+      }
     } catch (e) {
       console.warn('Failed to render markers', e);
     }
-  }, [markers]);
+  }, [markers, route, startEndPins]);
 
   // Update bounds if provided
   useEffect(() => {

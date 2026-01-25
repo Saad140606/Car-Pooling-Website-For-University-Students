@@ -96,11 +96,11 @@ export function useCollection<T extends DocumentData>(
           const userMap = new Map<string, any>();
           await Promise.all(userIds.map(async (uid: string) => {
             try {
-              // Try university-scoped paths (fast then ned)
-              const fastRef = doc(firestore, 'users', `fast_${uid}`);
+              // Try university-scoped paths: users/{uni}/{uid}
+              const fastRef = doc(firestore, 'universities', 'fast', 'users', uid);
               const fastSnap = await getDoc(fastRef);
               if (fastSnap.exists()) { userMap.set(uid, fastSnap.data()); return; }
-              const nedRef = doc(firestore, 'users', `ned_${uid}`);
+              const nedRef = doc(firestore, 'universities', 'ned', 'users', uid);
               const nedSnap = await getDoc(nedRef);
               if (nedSnap.exists()) { userMap.set(uid, nedSnap.data()); return; }
             } catch (err) {

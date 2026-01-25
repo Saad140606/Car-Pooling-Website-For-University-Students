@@ -1,19 +1,23 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import RideCard from './RideCard';
+import StopsViewer from './StopsViewer';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import L, { LatLng, LatLngExpression } from 'leaflet';
-import { MapContainer, TileLayer, CircleMarker, Polyline, useMapEvents, Tooltip } from '@/components/map';
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMapEvents, Tooltip } from '@/components/map';
 import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { decodePolyline } from '@/lib/route';
 
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
   return null;
 }
 
-export default function FullRideCard({ ride, user, userData, firestore, hasActiveBooking, myBookings }: { ride: any; user: any; userData: any; firestore: any; hasActiveBooking?: boolean; myBookings?: any[] }) {
+export default function FullRideCard({ ride, user, userData, firestore, hasActiveBooking, myBookings, openBookingOnMount, selectedUniversity }: { ride: any; user: any; userData: any; firestore: any; hasActiveBooking?: boolean; myBookings?: any[]; openBookingOnMount?: boolean; selectedUniversity?: string }) {
+  const router = useRouter();
   const [openView, setOpenView] = useState(false);
   const [openBook, setOpenBook] = useState(false);
   const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
@@ -34,6 +38,9 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const [existingChecked, setExistingChecked] = useState(false);
 
   useEffect(() => {
+    if (openBookingOnMount) {
+      setOpenBook(true);
+    }
     let mounted = true;
     (async () => {
       setExistingChecked(false);
@@ -299,11 +306,33 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         genderPreference={ride.genderAllowed === 'both' ? 'Both' : ride.genderAllowed}
         dvr={ride.driverInfo?.dvr || 0}
         transport={ride.transportMode || ride.transport}
+        university={ride.university}
+        hideUniversity={userData?.university === ride.university}
+        stops={ride.stops}
         onViewRoute={() => setOpenView(true)}
-        onBook={() => setOpenBook(true)}
+        onBook={() => {
+          if (!user) {
+            router.push('/auth/select-university');
+            return;
+          }
+          setOpenBook(true);
+        }}
         disabled={!existingChecked ? true : !!disabledReason}
         disabledReason={!existingChecked ? 'Checking...' : disabledReason}
           />
+          
+          {/* Stops Viewer */}
+          {ride.stops && ride.stops.length > 0 && (
+            <div className="mt-3 flex justify-center">
+              <StopsViewer 
+                stops={ride.stops} 
+                routePolyline={ride.routePolyline}
+                routeCoordinates={ride.routePolyline ? decodePolyline(ride.routePolyline) : undefined}
+                isCreator={false}
+                triggerText="View All Stops"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -319,7 +348,37 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           <div className="h-[60vh] w-full relative">
             <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
-              <Polyline positions={ride.route as LatLngExpression[]} color="#3F51B5" weight={4} />
+              <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
+              {ride.route && ride.route.length > 0 && (
+                <>
+                  <Marker 
+                    position={ride.route[0] as any}
+                    icon={L.icon({
+                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+                      iconSize: [25, 41],
+                      iconAnchor: [12, 41],
+                      popupAnchor: [1, -34],
+                      shadowSize: [41, 41]
+                    })}
+                  >
+                    <Tooltip>Start: {start}</Tooltip>
+                  </Marker>
+                  <Marker 
+                    position={ride.route[ride.route.length - 1] as any}
+                    icon={L.icon({
+                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+                      iconSize: [25, 41],
+                      iconAnchor: [12, 41],
+                      popupAnchor: [1, -34],
+                      shadowSize: [41, 41]
+                    })}
+                  >
+                    <Tooltip>End: {end}</Tooltip>
+                  </Marker>
+                </>
+              )}
             </MapContainer>
           </div>
           <div className="mt-4 flex gap-2 justify-end">
@@ -369,7 +428,40 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
 
             <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
-              <Polyline positions={ride.route as LatLngExpression[]} color="#3F51B5" weight={4} />
+              <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
+
+              {/* Start and End Markers */}
+              {ride.route && ride.route.length > 0 && (
+                <>
+                  <Marker 
+                    position={ride.route[0] as any}
+                    icon={L.icon({
+                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+                      iconSize: [25, 41],
+                      iconAnchor: [12, 41],
+                      popupAnchor: [1, -34],
+                      shadowSize: [41, 41]
+                    })}
+                  >
+                    <Tooltip>Start: {start}</Tooltip>
+                  </Marker>
+                  <Marker 
+                    position={ride.route[ride.route.length - 1] as any}
+                    icon={L.icon({
+                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+                      iconSize: [25, 41],
+                      iconAnchor: [12, 41],
+                      popupAnchor: [1, -34],
+                      shadowSize: [41, 41]
+                    })}
+                  >
+                    <Tooltip>End: {end}</Tooltip>
+                  </Marker>
+                </>
+              )}
+              
               {pickupPoint && (
                 <CircleMarker center={pickupPoint as any} pathOptions={{ color: '#3F51B5', fillColor: '#3F51B5' }} radius={6}>
                   <Tooltip>Pickup</Tooltip>

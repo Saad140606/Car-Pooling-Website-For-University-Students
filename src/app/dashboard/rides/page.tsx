@@ -1,6 +1,6 @@
 'use client';
 import { useUser, useFirestore } from '@/firebase';
-import { query, where, orderBy, Timestamp, doc, runTransaction, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
+import { query, where, orderBy, doc, runTransaction, serverTimestamp, addDoc, getDoc, Timestamp } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Route, Calendar, Users, Search as SearchIcon } from 'lucide-react';
 import FullRideCard from '@/components/FullRideCard';
@@ -53,6 +53,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Controlled dialog state to manage when the MapContainer is mounted (avoids double-init)
   const [open, setOpen] = useState(false);
@@ -160,7 +161,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
       return;
     }
     // Require a completed profile before booking
-    const profileComplete = userData && userData.fullName && userData.gender && userData.contactNumber && userData.transport && userData.university;
+    const profileComplete = userData && userData.fullName && userData.gender && userData.contactNumber && userData.university;
     if (!profileComplete) {
       toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile before booking a ride. Redirecting...'});
       router.push('/dashboard/complete-profile');
@@ -336,7 +337,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
                     <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent={false}>End</Tooltip>
                   </CircleMarker>
                 )}
-                <Polyline positions={ride.route as LatLngExpression[]} color="#3F51B5" weight={5} />
+                <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
                 {pickupPoint && (
                   <CircleMarker center={pickupPoint as any} pathOptions={{ color: '#3F51B5', fillColor: '#3F51B5' }} radius={6} />
                 )}
@@ -398,9 +399,10 @@ class MapErrorBoundary extends React.Component<{ children: React.ReactNode, onMa
   }
 }
 
-function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, userData: any, firestore: any }) {
+function RideCard({ ride, user, userData, firestore, selectedUniversity }: { ride: any, user: any, userData: any, firestore: any, selectedUniversity?: string }) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const router = useRouter();
 
   const [existingBooking, setExistingBooking] = useState<any | null>(null);
   const [existingChecked, setExistingChecked] = useState(false);
@@ -436,9 +438,28 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
   const hasBlockingRequest = existingBooking ? (existingRequestStatus && existingRequestStatus !== 'rejected') : false;
 
   const handleRequestSeat = async (pickupPoint: LatLng) => {
-    if (!user || !firestore) return false;
+    if (!user) {
+      toast({ variant: 'destructive', title: 'Sign in to book', description: 'Please sign in to request a seat.' });
+      router.push('/dashboard');
+      return false;
+    }
+    if (!firestore) return false;
     if (!userData || !userData.university) {
       toast({ variant: 'destructive', title: 'Profile incomplete', description: 'Please complete your profile and select your university before booking.' });
+      return false;
+    }
+
+    // Ensure user has a valid auth token before attempting transaction
+    let idToken: string | null = null;
+    try {
+      idToken = await user.getIdToken(true); // Force refresh
+      if (!idToken) {
+        throw new Error('Could not obtain authentication token');
+      }
+    } catch (tokenErr) {
+      console.error('Token refresh failed:', tokenErr);
+      toast({ variant: 'destructive', title: 'Authentication Error', description: 'Please sign out and sign in again.' });
+      router.push('/auth/select-university');
       return false;
     }
 
@@ -516,6 +537,9 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
       return true;
     } catch (error: any) {
       console.error('Error requesting seat:', error);
+      console.error('Full error object:', JSON.stringify(error, null, 2));
+      console.error('Request auth check:', { hasUser: !!user, userId: user?.uid, hasFirestore: !!firestore, userDataUniversity: userData?.university });
+      
       const code = error?.code || '';
       const msg = error?.message || String(error);
 
@@ -529,7 +553,7 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
           description: `Ensure your Firestore rules allow creating ride requests under universities/${userData.university}/rides/${ride.id}/requests. Then run: firebase deploy --only firestore:rules`,
         });
       } else {
-        toast({ variant: 'destructive', title: 'Booking Failed', description: msg });
+        toast({ variant: 'destructive', title: 'Booking Failed', description: msg || 'Unknown error. Check console for details.' });
       }
       return false;
     } finally {
@@ -650,18 +674,21 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
     );
   }
 
+  const uniLabel = (ride.university || selectedUniversity || '').toUpperCase();
+
   return (
-    <Card className="relative flex flex-col md:flex-row p-2 rounded-md bg-card border border-border overflow-visible shadow-sm h-auto md:min-h-[140px]">
+    <Card className="relative flex flex-col md:flex-row p-1 rounded-md bg-card border border-border overflow-visible shadow-sm h-auto md:min-h-[90px]">
 
 
       <div className="relative flex-1 pr-2 flex flex-col justify-between">
         {/* Desktop price pill (left area) */}
-          <div className="hidden md:block absolute top-2 right-3 z-20">
+          <div className="hidden md:flex flex-col items-end gap-1 absolute top-1 right-2 z-20">
           <div className="bg-primary/95 text-primary-foreground px-2 py-0.5 rounded-full font-semibold text-[0.68rem] shadow-sm border border-primary/20">PKR {ride.price}</div>
+          {uniLabel && <div className="px-2 py-0.5 text-[0.62rem] rounded-full bg-white/10 text-white border border-white/10">{uniLabel}</div>}
         </div>
         {/* Top content: From / To rows + Map */}
         <div>
-            <div className="mb-3 flex items-start justify-between gap-4">
+            <div className="mb-1.5 flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-start gap-3">
                   <span className="mt-1 h-3 w-3 rounded-full bg-emerald-400 inline-block flex-shrink-0" />
@@ -681,17 +708,17 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
               </div>
             </div>
 
-          <div className="flex items-start gap-4">
+          <div className="flex items-start gap-2.5">
             <div className="flex-1">
-              <div className="rounded-md overflow-hidden border border-border bg-white p-1 h-10 md:h-12 shadow-sm">
+              <div className="rounded-md overflow-hidden border border-border bg-white p-1 h-8 md:h-9 shadow-sm">
                 {ride.route && ride.route.length > 0 ? (
                   <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
-                    <div className="relative w-full h-full rounded-md overflow-hidden pl-2 flex items-center">
+                    <div className="relative w-full h-full rounded-md overflow-hidden pl-2 flex items-center cursor-pointer">
                       <div className="flex-1 h-full min-h-0">
                         <PreviewInner route={ride.route} makeUrl={makeStaticMapUrl} />
                       </div>
                       <div className="absolute bottom-1 right-1">
-                        <div className="bg-[#111827]/80 text-[0.65rem] text-white rounded-md px-2 py-0.5">View</div>
+                        <div className="bg-[#111827]/80 text-[0.6rem] text-white rounded-md px-2 py-0.5">View</div>
                       </div>
                     </div>
                   </RouteMapModal>
@@ -701,57 +728,39 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
               </div>
             </div>
 
-            <div className="w-44 flex flex-col justify-between items-end">
-              <div className="text-right">
-                <div className="text-xs text-muted-foreground">Ride Provider</div>
-                  <div className="mt-1 flex items-center gap-2 justify-end">
-                    <div className="h-7 w-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-medium text-[0.65rem]">{(ride.driverInfo?.fullName || 'U').split(' ').map((s:any)=>s[0]).slice(0,2).join('')}</div>
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate max-w-[160px] text-white" title={ride.driverInfo?.fullName}>{truncateWords(ride.driverInfo?.fullName, 30)}</div>
-                      <div className="text-[0.62rem] text-muted-foreground">DVR: <span className="font-semibold">0</span></div>
-                    </div>
-                  </div>
-              </div>
+            <div className="w-24 flex flex-col justify-between items-end gap-1">
+              <div className="h-4 w-4 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-bold text-[0.4rem]">{(ride.driverInfo?.fullName || 'U').split(' ').map((s:any)=>s[0]).slice(0,2).join('')}</div>
 
-              <div className="mt-2 w-full">
+              <div className="w-full space-y-0.5">
                 <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
-                  <Button className="mb-2 w-full text-sm bg-transparent hover:bg-white/5 border border-white/5 text-slate-200">View Route</Button>
+                  <Button className="w-full text-[0.68rem] h-6 bg-transparent hover:bg-white/5 border border-white/5 text-slate-200 px-1">Route</Button>
                 </RouteMapModal>
 
                 <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
-                  <Button disabled={!existingChecked || isDriver || isFull || hasBlockingRequest || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="w-full bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">Book</Button>
+                  <Button disabled={!user || !existingChecked || isDriver || isFull || hasBlockingRequest || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="w-full h-6 bg-primary rounded-md text-primary-foreground px-1 text-[0.68rem]">{user ? 'Book' : 'Sign in'}</Button>
                 </RouteMapModal>
               </div>
             </div>
 
           </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-2 text-[0.68rem] text-muted-foreground">
-            <div className="flex items-start gap-2">
-              <Calendar className="h-4 w-4" />
-              <div>
-                <div className="text-xs">{weekday}</div>
-                <div className="">{dateShort}</div>
-              </div>
+          <div className="mt-0.5 grid grid-cols-3 gap-1 text-[0.55rem] text-muted-foreground">
+            <div className="flex items-start gap-0.5">
+              <Calendar className="h-3 w-3 flex-shrink-0" />
+              <div className="text-[0.5rem]">{dateShort}</div>
             </div>
-            <div className="flex items-start gap-2">
-              <Users className="h-4 w-4" />
-              <div>
-                <div className="text-xs">Seats Left</div>
-                <div className="font-semibold">{ride.availableSeats}</div>
-              </div>
+            <div className="flex items-start gap-0.5">
+              <Users className="h-3 w-3 flex-shrink-0" />
+              <div className="font-semibold text-[0.5rem]">{ride.availableSeats}S</div>
             </div>
-            <div className="flex items-start gap-2">
-              <Route className="h-4 w-4" />
-              <div>
-                <div className="text-xs">Gender</div>
-                <div>{ride.genderAllowed === 'both' ? 'Both Men & Women' : ride.genderAllowed}</div>
-              </div>
+            <div className="flex items-start gap-0.5">
+              <Route className="h-3 w-3 flex-shrink-0" />
+              <div className="text-[0.5rem]">{ride.genderAllowed === 'both' ? 'All' : ride.genderAllowed}</div>
             </div>
           </div>
 
                 <RouteMapModal ride={ride} onBook={handleRequestSeat} userData={userData} alreadyBooked={hasBlockingRequest}>
-                  <Button disabled={!existingChecked || isDriver || isFull || hasBlockingRequest || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">Book</Button>
+                  <Button disabled={!user || !existingChecked || isDriver || isFull || hasBlockingRequest || (ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed)} className="bg-primary rounded-md text-primary-foreground px-3 py-1 text-sm">{user ? 'Book' : 'Sign in to book'}</Button>
                 </RouteMapModal>
         </div>
       </div>
@@ -762,32 +771,15 @@ function RideCard({ ride, user, userData, firestore }: { ride: any, user: any, u
 }
 
 export default function RidesPage() {
-  const { user, data: userData, loading: userLoading } = useUser();
+    const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
   const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    console.log('[RidesPage] User:', user?.uid || 'NOT LOGGED IN', 'UserData:', userData?.university || 'N/A', 'UserLoading:', userLoading);
+  }, [user, userData, userLoading]);
   const searchParams = useSearchParams();
-
-  // Note: Firestore does not allow range filters on multiple different fields in a single query.
-  // We intentionally avoid applying gender filters at query time so users see all available rides.
-  // Gender (and other) filters are applied client-side only when the user toggles them.
-  const ridesQuery = (user && firestore && userData) ? query(
-    safeCollection(firestore, 'universities', userData.university, 'rides'),
-    where('status', '==', 'active'),
-    where('departureTime', '>', Timestamp.now()),
-    orderBy('departureTime', 'asc')
-  ) : null;
-
-  const { data: rides, loading: ridesLoading } = useCollection<RideType>(ridesQuery);
-  
-  const isLoading = userLoading || ridesLoading;
-
-  // Check if the current user already has an active booking (any ride)
-  const myBookingsQuery = (user && firestore && userData) ? query(
-    safeCollection(firestore, 'universities', userData.university, 'bookings'),
-    where('passengerId', '==', user.uid)
-  ) : null;
-  const { data: myBookings } = useBookingsCollection(myBookingsQuery);
-  const hasActiveBooking = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected'));
 
   // --- Filters UI state (must be declared unconditionally to preserve Hooks order) ---
   const [filters, setFilters] = useState({
@@ -797,11 +789,56 @@ export default function RidesPage() {
     maxPrice: '' as string,
     pointInput: '' as string,
     point: null as { lat:number; lng:number } | null,
+    university: '' as string,
     direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
   });
 
+  const selectedUniversity = (filters.university || userData?.university || 'fast').toLowerCase();
+
+  // Note: Firestore does not allow range filters on multiple different fields in a single query.
+  // We intentionally avoid applying gender filters at query time so users see all available rides.
+  // Gender (and other) filters are applied client-side only when the user toggles them.
+  const ridesQuery = firestore && selectedUniversity ? query(
+    safeCollection(firestore, 'universities', selectedUniversity, 'rides'),
+    where('status', '==', 'active'),
+    where('departureTime', '>', new Date()),
+    orderBy('departureTime', 'asc')
+  ) : null;
+
+  const { data: rides, loading: ridesLoading } = useCollection<RideType>(ridesQuery);
+  
+  // Debug: log the rides data and query status
+  useEffect(() => {
+    console.log('🔍 Rides Debug:', {
+      selectedUniversity,
+      ridesLoading,
+      ridesCount: rides?.length || 0,
+      ridesData: rides,
+      ridesQuery: ridesQuery ? 'defined' : 'null',
+      firestore: firestore ? 'defined' : 'null',
+      timestamp: new Date().toISOString(),
+    });
+  }, [rides, ridesLoading, ridesQuery, selectedUniversity, firestore]);
+  
+  const isLoading = userLoading || ridesLoading;
+
+  // Check if the current user already has an active booking (any ride)
+  const myBookingsQuery = (user && firestore && userData?.university) ? query(
+    safeCollection(firestore, 'universities', userData.university, 'bookings'),
+    where('passengerId', '==', user.uid)
+  ) : null;
+  const { data: myBookings } = useBookingsCollection(myBookingsQuery);
+  const hasActiveBooking = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected'));
+
+  // Banner dismissal state for incomplete-profile prompt
+  const [hideProfileBanner, setHideProfileBanner] = useState(false);
+
   // Local search query (matches from/to/ride provider/price)
   const [searchQuery, setSearchQuery] = useState('');
+  // Show/hide in-page filter panel
+  const [showFilters, setShowFilters] = useState(false);
+  const [suggestions, setSuggestions] = useState<Array<any>>([]);
+  const [searching, setSearching] = useState(false);
 
   // Sync filters from URL search params (so Filters page can set them via query string)
   useEffect(() => {
@@ -812,7 +849,7 @@ export default function RidesPage() {
       if (searchParams) {
         for (const key of Array.from(searchParams.keys())) {
           const v = searchParams.get(key);
-          if (v !== null) params[key] = v;
+          if (v !== null) params[key as string] = v;
         }
       }
       const newFilters = {
@@ -822,6 +859,7 @@ export default function RidesPage() {
         maxPrice: params.maxPrice || '',
         pointInput: params.pointInput || '',
         point: params.pointInput ? parsePointInput(params.pointInput) : null,
+        university: params.university || '',
         direction: (params.direction as any) || 'any',
       };
       setFilters(f => ({ ...f, ...newFilters }));
@@ -829,6 +867,13 @@ export default function RidesPage() {
       // ignore malformed query params
     }
   }, [searchParams]);
+
+  // If the user is logged in and has a university, lock the university filter to it
+  useEffect(() => {
+    if (user && userData && userData.university) {
+      setFilters(f => ({ ...f, university: userData.university }));
+    }
+  }, [user, userData]);
 
   if (isLoading) {
     return (
@@ -928,15 +973,174 @@ export default function RidesPage() {
     return true;
   }) ?? [];
 
-  const clearFilters = () => setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, direction: 'any' });
+  const clearFilters = () => setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: userData?.university || '', direction: 'any' });
 
   return (
     <div>
-      <h1 className="text-3xl font-headline font-bold mb-6">Available Rides</h1>
+      <div className="flex items-center gap-3 mb-6">
+        {!user && <button onClick={() => router.back()} className="px-3 py-2 rounded-md bg-white/10 hover:bg-white/15 text-sm">← Back</button>}
+        <h1 className="text-3xl font-headline font-bold">Available Rides</h1>
+      </div>
+
+      {/* Prompt users with incomplete profiles to complete their profile before booking/creating rides */}
+      {user && userData && !hideProfileBanner && !userLoading && !(userData.fullName && userData.gender && userData.university) && (
+        <div className="mb-6 w-full">
+          <div className="w-full profile-banner rounded-2xl shadow-sm overflow-hidden">
+            <div className="p-4 md:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-lg font-semibold text-slate-200">Please complete your profile</div>
+                <div className="mt-1 text-sm text-slate-400">You need to complete your profile before booking or creating rides.</div>
+              </div>
+
+              <div className="flex-shrink-0 flex items-center gap-3">
+                <Button onClick={() => router.push('/dashboard/complete-profile')} className="rounded-full px-4 py-2">Complete Profile</Button>
+                <button onClick={() => setHideProfileBanner(true)} className="profile-banner-dismiss text-sm text-slate-200">
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-1">
-          <Button onClick={() => router.push('/dashboard/rides/filters')}>Filters</Button>
+          <Button onClick={() => setShowFilters(true)}>Filters</Button>
+          <Dialog open={showFilters} onOpenChange={setShowFilters}>
+            <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Filters</DialogTitle>
+                </DialogHeader>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm mb-1">University</label>
+                  {user && userData && userData.university ? (
+                    <div className="flex items-center gap-2">
+                      <Input value={getUniversityShortLabel(userData.university) || userData.university} disabled />
+                      <Badge>Locked</Badge>
+                    </div>
+                  ) : (
+                    <Select value={filters.university || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, university: v }))}>
+                      <SelectTrigger className="w-full"><SelectValue>{filters.university && filters.university !== 'any' ? getUniversityShortLabel(filters.university) || filters.university : 'Select'}</SelectValue></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="any">Any</SelectItem>
+                        <SelectItem value="fast">FAST</SelectItem>
+                        <SelectItem value="ned">NED</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm mb-1">Transport</label>
+                  <Select value={filters.transport} onValueChange={(v) => setFilters(f => ({ ...f, transport: v as any }))}>
+                    <SelectTrigger className="w-full"><SelectValue>{filters.transport === 'any' ? 'Any' : filters.transport}</SelectValue></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">Any</SelectItem>
+                      <SelectItem value="car">Car</SelectItem>
+                      <SelectItem value="bike">Bike</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="block text-sm mb-1">Driver Gender</label>
+                  <Select value={filters.gender} onValueChange={(v) => setFilters(f => ({ ...f, gender: v as any }))}>
+                    <SelectTrigger className="w-full"><SelectValue>{filters.gender === 'any' ? 'Any' : filters.gender}</SelectValue></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">Any</SelectItem>
+                      <SelectItem value="male">Male</SelectItem>
+                      <SelectItem value="female">Female</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-sm mb-1">Min Price</label>
+                    <Input value={filters.minPrice} onChange={(e) => setFilters(f => ({ ...f, minPrice: e.target.value }))} placeholder="Min" />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Max Price</label>
+                    <Input value={filters.maxPrice} onChange={(e) => setFilters(f => ({ ...f, maxPrice: e.target.value }))} placeholder="Max" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm mb-1">Place</label>
+                  <div className="relative">
+                    <Input aria-autocomplete="list" aria-expanded={suggestions.length>0} placeholder="Search place (e.g. Main Gate)" value={filters.pointInput} onChange={(e) => {
+                      const v = e.target.value;
+                      setFilters(f => ({ ...f, pointInput: v, point: null }));
+                      if (!v || v.trim().length < 2) {
+                        try { window.clearTimeout((window as any).__filters_suggest_timer); } catch (e) {}
+                        try { (window as any).__filters_suggest_controller?.abort(); } catch (e) {}
+                        setSuggestions([]);
+                        setSearching(false);
+                        return;
+                      }
+                      setSearching(true);
+                      window.clearTimeout((window as any).__filters_suggest_timer);
+                      (window as any).__filters_suggest_timer = window.setTimeout(async () => {
+                        try { (window as any).__filters_suggest_controller?.abort(); } catch (e) {}
+                        const controller = new AbortController();
+                        (window as any).__filters_suggest_controller = controller;
+                        try {
+                          // Limit suggestions to Karachi bounding box to keep results local
+                          const viewbox = '66.97,24.75,67.18,25.075';
+                          const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(v)}&limit=6&viewbox=${viewbox}&bounded=1`, { signal: controller.signal });
+                          if (!res.ok) { setSuggestions([]); setSearching(false); return; }
+                          const json = await res.json();
+                          setSuggestions(Array.isArray(json) ? json : []);
+                        } catch (e: any) {
+                          if (e && e.name === 'AbortError') {
+                            // ignore
+                          } else { setSuggestions([]); }
+                        } finally { setSearching(false); try { delete (window as any).__filters_suggest_controller; } catch (e) {} }
+                      }, 300);
+                    }} />
+
+                    {suggestions.length > 0 && (
+                      <ul role="listbox" className="absolute z-50 left-0 right-0 bg-popover border border-border rounded mt-1 max-h-56 overflow-auto">
+                        {suggestions.map((s, i) => (
+                          <li key={s.place_id || s.osm_id} role="option" tabIndex={0} className="p-2 cursor-pointer hover:bg-slate-100" onClick={() => {
+                            const lat = Number(s.lat || s.latitude || (s.center && s.center.lat));
+                            const lon = Number(s.lon || s.longitude || (s.center && s.center.lng));
+                            if (!isNaN(lat) && !isNaN(lon)) {
+                              setFilters(f => ({ ...f, pointInput: s.display_name || s.name || '', point: { lat, lng: lon } }));
+                            } else {
+                              setFilters(f => ({ ...f, pointInput: s.display_name || s.name || '', point: null }));
+                            }
+                            setSuggestions([]);
+                          }} onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLElement).click(); } }}>
+                            <div className="text-sm">{s.display_name || s.name}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">Use to find rides near a point on route.</div>
+                </div>
+
+                <div>
+                  <label className="block text-sm mb-1">Direction</label>
+                  <Select value={filters.direction} onValueChange={(v) => setFilters(f => ({ ...f, direction: v as any }))}>
+                    <SelectTrigger className="w-full"><SelectValue>{filters.direction === 'any' ? 'Any' : filters.direction === 'toUniversity' ? 'To University' : 'From University'}</SelectValue></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">Any</SelectItem>
+                      <SelectItem value="toUniversity">Going To University</SelectItem>
+                      <SelectItem value="fromUniversity">Leaving From University</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => { clearFilters(); setShowFilters(false); }}>Clear</Button>
+                <Button onClick={() => setShowFilters(false)}>Apply</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           {/** Show matches badge only when filters/search are active */}
           { (searchQuery.trim() !== '' || filters.transport !== 'any' || filters.gender !== 'any' || filters.minPrice || filters.maxPrice || filters.pointInput || filters.direction !== 'any') && (
             <Badge>{filteredRides.length} matches</Badge>
@@ -952,16 +1156,18 @@ export default function RidesPage() {
           </div>
         </div>
         <div>
-          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
+          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: userData?.university || '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
         </div>
       </div>
 
       {filteredRides && filteredRides.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-6 items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 items-stretch">
           {filteredRides.map((ride: any) => {
             const hasActiveBookingForOther = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected' && b.rideId !== ride.id));
+            const pendingBookingId = searchParams ? searchParams.get('pendingBooking') : null;
+            const openBooking = pendingBookingId && pendingBookingId === ride.id;
             return (
-              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} hasActiveBooking={hasActiveBookingForOther} myBookings={myBookings} />
+              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} hasActiveBooking={hasActiveBookingForOther} myBookings={myBookings} openBookingOnMount={openBooking} selectedUniversity={selectedUniversity} />
             );
           })}
         </div>

@@ -14,6 +14,7 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import L, { LatLngExpression } from 'leaflet';
 import { Ride as RideType, Booking as BookingType } from '@/lib/types';
+import { decodePolyline } from '@/lib/route';
 import MapLeaflet from '@/components/MapLeaflet';
 import ChatButton from '@/components/chat/ChatButton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
@@ -331,24 +332,38 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     return (
         <Card className="p-3">
             <CardHeader className="p-0 mb-2">
-              <div className="flex justify-between items-start gap-3">
-                  <div className="min-w-0">
-                    <CardTitle className="truncate text-sm font-semibold">{truncateChars(ride.from, 30)} → {truncateChars(ride.to, 30)}</CardTitle>
-                    <CardDescription className="truncate text-xs text-slate-300">{new Date(ride.departureTime.seconds * 1000).toLocaleString()}</CardDescription>
+              <div className="flex justify-between items-start gap-2 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="space-y-0.5 mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-green-500 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-[0.65rem] text-slate-400">From</p>
+                          <p className="text-xs font-semibold truncate text-white">{truncateChars(ride.from, 25)}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-red-500 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-[0.65rem] text-slate-400">To</p>
+                          <p className="text-xs font-semibold truncate text-white">{truncateChars(ride.to, 25)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
+                      <div className="text-[0.7rem] text-slate-300">
+                        {new Date(ride.departureTime.seconds * 1000).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      </div>
+                    </div>
                   </div>
-                   <Badge variant={ride.status === 'active' ? 'default' : ride.status === 'full' ? 'destructive' : 'secondary'} className="text-xs">{ride.status}</Badge>
+                   <div className="text-right flex-shrink-0">
+                     <Badge variant={ride.status === 'active' ? 'default' : ride.status === 'full' ? 'destructive' : 'secondary'} className="text-[0.65rem] mb-1">{ride.status}</Badge>
+                     <div className="text-sm font-semibold text-white">PKR {ride.price}</div>
+                     <div className="text-[0.7rem] text-slate-300">Seats: {availableSeats}</div>
+                   </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="mb-2 flex items-center justify-between text-xs text-slate-300">
-                <div>
-                  <div className="text-[0.85rem] text-white font-medium">PKR {ride.price}</div>
-                  <div className="text-[0.72rem]">Seats Left: <span className="font-medium text-white">{availableSeats}</span></div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[0.72rem]">{(typeof ride.genderAllowed === 'string' && (ride.genderAllowed === 'both' || ride.genderAllowed === 'Both')) ? 'Both' : (String(ride.genderAllowed).includes('Men') ? 'Men' : String(ride.genderAllowed).includes('Women') ? 'Women' : String(ride.genderAllowed))}</div>
-                </div>
-              </div>
 
               <div className="mb-2">
                 {ride.route && ride.route.length > 0 && (
@@ -431,8 +446,7 @@ export default function MyRidesPage() {
 
   const ridesQuery = (user && firestore && userData) ? query(
     collection(firestore, 'universities', userData.university, 'rides'),
-    where('driverId', '==', user.uid),
-    orderBy('createdAt', 'desc')
+    where('createdBy', '==', user.uid)
   ) : null;
 
   const { data: rides, loading: ridesLoading } = useCollection<RideType>(ridesQuery);
@@ -461,9 +475,15 @@ export default function MyRidesPage() {
     <div>
       <h1 className="text-3xl font-headline font-bold mb-6">My Offered Rides</h1>
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {rides.map((ride: RideType) => (
-          <MyRideCard key={ride.id} ride={ride} university={userData!.university} />
-        ))}
+        {rides
+          .sort((a: RideType, b: RideType) => {
+            const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt as any)?.toMillis?.() ?? 0;
+            const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt as any)?.toMillis?.() ?? 0;
+            return bTime - aTime; // descending order
+          })
+          .map((ride: RideType) => (
+            <MyRideCard key={ride.id} ride={ride} university={userData!.university} />
+          ))}
       </div>
     </div>
   );
@@ -516,6 +536,51 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
   const MAX_RETRIES = 3;
 
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Normalize route and markers to mirror the create-ride map
+  const routeLatLngs = React.useMemo(() => {
+    if (ride.routePolyline && typeof ride.routePolyline === 'string') {
+      return decodePolyline(ride.routePolyline);
+    }
+    if (Array.isArray(ride.route)) {
+      return (ride.route as any[])
+        .map((p) => {
+          if (Array.isArray(p) && p.length >= 2) return { lat: Number(p[0]), lng: Number(p[1]) };
+          if (p && typeof p.lat === 'number' && typeof p.lng === 'number') return { lat: p.lat, lng: p.lng };
+          return null;
+        })
+        .filter(Boolean) as { lat: number; lng: number }[];
+    }
+    return [] as { lat: number; lng: number }[];
+  }, [ride.route, ride.routePolyline]);
+
+  const boundsFromRide = React.useMemo(() => {
+    const b = (ride as any).routeBounds;
+    if (b && typeof b.minLat === 'number' && typeof b.maxLat === 'number' && typeof b.minLng === 'number' && typeof b.maxLng === 'number') {
+      return L.latLngBounds([b.minLat, b.minLng], [b.maxLat, b.maxLng]);
+    }
+    if (routeLatLngs.length) return L.latLngBounds(routeLatLngs as any);
+    return undefined;
+  }, [ride, routeLatLngs]);
+
+  const decoratedMarkers = React.useMemo(() => {
+    const markers: any[] = [];
+    if (routeLatLngs.length) {
+      markers.push({ lat: routeLatLngs[0].lat, lng: routeLatLngs[0].lng, label: 'Start' });
+      if (routeLatLngs.length > 1) {
+        const end = routeLatLngs[routeLatLngs.length - 1];
+        markers.push({ lat: end.lat, lng: end.lng, label: 'Destination' });
+      }
+    }
+    pickupPoints.forEach((p: any, idx: number) => {
+      if (Array.isArray(p) && p.length >= 2) {
+        markers.push({ lat: Number(p[0]), lng: Number(p[1]), label: `Pickup ${idx + 1}` });
+      } else if (p && typeof p.lat === 'number' && typeof p.lng === 'number') {
+        markers.push({ lat: p.lat, lng: p.lng, label: `Pickup ${idx + 1}` });
+      }
+    });
+    return markers as LatLngExpression[];
+  }, [pickupPoints, routeLatLngs]);
 
   const cleanupMapContainer = React.useCallback(() => {
     const node = wrapperRef.current;
@@ -618,10 +683,13 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
               <div className="h-full w-full" style={{ height: '100%' }}>
                 <MapLeaflet
                   key={`myride-map-${ride.id}-${resetKey}`}
-                  route={ride.route as LatLngExpression[]}
-                  markers={pickupPoints as LatLngExpression[]}
-                  bounds={L.latLngBounds(ride.route as LatLngExpression[])}
+                  route={routeLatLngs as LatLngExpression[]}
+                  markers={decoratedMarkers}
+                  bounds={boundsFromRide}
                   style={{ height: '100%', width: '100%' }}
+                  // Match create-ride map styling and give a reliable tile source
+                  tileUrl="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  tileAttribution="&copy; OpenStreetMap contributors"
                 />
               </div>
             </MapErrorBoundary>

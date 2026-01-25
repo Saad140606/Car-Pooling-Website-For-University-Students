@@ -12,14 +12,15 @@ import { useAuth, useUser, useIsAdmin } from '@/firebase';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { VerificationBadge } from '@/components/VerificationBadge';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
   { href: '/dashboard/create-ride', icon: PlusCircle, label: 'Offer a Ride' },
   { href: '/dashboard/my-rides', icon: Car, label: 'My Rides' },
   { href: '/dashboard/my-bookings', icon: User, label: 'My Bookings' },
-  { href: '/contact-us', icon: Mail, label: 'Contact' },
-  { href: '/report', icon: Flag, label: 'Report' },
+  { href: '/dashboard/contact', icon: Mail, label: 'Contact' },
+  { href: '/dashboard/report', icon: Flag, label: 'Report' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -120,8 +121,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <AvatarImage src={user.photoURL ?? ''} />
                   <AvatarFallback>{getInitials(userData?.fullName)}</AvatarFallback>
                 </Avatar>
-                <div className="flex flex-col items-start">
-                    <span className="font-medium">{userData?.fullName}</span>
+                  <div className="flex flex-col items-start flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{userData?.fullName}</span>
+                        <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
+                      </div>
                     <span className="text-xs text-muted-foreground">{user.email}</span>
                 </div>
               </Button>
@@ -154,7 +158,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </Avatar>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel>{userData?.fullName}</DropdownMenuLabel>
+                <DropdownMenuLabel className="flex items-center gap-2">
+                  <span>{userData?.fullName}</span>
+                  <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
+                </DropdownMenuLabel>
               <DropdownMenuItem asChild>
                 <Link href="/dashboard/account" className={cn(pathname === '/dashboard/account' && "bg-secondary")}>
                   <User className="mr-2 h-4 w-4" />

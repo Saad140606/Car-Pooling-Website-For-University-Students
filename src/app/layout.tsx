@@ -3,14 +3,11 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseClientProvider } from '@/firebase/client-provider';
 import 'leaflet/dist/leaflet.css'; // CRITICAL: Import Leaflet CSS for markers, popups, and controls to render correctly.
+import SafeConsolePatch from '@/components/SafeConsolePatch';
 
 export const metadata: Metadata = {
-  title: 'Campus Ride',
+  title: 'Campus Rides',
   description: 'University carpooling, simplified.',
-  icons: [
-    { rel: 'icon', url: '/campus-rides-logo.png' },
-    { rel: 'apple-touch-icon', url: '/campus-rides-logo.png' },
-  ],
 };
 
 export default function RootLayout({
@@ -27,6 +24,7 @@ export default function RootLayout({
         {/* The Leaflet CSS is now imported at the top of the file */}
       </head>
       <body className="font-body antialiased">
+        <SafeConsolePatch />
         <FirebaseClientProvider>
           {children}
         </FirebaseClientProvider>

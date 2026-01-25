@@ -19,9 +19,9 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
         const passengerId = meta.passengerId || meta.passenger?.uid;
         const fetchUserContact = async (uid: string) => {
           try {
-            const fastSnap = await getDoc(doc(firestore, 'users', `fast_${uid}`));
+            const fastSnap = await getDoc(doc(firestore, 'universities', 'fast', 'users', uid));
             if (fastSnap.exists()) return (fastSnap.data() as any).contactNumber || null;
-            const nedSnap = await getDoc(doc(firestore, 'users', `ned_${uid}`));
+            const nedSnap = await getDoc(doc(firestore, 'universities', 'ned', 'users', uid));
             if (nedSnap.exists()) return (nedSnap.data() as any).contactNumber || null;
           } catch (_) { /* ignore */ }
           return null;

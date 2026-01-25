@@ -23,8 +23,8 @@ export function FirebaseErrorListener() {
           const user = auth.currentUser;
           if (user) {
             const firestore = getFirestore();
-            const fastRef = doc(firestore, 'users', `fast_${user.uid}`);
-            const nedRef = doc(firestore, 'users', `ned_${user.uid}`);
+            const fastRef = doc(firestore, 'universities', 'fast', 'users', user.uid);
+            const nedRef = doc(firestore, 'universities', 'ned', 'users', user.uid);
             const fastSnap = await getDoc(fastRef);
             const nedSnap = await getDoc(nedRef);
             if (!fastSnap.exists() && !nedSnap.exists()) {
@@ -37,9 +37,9 @@ export function FirebaseErrorListener() {
               if (finalUniversity) profile.university = finalUniversity;
               if (pendingGender) profile.gender = pendingGender;
 
-              await setDoc(doc(firestore, 'users', `${finalUniversity}_${user.uid}`), profile);
+              await setDoc(doc(firestore, 'universities', finalUniversity || 'unknown', 'users', user.uid), profile);
               try { clearPendingUniversity(); clearPendingGender(); } catch (_) {}
-              console.debug('Auto-created missing users/{uid} after permission error for', user.uid);
+              console.debug('Auto-created missing users/{uni}/{uid} after permission error for', user.uid);
               // Gentle toast asking user to refresh or retry
               toast({ variant: 'default', title: 'Account setup completed', description: 'Your account was provisioned — reload or try again to continue.' });
               return;

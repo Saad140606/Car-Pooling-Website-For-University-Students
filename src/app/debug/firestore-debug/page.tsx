@@ -31,8 +31,8 @@ export default function FirestoreDebugPage() {
       return;
     }
     try {
-      const fastRef = doc(firestore, 'users', `fast_${user.uid}`);
-      const nedRef = doc(firestore, 'users', `ned_${user.uid}`);
+        const fastRef = doc(firestore, 'universities', userData.university, 'users', user.uid);
+      const nedRef = doc(firestore, 'universities', userData.university, 'users', user.uid);
       const fastSnap = await getDoc(fastRef);
       const nedSnap = await getDoc(nedRef);
       if (fastSnap.exists()) append('users/fast/{uid}', fastSnap.data());
@@ -50,8 +50,8 @@ export default function FirestoreDebugPage() {
     }
 
     try {
-      const fastRef = doc(firestore, 'users', `fast_${user.uid}`);
-      const nedRef = doc(firestore, 'users', `ned_${user.uid}`);
+          const fastRef = doc(firestore, 'universities', userData.university, 'users', user.uid);
+      const nedRef = doc(firestore, 'universities', userData.university, 'users', user.uid);
       const fastSnap = await getDoc(fastRef);
       const nedSnap = await getDoc(nedRef);
       if (fastSnap.exists() || nedSnap.exists()) {
@@ -59,8 +59,8 @@ export default function FirestoreDebugPage() {
         return;
       }
       const target = (userData && userData.university) ? userData.university : 'fast';
-      await setDoc(doc(firestore, 'users', `${target}_${user.uid}`), { email: user.email || null, university: target, createdAt: serverTimestamp() });
-      append('createUserDoc', `Created users/${target}/{uid}`);
+        await setDoc(doc(firestore, 'universities', target, 'users', user.uid), { email: user.email || null, university: target, createdAt: serverTimestamp() });
+      append('createUserDoc', `Created universities/${target}/users/${user.uid}`);
     } catch (err: any) {
       append('createUserDoc.error', { message: err?.message || String(err), code: err?.code || null });
     }

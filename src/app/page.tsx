@@ -41,13 +41,19 @@ export default function Home() {
           <p className="mt-6 max-w-2xl text-lg text-muted-foreground">
             Affordable, safe, and convenient carpooling for university students. Find or offer a ride within your trusted campus community.
           </p>
-          <div className="mt-10">
-            <Button asChild size="xl">
-              <Link href="/auth/select-university">
-                Get Started
-                <ArrowRight />
-              </Link>
+          <div className="mt-10 flex flex-col items-center gap-4">
+            <Button asChild size="xl" aria-label="Find a Ride">
+              <Link href="/rides">Find a Ride</Link>
             </Button>
+
+            <div className="mt-2">
+              <Button asChild variant="ghost" size="lg" aria-label="Get Started">
+                <Link href="/auth/select-university" className="inline-flex items-center gap-2">
+                  Get Started
+                  <ArrowRight />
+                </Link>
+              </Button>
+            </div>
           </div>
         </section>
         

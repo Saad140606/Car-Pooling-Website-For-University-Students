@@ -9,11 +9,11 @@ import { z } from "zod";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendEmailVerification,
   signOut,
 } from "firebase/auth";
-import { doc, setDoc, serverTimestamp, getDoc } from "firebase/firestore";
-import { setPendingUniversity, setPendingGender, getPendingUniversity, getPendingGender, clearPendingUniversity, clearPendingGender, isValidUniversity } from "@/lib/university";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { setPendingUniversity, getPendingUniversity, getPendingGender, clearPendingUniversity, clearPendingGender, isValidUniversity } from "@/lib/university";
+import { getPendingBooking, clearPendingBooking } from '@/lib/bookings';
 
 import { ArrowRight, Loader2 } from "lucide-react";
 
@@ -57,7 +57,6 @@ export function AuthForm({ university, action }: AuthFormProps) {
     email: z.string().email(),
     password: z.string().min(6, { message: "Password must be at least 6 characters." }),
     fullName: action === 'register' ? z.string().min(3, { message: "Full name is required."}) : z.optional(z.string()),
-    gender: action === 'register' ? z.enum(['male','female']) : z.optional(z.enum(['male','female'])),
     consent: action === 'register' ? z.boolean().refine(v => v === true, { message: 'You must accept the Terms & Regulations and Privacy Policy to register.' }) : z.optional(z.boolean()),
   });
 
@@ -65,7 +64,6 @@ export function AuthForm({ university, action }: AuthFormProps) {
     email: string;
     password: string;
     fullName?: string;
-    gender?: 'male' | 'female';
     consent?: boolean;
   };
 
@@ -75,7 +73,6 @@ export function AuthForm({ university, action }: AuthFormProps) {
       email: "",
       password: "",
       fullName: "",
-      gender: undefined as any,
       consent: false,
     },
   });
@@ -94,77 +91,75 @@ export function AuthForm({ university, action }: AuthFormProps) {
 
     try {
       if (action === "register") {
-        // Persist the intended university and selected gender so the onAuthStateChanged hook can use them
+        // Persist the intended university so the onAuthStateChanged hook can use it
         try {
           setPendingUniversity(university);
-          // persist selected gender when registering
-          if (values && values.gender) {
-            setPendingGender(values.gender);
-          }
         } catch (err) {
-          console.warn('Could not set pending_university/pending_gender in localStorage', err);
+          console.warn('Could not set pending_university in localStorage', err);
         }
 
         const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
         const user = userCredential.user;
 
-        // Send verification email. We *do not* create the users/{uid} profile until the email is verified.
+        // Send signup OTP to email
         try {
-          await sendEmailVerification(user);
-          toast({
-            title: "Verification Sent",
-            description: "A verification email has been sent. Please check your inbox (and spam) and verify your email before signing in.",
+          const otpResponse = await fetch('/api/send-signup-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              uid: user.uid,
+              email: values.email,
+              university,
+            }),
           });
-        } catch (err) {
-          console.warn('Failed to send verification email', err);
+
+          if (!otpResponse.ok) {
+            const otpError = await otpResponse.json();
+            throw new Error(otpError?.error || 'Failed to send verification code');
+          }
+
+          const otpData = await otpResponse.json();
+          
+          // Sign out before redirecting to verify page
+          try {
+            await signOut(auth);
+          } catch (err) {
+            console.warn('Failed to sign out after registration:', err);
+          }
+
+          // Show dev OTP if available
+          if (otpData.otp) {
+            console.log('Dev Mode - OTP:', otpData.otp);
+            toast({
+              title: 'Dev Mode: OTP Ready',
+              description: `OTP: ${otpData.otp} (check console and Firestore)`,
+            });
+          } else {
+            toast({
+              title: 'Verification code sent',
+              description: `Check ${values.email} for your 6-digit code.`,
+            });
+          }
+
+          // Redirect to verification page
+          router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${university}&uid=${user.uid}`);
+        } catch (err: any) {
+          console.error('Error sending OTP:', err);
           toast({
             variant: 'destructive',
-            title: 'Verification Failed',
-            description: 'Could not send verification email. Please try signing up again or contact support.',
+            title: 'Error',
+            description: err?.message || 'Could not send verification code. Please try again.',
           });
         }
-
-        // Sign the ephemeral account out so the user must verify and then sign in again (this avoids unverified profiles being active)
-        try {
-          await signOut(auth);
-        } catch (err) {
-          console.warn('Failed to sign out after registration:', err);
-        }
-
-        // Redirect to login so user can sign in after verification
-        router.push(`/auth/${university}/login`);
 
       } else {
         // Login: sign in, then verify that the signed-in user belongs to the selected university
         const cred = await signInWithEmailAndPassword(auth, values.email, values.password);
         const u = cred.user;
 
-        // Require email verification before allowing a login to proceed.
-        // Allow exception: if the user is a server-registered admin (admins/{uid}),
-        // permit sign-in even if the email is not verified. We check via the
-        // server endpoint which validates the ID token and admin record.
-        if (!u.emailVerified) {
-          let allowUnverifiedAdmin = false;
-          try {
-            const idToken = await u.getIdToken();
-            const res = await fetch('/api/admin/isAdmin', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-            });
-            if (res.ok) {
-              const body = await res.json();
-              if (body && body.isAdmin) allowUnverifiedAdmin = true;
-            }
-          } catch (e) {
-            console.debug('Admin check failed:', e);
-          }
-
-          if (!allowUnverifiedAdmin) {
-            try { await signOut(auth); } catch (e) { /* ignore */ }
-            toast({ variant: 'destructive', title: 'Email Not Verified', description: 'Please verify your email address before signing in. Check your inbox (and spam) for the verification email.' });
-            return;
-          }
-        }
+        // Perform a single admin check to determine admin status and any
+        // administrative flags. Use that result to decide whether an
+        // unverified admin may bypass email verification.
         if (!firestore) {
           toast({ variant: 'destructive', title: 'Error', description: 'Firestore not available.' });
           return;
@@ -173,35 +168,146 @@ export function AuthForm({ university, action }: AuthFormProps) {
         const selectedUni = university; // form prop
         const otherUni = selectedUni === 'ned' ? 'fast' : 'ned';
 
+        // Check if this account is a server-registered admin. Admins are
+        // allowed to sign in from any portal and — by design — may bypass
+        // email verification. We consider any `isAdmin` truthy result from
+        // the server endpoint as sufficient to grant this exception.
+        let isAdminAccount = false;
+        // Quick client-side admin override using NEXT_PUBLIC_ADMIN_EMAILS (dev convenience).
+        try {
+          const adminList = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
+            .split(',')
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean);
+          if (u.email && adminList.includes(u.email.toLowerCase())) {
+            isAdminAccount = true;
+          }
+        } catch (e) {
+          // ignore
+        }
+        try {
+          // If not already flagged by client-side admin list, verify with server.
+          if (!isAdminAccount) {
+            const idToken = await u.getIdToken();
+            const admRes = await fetch('/api/admin/isMember', { method: 'POST', headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedUni }) });
+            if (admRes.ok) {
+              const jb = await admRes.json();
+              isAdminAccount = Boolean(jb?.isAdmin);
+            }
+          }
+        } catch (e) {
+          console.debug('Admin check failed during login:', e);
+        }
+
+        // Enforce signup email verification before allowing login (except admins)
+        try {
+          let emailVerifiedFlag = false;
+          const uniUserSnap = await getDoc(doc(firestore, 'universities', selectedUni, 'users', u.uid));
+          if (uniUserSnap.exists()) {
+            const profile = uniUserSnap.data() as any;
+            emailVerifiedFlag = Boolean(profile?.emailVerified);
+          }
+
+          if (!isAdminAccount && !emailVerifiedFlag) {
+            try {
+              const otpResponse = await fetch('/api/send-signup-otp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uid: u.uid, email: values.email, university: selectedUni }),
+              });
+              const otpData = await otpResponse.json().catch(() => ({}));
+              if (otpResponse.ok) {
+                toast({ title: 'Verify your email', description: otpData?.otp ? `Dev: OTP ${otpData.otp}` : `We sent a 6-digit code to ${values.email}.` });
+              } else {
+                toast({ variant: 'destructive', title: 'Verification required', description: String(otpData?.error || 'Could not send code. Please try again.') });
+              }
+            } catch (_) {
+              toast({ variant: 'destructive', title: 'Verification required', description: 'Could not send code. Please try again.' });
+            }
+            try { await signOut(auth); } catch (e) { /* ignore */ }
+            router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${selectedUni}&uid=${u.uid}`);
+            return;
+          }
+        } catch (e) {
+          // If we fail to read the profile, be safe and require verification
+          if (!isAdminAccount) {
+            try { await signOut(auth); } catch (_) {}
+            router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${selectedUni}&uid=${u.uid}`);
+            return;
+          }
+        }
+
+
         // Check for an existing user document under the university-specific path
         // `users/{university}/{uid}`. This enforces university scoping and prevents
         // cross-university sign-ins.
         try {
-          const uniDocRef = doc(firestore, 'users', `${selectedUni}_${u.uid}`);
-          const otherDocRef = doc(firestore, 'users', `${otherUni}_${u.uid}`);
-
-          const uniSnap = await getDoc(uniDocRef);
-          const otherSnap = await getDoc(otherDocRef);
-
-          if (uniSnap.exists()) {
-            // User exists under selected university — allow sign-in
-            toast({ title: 'Signed In', description: 'Welcome back!' });
-            router.push('/dashboard/rides');
-            return;
+          // Use a server-side membership check to avoid client Firestore permission errors
+          console.debug('University membership check (server): uid=', u?.uid, 'selectedUni=', selectedUni, 'otherUni=', otherUni);
+          let serverResult: any = null;
+          try {
+            const idToken = await u.getIdToken();
+            const res = await fetch('/api/admin/isMember', { method: 'POST', headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedUni }) });
+            if (res.ok) serverResult = await res.json();
+          } catch (e) {
+            console.warn('Server membership check failed:', e);
+            serverResult = null;
           }
 
-          if (otherSnap.exists()) {
-            // User belongs to the other university — block sign-in
-            try { await signOut(auth); } catch (e) { /* ignore */ }
-            toast({ variant: 'destructive', title: 'Wrong University', description: 'Please sign up first with your university.' });
-            return;
-          }
+          if (serverResult && serverResult.isMember) {
+            const memberUni = serverResult.university || selectedUni;
+            if (memberUni === selectedUni) {
+              // Read the user's university-scoped profile to determine completeness.
+              try {
+                const userProfileSnap = await getDoc(doc(firestore, 'universities', memberUni, 'users', u.uid));
+                const profile = userProfileSnap.exists() ? (userProfileSnap.data() as any) : null;
+                const complete = profile && profile.fullName && profile.gender && profile.contactNumber && profile.university;
+                if (!complete) {
+                  toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile before continuing. You can finish it from the dashboard.' });
+                  router.push('/dashboard/rides');
+                  return;
+                }
+              } catch (e) {
+                // If reading the profile fails for any reason, fall back to dashboard but log for debugging
+                console.debug('Failed to read user profile for completeness check:', e);
+              }
+              toast({ title: 'Signed In', description: 'Welcome back!' });
+              try {
+                const pending = getPendingBooking();
+                if (pending && pending.rideId && pending.university && pending.university === selectedUni) {
+                  clearPendingBooking();
+                  router.push(`/dashboard/rides?pendingBooking=${encodeURIComponent(pending.rideId)}`);
+                  return;
+                }
+              } catch (e) {}
+              router.push('/dashboard/rides');
+              return;
+            }
 
-          // No university-scoped profile exists. Attempt a safe fallback: if there
-          // was a pending university set at registration time, create the profile
-          // under the expected university (this is the case when the onAuth
-          // handler didn't run earlier). Otherwise, require sign-up.
-          let finalUniversity = selectedUni;
+            // Member exists but under the other university
+            if (!isAdminAccount) {
+              try { await signOut(auth); } catch (e) { /* ignore */ }
+              toast({ variant: 'destructive', title: 'Wrong University', description: 'Please sign up first with your university.' });
+              return;
+            }
+
+            // Admin logging in from a different portal: attempt to create a profile for the selected university (best-effort)
+            try {
+              await setDoc(doc(firestore, 'universities', selectedUni, 'users', u.uid), { email: u.email || null, university: selectedUni, createdAt: serverTimestamp() });
+              toast({ title: 'Signed In', description: 'Admin access granted.' });
+              router.push('/dashboard/rides');
+              return;
+            } catch (e) {
+              console.warn('Failed to create admin profile under selected university:', e);
+              try { await signOut(auth); } catch (e) {}
+              toast({ variant: 'destructive', title: 'Account Error', description: 'Could not finalize admin sign-in. Contact support.' });
+              return;
+            }
+          }
+          // Determine the final university to create the profile under. Default
+          // to the selected portal but allow a pending value set during
+          // registration to override it.
+          let finalUniversity: 'ned' | 'fast' = selectedUni as 'ned' | 'fast';
           try {
             const pending = getPendingUniversity();
             if (isValidUniversity(pending)) finalUniversity = pending as 'ned' | 'fast';
@@ -218,13 +324,34 @@ export function AuthForm({ university, action }: AuthFormProps) {
           }
 
           // Create the university-scoped user profile using pending gender when available.
-          try {
-            const pendingGender = getPendingGender();
-            const profile: any = { email: u.email || null, university: finalUniversity, createdAt: serverTimestamp() };
-            if (pendingGender) profile.gender = pendingGender;
-            await setDoc(doc(firestore, 'users', `${finalUniversity}_${u.uid}`), profile);
-            try { clearPendingUniversity(); clearPendingGender(); } catch (_) {}
-            toast({ title: 'Signed In', description: 'Welcome! Your account has been set up.' });
+            try {
+              const pendingGender = getPendingGender();
+              // Build canonical profile for universities/{univ}/users/{uid}
+              const profile = {
+                uid: u.uid,
+                name: u.displayName || '',
+                email: u.email || null,
+                university: finalUniversity,
+                role: 'passenger' as const,
+                createdAt: serverTimestamp(),
+                ...(pendingGender ? { gender: pendingGender } : {}),
+              };
+              // Create canonical university-scoped user document only. Do NOT create legacy flat docs.
+              await setDoc(doc(firestore, 'universities', finalUniversity, 'users', u.uid), profile, { merge: false });
+              console.debug('Created canonical university-scoped users document for', u.uid, 'under', finalUniversity);
+              try { clearPendingUniversity(); clearPendingGender(); } catch (_) {}
+            // Resume pending booking if applicable
+            try {
+              const pending = getPendingBooking();
+              if (pending && pending.rideId && pending.university && pending.university === finalUniversity) {
+                clearPendingBooking();
+                toast({ title: 'Signed In', description: 'Welcome! Redirecting to resume booking.' });
+                router.push(`/dashboard/rides?pendingBooking=${encodeURIComponent(pending.rideId)}`);
+                return;
+              }
+            } catch (e) {}
+            // After creating a minimal profile, prompt the user to finish their profile
+            toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile to enable booking and rides. You can finish it from the dashboard.' });
             router.push('/dashboard/rides');
             return;
           } catch (e) {
@@ -236,7 +363,10 @@ export function AuthForm({ university, action }: AuthFormProps) {
         } catch (docErr: any) {
           console.error('University membership check failed:', docErr);
           try { await signOut(auth); } catch (e) { /* ignore */ }
-          toast({ variant: 'destructive', title: 'Verification Failed', description: 'Could not verify your university membership. Please check your selected university and try again.' });
+          // Show a slightly more detailed message in development to aid debugging.
+          const baseMsg = 'Could not verify your university membership. Please check your selected university and try again.';
+          const devDetail = (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') ? ` (${docErr?.message || JSON.stringify(docErr)})` : '';
+          toast({ variant: 'destructive', title: 'Verification Failed', description: baseMsg + devDetail });
           return;
         }
         
@@ -284,25 +414,6 @@ export function AuthForm({ university, action }: AuthFormProps) {
                       <FormLabel>Full Name</FormLabel>
                       <FormControl>
                         <Input placeholder="John Doe" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="gender"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Gender (select carefully, cannot be changed later)</FormLabel>
-                      <FormControl>
-                        <Select value={field.value} onValueChange={(v) => field.onChange(v)}>
-                          <SelectTrigger className="w-full"><SelectValue placeholder="Select Gender" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="male">Male</SelectItem>
-                            <SelectItem value="female">Female</SelectItem>
-                          </SelectContent>
-                        </Select>
                       </FormControl>
                       <FormMessage />
                     </FormItem>

@@ -100,4 +100,14 @@
     overflow: hidden;
     overflow-wrap: anywhere;
   }
+
+  /* Profile completion banner styling to match app theme (light blue with yellow border) */
+  .profile-banner {
+    background-color: hsl(227, 32%, 28%); /* pale blue */
+    border: 1px solid hsl(0, 0%, 100%); /* pale yellow border */
+    color: hsl(232 29% 18%);
+  }
+  .profile-banner .profile-banner-dismiss {
+    color: hsla(0, 0%, 100%, 0.7);
+  }
 }

@@ -20,6 +20,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const router = useRouter();
   const [openView, setOpenView] = useState(false);
   const [openBook, setOpenBook] = useState(false);
+  const [openStops, setOpenStops] = useState(false);
   const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
   const [pickupPlaceName, setPickupPlaceName] = useState<string | null>(null);
   const [pickupPlaceLoading, setPickupPlaceLoading] = useState(false);
@@ -293,10 +294,8 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const departure = ride.departureTime ? new Date(ride.departureTime.seconds * 1000).toISOString() : '';
 
   return (
-    <>
-      <div className="w-full flex justify-center">
-        <div className="w-full max-w-[95%] md:max-w-[700px] lg:max-w-[850px] transform-gpu scale-95 sm:scale-95 md:scale-100">
-          <RideCard
+    <div className="w-full h-full">
+      <RideCard
         startLocation={start}
         endLocation={end}
         rideDateTime={departure}
@@ -309,7 +308,9 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         university={ride.university}
         hideUniversity={userData?.university === ride.university}
         stops={ride.stops}
+        driverVerified={ride.driverInfo?.universityEmailVerified}
         onViewRoute={() => setOpenView(true)}
+        onViewStops={() => setOpenStops(true)}
         onBook={() => {
           if (!user) {
             router.push('/auth/select-university');
@@ -320,21 +321,6 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         disabled={!existingChecked ? true : !!disabledReason}
         disabledReason={!existingChecked ? 'Checking...' : disabledReason}
           />
-          
-          {/* Stops Viewer */}
-          {ride.stops && ride.stops.length > 0 && (
-            <div className="mt-3 flex justify-center">
-              <StopsViewer 
-                stops={ride.stops} 
-                routePolyline={ride.routePolyline}
-                routeCoordinates={ride.routePolyline ? decodePolyline(ride.routePolyline) : undefined}
-                isCreator={false}
-                triggerText="View All Stops"
-              />
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Read-only route viewer */}
       <Dialog open={openView} onOpenChange={setOpenView}>
@@ -348,7 +334,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           <div className="h-[60vh] w-full relative">
             <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
-              <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
+              <Polyline positions={ride.route as LatLngExpression[]} color="#60A5FA" weight={4} opacity={0.9} />
               {ride.route && ride.route.length > 0 && (
                 <>
                   <Marker 
@@ -384,6 +370,37 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           <div className="mt-4 flex gap-2 justify-end">
             <button className="btn" onClick={() => setOpenView(false)}>Close</button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stops Dialog */}
+      <Dialog open={openStops} onOpenChange={setOpenStops}>
+        <DialogTrigger asChild>
+          <div />
+        </DialogTrigger>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Route Stops</DialogTitle>
+          </DialogHeader>
+          {ride.stops && ride.stops.length > 0 ? (
+            <StopsViewer 
+              stops={ride.stops} 
+              routePolyline={ride.routePolyline}
+              routeCoordinates={ride.routePolyline ? decodePolyline(ride.routePolyline) : undefined}
+              isCreator={false}
+              triggerText=""
+              onRequestRide={() => {
+                setOpenStops(false);
+                if (!user) {
+                  router.push('/auth/select-university');
+                  return;
+                }
+                setOpenBook(true);
+              }}
+            />
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">No stops available for this route</div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -428,7 +445,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
 
             <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
-              <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
+              <Polyline positions={ride.route as LatLngExpression[]} color="#60A5FA" weight={4} opacity={0.9} />
 
               {/* Start and End Markers */}
               {ride.route && ride.route.length > 0 && (
@@ -500,6 +517,6 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }

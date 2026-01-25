@@ -793,6 +793,18 @@ export default function RidesPage() {
     direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
   });
 
+  // Current time state that updates every minute to trigger re-filtering
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  
+  useEffect(() => {
+    // Update current time every minute to automatically filter out expired rides
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Update every 60 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+
   const selectedUniversity = (filters.university || userData?.university || 'fast').toLowerCase();
 
   // Note: Firestore does not allow range filters on multiple different fields in a single query.
@@ -883,8 +895,20 @@ export default function RidesPage() {
     );
   }
 
-  // Show all rides but hide rides offered by the current user to prevent booking own rides.
-  const availableRides = rides?.filter((ride: any) => ride.driverId !== user?.uid) ?? [];
+  // Show all rides but hide rides offered by the current user and filter out expired rides
+  const availableRides = rides?.filter((ride: any) => {
+    if (ride.driverId === user?.uid) return false;
+    
+    // Filter out rides where departure time has passed
+    if (ride.departureTime) {
+      const departureDate = ride.departureTime.seconds 
+        ? new Date(ride.departureTime.seconds * 1000) 
+        : new Date(ride.departureTime);
+      if (departureDate <= currentTime) return false;
+    }
+    
+    return true;
+  }) ?? [];
 
   const toMeters = (latlng: { lat: number; lng: number }) => {
     const latRad = (latlng.lat * Math.PI) / 180;

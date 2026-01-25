@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 import { adminDb } from '@/firebase/firebaseAdmin';
+import { isValidUniversityEmail } from '@/lib/university-verification';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -68,27 +69,42 @@ export async function POST(request: NextRequest) {
 
     console.log('OTP verified successfully for uid:', uid);
 
+    // Check if the email is a university email
+    const isUniversityEmail = otpData.university && isValidUniversityEmail(otpData.email, otpData.university as 'fast' | 'ned');
+    
     // Mark email as verified in users collection
     const userRef = db.collection('users').doc(uid);
-    await userRef.set(
-      {
-        email: otpData.email,
-        emailVerified: true,
-        emailVerifiedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    const updateData: any = {
+      email: otpData.email,
+      emailVerified: true,
+      emailVerifiedAt: FieldValue.serverTimestamp(),
+    };
+
+    // If it's a valid university email, also mark university email as verified
+    if (isUniversityEmail) {
+      updateData.universityEmail = otpData.email;
+      updateData.universityEmailVerified = true;
+      updateData.universityEmailVerifiedAt = FieldValue.serverTimestamp();
+      console.log('University email verified for uid:', uid);
+    }
+
+    await userRef.set(updateData, { merge: true });
 
     // Also mark in university-scoped users if university is available
     if (otpData.university) {
       const uniUserRef = db.collection('universities').doc(otpData.university).collection('users').doc(uid);
-      await uniUserRef.set(
-        {
-          emailVerified: true,
-          emailVerifiedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const uniUpdateData: any = {
+        emailVerified: true,
+        emailVerifiedAt: FieldValue.serverTimestamp(),
+      };
+
+      if (isUniversityEmail) {
+        uniUpdateData.universityEmail = otpData.email;
+        uniUpdateData.universityEmailVerified = true;
+        uniUpdateData.universityEmailVerifiedAt = FieldValue.serverTimestamp();
+      }
+
+      await uniUserRef.set(uniUpdateData, { merge: true });
     }
 
     // Delete the signup OTP doc

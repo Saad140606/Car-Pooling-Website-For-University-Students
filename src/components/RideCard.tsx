@@ -2,7 +2,8 @@
 
 import React, { useMemo } from 'react';
 import clsx from 'clsx';
-import { Calendar, Users, Search, Clock } from 'lucide-react';
+import { Calendar, Users, Search, Clock, MapPin } from 'lucide-react';
+import { VerificationBadge } from './VerificationBadge';
 
 type RideCardProps = {
   startLocation: string;
@@ -18,10 +19,12 @@ type RideCardProps = {
   hideUniversity?: boolean;
   stops?: any[];
   onViewRoute?: () => void;
+  onViewStops?: () => void;
   onBook?: () => void;
   disabled?: boolean;
   disabledReason?: string;
   className?: string;
+  driverVerified?: boolean;
 };
 
 export default function RideCard({
@@ -38,10 +41,12 @@ export default function RideCard({
   hideUniversity = false,
   stops,
   onViewRoute,
+  onViewStops,
   onBook,
   disabled,
   disabledReason,
   className,
+  driverVerified,
 }: RideCardProps) {
   const dateText = useMemo(() => {
     const dt = typeof rideDateTime === 'string' ? new Date(rideDateTime) : rideDateTime;
@@ -85,33 +90,38 @@ export default function RideCard({
             <div className="w-6 h-6 rounded-full bg-[#334155] flex items-center justify-center font-semibold text-[0.6rem] flex-shrink-0">
               {initials}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex items-center gap-1">
               <p className="font-semibold truncate text-xs">{driverName}</p>
+              <VerificationBadge verified={driverVerified} showText={false} size="sm" />
             </div>
           </div>
         </div>
 
         {/* Locations */}
-        <div className="relative space-y-1">
+        <div className="relative space-y-0.5">
           <div className="absolute left-[5px] top-1 bottom-1 border-l border-dashed border-white/20" />
 
-          <div className="flex gap-1.5 min-w-0">
-            <span className="mt-0.5 h-2 w-2 rounded-full bg-green-500 ring-1 ring-[#1e2340] flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-semibold text-xs truncate">
-                {startLocation}
-              </p>
-              <p className="text-[0.65rem] text-white/60">Karachi</p>
+          <div className="space-y-0.5">
+            <div className="text-[0.7rem] text-white/50 font-medium">FROM</div>
+            <div className="flex gap-1.5 min-w-0 items-start">
+              <span className="mt-0.5 h-2 w-2 rounded-full bg-green-500 ring-1 ring-[#1e2340] flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-xs truncate">
+                  {startLocation}
+                </p>
+              </div>
             </div>
           </div>
 
-          <div className="flex gap-1.5 min-w-0">
-            <span className="mt-0.5 h-2 w-2 rounded-full bg-red-500 ring-1 ring-[#1e2340] flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-semibold text-xs truncate">
-                {endLocation}
-              </p>
-              <p className="text-[0.65rem] text-white/60">Karachi</p>
+          <div className="space-y-0.5">
+            <div className="text-[0.7rem] text-white/50 font-medium">TO</div>
+            <div className="flex gap-1.5 min-w-0 items-start">
+              <span className="mt-0.5 h-2 w-2 rounded-full bg-red-500 ring-1 ring-[#1e2340] flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-xs truncate">
+                  {endLocation}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -154,43 +164,19 @@ export default function RideCard({
             <span className="text-[0.65rem] text-white/60">Transport:</span>
             <span className="font-semibold text-white text-[0.7rem]">{transport || 'Car'}</span>
           </div>
-
-          {stops && stops.length > 0 && (
-            <div className="flex items-start gap-1.5 min-w-0">
-              <span className="text-[0.65rem] text-white/60 mt-0.5">Stops:</span>
-              <div className="flex flex-wrap gap-1">
-                {stops.slice(0, 3).map((stop: any, idx: number) => {
-                  // Skip "Loading..." and "Stop X" placeholders, show meaningful stops
-                  const stopName = stop.name || `Stop ${idx + 1}`;
-                  const isPlaceholder = stopName === 'Loading...' || stopName.match(/^Stop \d+$/);
-                  
-                  if (isPlaceholder && stops.length > 3) {
-                    return null; // Skip placeholders if there are other stops to show
-                  }
-                  
-                  return (
-                    <span key={idx} className="bg-white/10 px-1.5 py-0.5 rounded text-[0.6rem] text-white/80 truncate max-w-[120px]">
-                      {stopName}
-                    </span>
-                  );
-                }).filter(Boolean)}
-                {stops.length > 3 && (
-                  <span className="text-[0.6rem] text-white/60">+{stops.length - 3} more</span>
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Bottom Buttons */}
         <div className="flex items-center justify-between gap-2 mt-1.5">
-          <button
-            onClick={onViewRoute}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 hover:bg-white/15 text-xs"
-          >
-            <Search className="w-3 h-3" />
-            View
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              onClick={onViewStops}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 hover:bg-white/15 text-xs"
+            >
+              <Search className="w-3 h-3" />
+              View Stops
+            </button>
+          </div>
 
           <button
             onClick={(e) => { if (!disabled && onBook) onBook(); }}
@@ -205,7 +191,7 @@ export default function RideCard({
           </button>
         </div>
       </div>
-    </div>
+    </div>  
   );
 }
 

@@ -148,7 +148,7 @@ export default function AccountPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 pb-20">
       {/* Header */}
-      <div className="bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-8 px-4 sm:px-6 sticky top-0 z-40">
+      <div className="bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-4 sm:py-6 md:py-8 px-4 sm:px-6 sticky top-0 z-40">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-3xl font-bold text-white mb-2">Account Settings</h1>
           <p className="text-slate-400">Manage your account security and preferences</p>

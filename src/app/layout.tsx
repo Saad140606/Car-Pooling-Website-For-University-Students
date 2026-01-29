@@ -3,6 +3,13 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseClientProvider } from '@/firebase/client-provider';
 import { NotificationProvider } from '@/contexts/NotificationContext';
+import { CallingProvider } from '@/contexts/CallingContext';
+import { IncomingCallScreen } from '@/components/calling/IncomingCallScreen';
+import { ActiveCallScreen } from '@/components/calling/ActiveCallScreen';
+import { BackgroundCallHandler } from '@/components/calling/BackgroundCallHandler';
+import { PermissionRequester } from '@/components/premium/PermissionRequester';
+import { RingtoneInitializer } from '@/hooks/useRingtoneInitializer';
+import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 import 'leaflet/dist/leaflet.css'; // CRITICAL: Import Leaflet CSS for markers, popups, and controls to render correctly.
 import SafeConsolePatch from '@/components/SafeConsolePatch';
 
@@ -26,11 +33,20 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <SafeConsolePatch />
-        <FirebaseClientProvider>
-          <NotificationProvider>
-            {children}
-          </NotificationProvider>
-        </FirebaseClientProvider>
+        <RingtoneInitializer />
+        <GlobalErrorBoundary>
+          <FirebaseClientProvider>
+            <CallingProvider>
+              <NotificationProvider>
+                <BackgroundCallHandler />
+                <PermissionRequester />
+                <IncomingCallScreen />
+                <ActiveCallScreen />
+                {children}
+              </NotificationProvider>
+            </CallingProvider>
+          </FirebaseClientProvider>
+        </GlobalErrorBoundary>
         <Toaster />
       </body>
     </html>

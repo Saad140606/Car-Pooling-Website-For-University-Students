@@ -237,7 +237,7 @@ export const EmptyPageState = React.forwardRef<HTMLDivElement, EmptyPageStatePro
       <div
         ref={ref}
         className={cn(
-          'flex flex-col items-center justify-center py-16 px-4 rounded-2xl border-2 border-border/20 bg-card/30 backdrop-blur-sm',
+          'flex flex-col items-center justify-center py-8 sm:py-12 md:py-16 px-4 rounded-2xl border-2 border-border/20 bg-card/30 backdrop-blur-sm',
           className
         )}
       >

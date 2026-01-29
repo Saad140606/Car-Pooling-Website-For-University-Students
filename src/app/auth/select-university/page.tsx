@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Logo from "@/components/logo";
 import { Reveal } from "@/components/Reveal";
+import { SiteHeader } from "@/components/SiteHeader";
 
 const universities = [
   {
@@ -32,21 +33,22 @@ export default function SelectUniversityPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
+    <div className="relative flex min-h-screen flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
+      <SiteHeader />
       <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" aria-hidden />
       <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-50 animate-float" aria-hidden />
       <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-40 animate-float" style={{ animationDelay: '1s' }} aria-hidden />
 
-      <div className="mb-10 flex items-center justify-center">
-        <Logo />
-      </div>
+      <div className="flex flex-1 items-center justify-center">
+        <div className="w-full">
 
-      <Reveal className="text-center space-y-3">
-        <h1 className="font-headline text-4xl sm:text-5xl text-slate-50">Select Your University</h1>
-        <p className="max-w-2xl text-slate-300">Choose your university to sign in or create an account.</p>
-      </Reveal>
+          <div className="flex flex-col items-center">
+            <Reveal className="text-center space-y-3">
+              <h1 className="font-headline text-4xl sm:text-5xl text-slate-50">Select Your University</h1>
+              <p className="max-w-2xl text-slate-300">Choose your university to sign in or create an account.</p>
+            </Reveal>
 
-      <div className="mt-10 grid w-full max-w-5xl grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="mt-10 grid w-full max-w-5xl grid-cols-1 gap-6 md:grid-cols-2">
         {universities.map((uni, idx) => (
           <Reveal key={uni.slug} delay={idx * 90} className="group">
             <button onClick={() => goToUniversity(uni.slug)} className="w-full text-left">
@@ -75,6 +77,9 @@ export default function SelectUniversityPage() {
             </button>
           </Reveal>
         ))}
+      </div>
+          </div>
+        </div>
       </div>
     </div>
   );

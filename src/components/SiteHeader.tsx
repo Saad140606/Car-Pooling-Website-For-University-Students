@@ -9,6 +9,7 @@ import { Button } from './ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from './ui/sheet';
 import { cn } from '@/lib/utils';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
+import { DownloadAppButton } from './premium/DownloadAppButton';
 
 const navItems = [
   { href: '/', label: 'Home' },
@@ -55,12 +56,13 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden md:flex items-center gap-3">
-          <Button asChild size="sm" variant="ghost" className="rounded-full px-4">
+          <Button asChild size="sm" variant="ghost" className="rounded-full px-4 relative z-10">
             <Link href="/rides">Find a Ride</Link>
           </Button>
-          <Button asChild size="sm" className="rounded-full px-4">
+          <Button asChild size="sm" className="rounded-full px-4 relative z-10">
             <Link href="/auth/select-university">Join</Link>
           </Button>
+          <DownloadAppButton variant="outline" size="sm" className="rounded-full relative z-10" />
         </div>
 
         <div className="flex md:hidden">
@@ -88,12 +90,13 @@ export function SiteHeader() {
                     </Link>
                   );
                 })}
-                <Button asChild className="mt-2">
+                <Button asChild className="mt-2 relative z-10">
                   <Link href="/rides">Find a Ride</Link>
                 </Button>
-                <Button asChild variant="secondary">
+                <Button asChild variant="secondary" className="relative z-10">
                   <Link href="/auth/select-university">Join</Link>
                 </Button>
+                <DownloadAppButton variant="default" size="sm" className="w-full relative z-10" />
               </div>
             </SheetContent>
           </Sheet>

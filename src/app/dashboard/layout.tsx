@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield } from 'lucide-react';
-import { useEffect } from 'react';
+import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield, AlertTriangle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { useNotifications } from '@/contexts/NotificationContext';
 import NotificationBadge from '@/components/NotificationBadge';
+import { ErrorState } from '@/components/StateComponents';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -32,32 +33,60 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { unreadCount } = useNotifications();
   const auth = useAuth();
   const router = useRouter();
+  const [layoutError, setLayoutError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Only redirect after auth has been initialized to avoid redirecting on transient
-    // null user states caused by hot reloads / runtime errors / hydration quirks.
-    if (!initialized) return; // not initialized yet
+    // Only redirect after auth has been initialized
+    if (!initialized) return;
 
-    // Add a short delay to tolerate transient null states that sometimes occur during
-    // auth restoration on page refresh (prevents immediate false redirects).
     const t = setTimeout(() => {
-      // Don't redirect while the user is still loading; this prevents false redirects
-      // during client-side navigations where auth state may briefly be unknown.
       if (!user && !userLoading) {
         router.replace('/auth/select-university');
       }
     }, 400);
 
     return () => clearTimeout(t);
-  }, [initialized, user, router]);
+  }, [initialized, user, userLoading, router]);
+
+  // Redirect if university data is missing
+  useEffect(() => {
+    if (!user || !initialized) return;
+
+    const t = setTimeout(() => {
+      if (!userData?.university) {
+        router.replace('/auth/select-university');
+      }
+    }, 300);
+
+    return () => clearTimeout(t);
+  }, [user, initialized, userData?.university, router]);
 
   const handleSignOut = async () => {
-    if (auth) {
-      await auth.signOut();
-      router.push('/');
+    try {
+      if (auth) {
+        await auth.signOut();
+        router.push('/');
+      }
+    } catch (error) {
+      console.debug('[DashboardLayout] Sign out error:', error);
+      setLayoutError('Failed to sign out. Please try again.');
     }
   };
 
+  // Error state
+  if (layoutError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center px-4">
+        <ErrorState
+          title="Layout Error"
+          description={layoutError}
+          onGoHome={() => window.location.href = '/'}
+        />
+      </div>
+    );
+  }
+
+  // Loading state
   if (userLoading || !user) {
     return (
       <div className="flex min-h-screen">
@@ -75,7 +104,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
   
   const getInitials = (name: string = '') => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+    if (!name || typeof name !== 'string') return '?';
+    return name.split(' ').map(n => n[0]?? '').join('').toUpperCase().slice(0, 2);
   }
 
   return (

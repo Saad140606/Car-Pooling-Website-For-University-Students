@@ -8,8 +8,8 @@ export default function UnauthorizedPage() {
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" aria-hidden />
-      <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-50 animate-float" aria-hidden />
-      <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-40 animate-float" style={{ animationDelay: '1s' }} aria-hidden />
+      <div className="absolute left-0 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-50 animate-float" aria-hidden />
+      <div className="absolute right-0 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-40 animate-float" style={{ animationDelay: '1s' }} aria-hidden />
       <div className="flex-1 flex items-center justify-center relative z-10 p-8">
         <Reveal className="max-w-md text-center">
           <AnimatedCard className="border-destructive/30 bg-gradient-to-br from-card/90 to-card/70 backdrop-blur-lg shadow-2xl">

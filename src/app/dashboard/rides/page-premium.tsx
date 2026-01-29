@@ -322,7 +322,7 @@ export default function FindARidePage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 pb-20">
       {/* Header */}
-      <div className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-4 px-4 sm:px-6">
+      <div className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-3 sm:py-4 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-2xl sm:text-3xl font-bold text-white mb-4">Find Your Ride</h1>
           <div className="flex gap-3 items-center">
@@ -349,7 +349,7 @@ export default function FindARidePage() {
 
       {/* Filters Panel */}
       {showFilters && (
-        <div className="bg-slate-900/50 backdrop-blur border-b border-slate-800 py-6 px-4 sm:px-6 animate-in fade-in-0 slide-in-from-top-2 duration-300">
+        <div className="bg-slate-900/50 backdrop-blur border-b border-slate-800 py-3 sm:py-4 md:py-6 px-4 sm:px-6 animate-in fade-in-0 slide-in-from-top-2 duration-300">
           <div className="max-w-6xl mx-auto space-y-6">
             <div>
               <label className="text-sm font-semibold text-white mb-3 block">Price Range</label>
@@ -398,7 +398,7 @@ export default function FindARidePage() {
       )}
 
       {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array.from({ length: 6 }).map((_, i) => (

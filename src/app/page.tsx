@@ -6,6 +6,7 @@ import { SiteHeader } from '@/components/SiteHeader';
 import { Reveal } from '@/components/Reveal';
 import { AnimatedCard } from '@/components/AnimatedCard';
 import { AnimatedButton } from '@/components/AnimatedButton';
+import { HomePageClient } from '@/components/HomePageClient';
 
 export default function Home() {
   const features = [
@@ -27,7 +28,8 @@ export default function Home() {
   ];
 
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
+    <HomePageClient>
+      <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
       <SiteHeader />
       <main className="flex-grow">
         <section className="relative overflow-hidden">
@@ -35,7 +37,7 @@ export default function Home() {
           <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-50 animate-float" aria-hidden />
           <div className="absolute -right-40 -bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-40 animate-float" style={{ animationDelay: '1s' }} aria-hidden />
           <div className="absolute left-1/2 top-20 h-24 w-96 -translate-x-1/2 rotate-12 bg-gradient-to-r from-primary/20 via-white/5 to-accent/20 blur-2xl" aria-hidden />
-          <div className="page-shell grid min-h-[70vh] items-center gap-12 py-16 sm:py-20 lg:grid-cols-[1.1fr,0.9fr]">
+          <div className="page-shell grid min-h-[50vh] sm:min-h-[65vh] items-center gap-6 md:gap-12 py-8 sm:py-12 md:py-16 lg:grid-cols-[1.1fr,0.9fr]">
             <Reveal className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary animate-bounce-in backdrop-blur-sm shadow-lg shadow-primary/20">
                 <Sparkles className="h-4 w-4 animate-subtle-bounce" />
@@ -75,8 +77,8 @@ export default function Home() {
             </Reveal>
 
             <Reveal delay={120} className="relative">
-              <div className="absolute -left-10 -top-10 h-28 w-28 rounded-full bg-primary/25 blur-3xl animate-float" aria-hidden />
-              <div className="absolute -right-8 -bottom-10 h-32 w-32 rounded-full bg-accent/25 blur-3xl animate-float" style={{ animationDelay: '0.5s' }} aria-hidden />
+              <div className="absolute left-0 top-0 h-28 w-28 rounded-full bg-primary/25 blur-3xl animate-float" aria-hidden />
+              <div className="absolute right-0 bottom-0 h-32 w-32 rounded-full bg-accent/25 blur-3xl animate-float" style={{ animationDelay: '0.5s' }} aria-hidden />
               <div className="relative rounded-3xl border border-primary/20 bg-card/70 p-6 shadow-2xl backdrop-blur glass-surface soft-shadow hover-card-lift animate-bounce-in transition-all duration-500">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -130,7 +132,7 @@ export default function Home() {
             <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Built for students who want safe rides</h2>
             <p className="text-slate-300 max-w-2xl mx-auto">Request multiple rides for safety, chat inside the app, and confirm the driver you trust most.</p>
           </Reveal>
-          <div className="mt-12 grid grid-cols-1 gap-8 md:grid-cols-3 relative z-10">
+          <div className="mt-8 sm:mt-12 grid grid-cols-1 gap-6 md:gap-8 md:grid-cols-3 relative z-10">
             {features.map((feature, index) => (
               <AnimatedCard 
                 key={feature.title}
@@ -156,17 +158,17 @@ export default function Home() {
         </section>
 
         <section className="section-shell relative overflow-hidden bg-gradient-to-br from-primary/10 via-transparent to-accent/10">
-          <div className="pointer-events-none absolute -left-20 top-10 h-64 w-64 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
-          <div className="pointer-events-none absolute -right-20 bottom-10 h-64 w-64 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: '1.5s' }} aria-hidden />
+          <div className="pointer-events-none absolute left-0 top-10 h-64 w-64 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
+          <div className="pointer-events-none absolute right-0 bottom-10 h-64 w-64 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: '1.5s' }} aria-hidden />
           
           <Reveal className="relative z-10">
-            <div className="text-center space-y-4 mb-12">
+            <div className="text-center space-y-4 mb-6 sm:mb-8 md:mb-12\">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-400">What makes us different</p>
               <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Trusted by your campus community</h2>
               <p className="text-slate-300 max-w-2xl mx-auto">Join students who choose Campus Ride for safe, affordable, and reliable commutes every day.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 max-w-4xl mx-auto">
               {[
                 { icon: <ShieldCheck className="h-8 w-8" />, title: "Verified Students", desc: "University email verification ensures only students access the platform" },
                 { icon: <Heart className="h-8 w-8" />, title: "Community First", desc: "Built by students, for students. Your safety and comfort matter most" },
@@ -213,9 +215,9 @@ export default function Home() {
           </Reveal>
         </section>
       </main>
-      <footer className="w-full py-16 border-t border-primary/20 bg-gradient-to-b from-slate-900/40 via-slate-950/60 to-black backdrop-blur-xl animate-page-rise" style={{ animationDelay: '600ms' }}>
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 mb-12">
+      <footer className="w-full py-8 sm:py-12 md:py-16 border-t border-primary/20 bg-gradient-to-b from-slate-900/40 via-slate-950/60 to-black backdrop-blur-xl animate-page-rise" style={{ animationDelay: '600ms' }}>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12 mb-8 sm:mb-12">
             {/* Brand Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
@@ -272,6 +274,7 @@ export default function Home() {
           </div>
         </div>
       </footer>
-    </div>
+      </div>
+    </HomePageClient>
   );
 }

@@ -6,6 +6,7 @@ import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useToast } from '@/hooks/use-toast';
 import { doc, getDoc, setDoc, deleteDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { getPendingUniversity, clearPendingUniversity, isValidUniversity, getPendingGender, clearPendingGender } from '@/lib/university';
+import { saveSession, clearSession } from '@/lib/sessionManager';
 
 import { useAuth, useFirestore } from '../provider';
 import { useDoc } from '../firestore/use-doc';
@@ -32,6 +33,26 @@ export function useUser() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       console.debug('onAuthStateChanged:', { user: u, currentUser: auth.currentUser });
       setUser(u);
+
+      // PERSISTENCE: Save session when user logs in
+      if (u) {
+        try {
+          saveSession({
+            uid: u.uid,
+            email: u.email,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            emailVerified: u.emailVerified,
+            timestamp: Date.now(),
+          });
+        } catch (err) {
+          console.warn('[SessionManager] Failed to save session on auth state change:', err);
+        }
+      } else {
+        // PERSISTENCE: Clear session when user logs out
+        clearSession();
+      }
+
 
       // Ensure a users/{university}/{uid} document exists for the signed-in user. Run once on sign-in and do not overwrite existing data.
       if (u && firestore) {

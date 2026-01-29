@@ -61,10 +61,10 @@ export default function ContactUsPage() {
       <main className="flex-grow">
         <section className="relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" aria-hidden />
-          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-50 animate-float" aria-hidden />
-          <div className="absolute -right-40 -bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-40 animate-float" style={{ animationDelay: '1s' }} aria-hidden />
-          <div className="page-shell py-16 sm:py-20">
-            <div className="grid gap-10 lg:grid-cols-[1.1fr,0.9fr]">
+          <div className="absolute left-0 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-50 animate-float" aria-hidden />
+          <div className="absolute right-0 bottom-0 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-40 animate-float" style={{ animationDelay: '1s' }} aria-hidden />
+          <div className="page-shell py-8 sm:py-12 md:py-16 lg:py-20">
+            <div className="grid gap-6 md:gap-10 lg:grid-cols-[1.1fr,0.9fr]">
               <Reveal className="space-y-6">
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary animate-bounce-in backdrop-blur-sm shadow-lg shadow-primary/20">
                   <MessageCircle className="h-4 w-4 animate-subtle-bounce" />
@@ -107,8 +107,8 @@ export default function ContactUsPage() {
               </Reveal>
 
               <Reveal delay={120} className="relative">
-                <div className="absolute -left-10 -top-10 h-28 w-28 rounded-full bg-primary/25 blur-3xl animate-float" aria-hidden />
-                <div className="absolute -right-8 -bottom-10 h-32 w-32 rounded-full bg-accent/25 blur-3xl animate-float" style={{ animationDelay: '0.5s' }} aria-hidden />
+                <div className="absolute left-0 top-0 h-28 w-28 rounded-full bg-primary/25 blur-3xl animate-float" aria-hidden />
+                <div className="absolute right-0 bottom-0 h-32 w-32 rounded-full bg-accent/25 blur-3xl animate-float" style={{ animationDelay: '0.5s' }} aria-hidden />
                 <Card className="relative bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 shadow-lg shadow-primary/5 backdrop-blur-md hover-card-lift soft-shadow">
                   <CardHeader>
                     <CardTitle className="text-2xl font-headline text-slate-50">Send us a note</CardTitle>

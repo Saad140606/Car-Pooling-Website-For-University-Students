@@ -13,7 +13,24 @@ export default function SafeConsolePatch() {
 
       const safe = function patchedConsoleError(...args: any[]) {
         try {
-          // Attempt to call the original console.error
+          // Suppress Firebase permission-denied errors during initialization
+          // These are expected when auth is still being established
+          const errorStr = String(args[0] || '');
+          if (
+            errorStr.includes('Missing or insufficient permissions') &&
+            (errorStr.includes('Firestore') || errorStr.includes('snapshot listener'))
+          ) {
+            // Log at debug level instead of error
+            if (globalThis.console?.debug) {
+              globalThis.console.debug(
+                '[SafeConsolePatch] Suppressed Firebase permission error (expected during init):', 
+                errorStr.substring(0, 100)
+              );
+            }
+            return; // Don't call original error for this case
+          }
+
+          // Attempt to call the original console.error for all other errors
           return orig.apply(globalThis.console, args);
         } catch (e) {
           try {

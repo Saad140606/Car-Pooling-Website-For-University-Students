@@ -587,7 +587,7 @@ export default function MyRidesPage() {
       </div>
 
       <div className="section-shell py-8 relative z-10">
-        <div className="mb-8 animate-page">
+        <div className="mb-6 sm:mb-8 animate-page">
           <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Offered Rides</h1>
           <p className="text-slate-300">Track and manage your active ride offers</p>
         </div>

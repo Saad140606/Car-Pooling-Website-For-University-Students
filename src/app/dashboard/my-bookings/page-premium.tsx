@@ -192,14 +192,14 @@ export default function MyBookingsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 pb-20">
       {/* Header */}
-      <div className="bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-8 px-4 sm:px-6 sticky top-0 z-40">
+      <div className="bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-4 sm:py-6 md:py-8 px-4 sm:px-6 sticky top-0 z-40">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-white mb-2">My Bookings</h1>
           <p className="text-slate-400">Track and manage your ride bookings</p>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-12">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 md:py-8 space-y-8 md:space-y-12">
         {/* Upcoming Bookings */}
         {!isLoading && upcomingBookings.length > 0 && (
           <div className="space-y-4">

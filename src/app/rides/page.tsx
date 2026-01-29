@@ -23,8 +23,8 @@ export default function RidesPage() {
       <div className={!user ? "pb-12 px-4 sm:px-6 md:px-8" : "pt-12 pb-12 px-4 sm:px-6 md:px-8"}>
         <div className="absolute inset-0 -z-10">
           <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
-          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
-          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '1.5s' }} />
+          <div className="absolute left-0 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute right-0 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '1.5s' }} />
         </div>
         <DashboardRidesPage />
       </div>

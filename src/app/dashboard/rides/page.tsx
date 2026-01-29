@@ -1216,7 +1216,7 @@ export default function RidesPage() {
           })}
         </div>
       ) : (
-        <div className="text-center py-16 rounded-2xl bg-gradient-to-br from-slate-800/40 via-slate-800/30 to-slate-900/40 backdrop-blur-md shadow-lg shadow-primary/5">
+        <div className="text-center py-8 sm:py-12 md:py-16 rounded-2xl bg-gradient-to-br from-slate-800/40 via-slate-800/30 to-slate-900/40 backdrop-blur-md shadow-lg shadow-primary/5">
           <h2 className="text-2xl font-semibold text-slate-50">No Rides Available</h2>
           <p className="text-slate-400 mt-2">Check back later for new rides from your university!</p>
         </div>

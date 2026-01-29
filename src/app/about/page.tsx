@@ -85,26 +85,26 @@ export default function AboutPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50">
       <SiteHeader />
-      <div className="relative overflow-hidden">
+      <div className="relative">
         <div className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -left-32 top-10 h-80 w-80 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
-          <div className="absolute -right-24 top-32 h-72 w-72 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: "0.6s" }} aria-hidden />
+          <div className="absolute left-0 top-10 h-80 w-80 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
+          <div className="absolute right-0 top-32 h-72 w-72 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: "0.6s" }} aria-hidden />
           <div className="absolute left-1/3 top-0 h-24 w-48 rotate-6 bg-gradient-to-r from-primary/30 via-white/5 to-accent/30 blur-2xl opacity-60" aria-hidden />
         </div>
 
-        <section className="page-shell grid min-h-[70vh] items-center gap-12 pb-16 pt-16 sm:pt-24 lg:grid-cols-[1.05fr,0.95fr]">
-          <Reveal className="space-y-6">
+        <section className="page-shell grid min-h-[35vh] sm:min-h-[50vh] items-center gap-2 sm:gap-4 md:gap-8 pb-4 sm:pb-8 md:pb-12 pt-4 sm:pt-12 md:pt-16 lg:grid-cols-[1.05fr,0.95fr]">
+          <Reveal className="space-y-4 sm:space-y-6">
             <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary animate-bounce-in">
               <Sparkles className="h-4 w-4 animate-subtle-bounce" />
               About Campus Ride
             </span>
-            <h1 className="font-headline text-4xl leading-tight tracking-tight sm:text-5xl md:text-6xl animate-slide-in-down">
+            <h1 className="font-headline text-3xl leading-tight tracking-tight sm:text-5xl md:text-6xl animate-slide-in-down">
               Premium, human, and safe rides built for universities.
             </h1>
-            <p className="max-w-2xl text-lg text-slate-300 animate-slide-in-down" style={{ animationDelay: "120ms" }}>
+            <p className="max-w-2xl text-base sm:text-lg text-slate-300 animate-slide-in-down" style={{ animationDelay: "120ms" }}>
               We turn everyday commutes into trusted micro-communities. Verified students, transparent profiles, and gentle motion design make every interaction feel cared for.
             </p>
-            <div className="flex flex-wrap items-center gap-3 animate-slide-in-down" style={{ animationDelay: "200ms" }}>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 animate-slide-in-down" style={{ animationDelay: "200ms" }}>
               <AnimatedButton asChild size="lg" className="rounded-full px-7 btn-press hover-glow">
                 <Link href="/rides" className="inline-flex items-center gap-2" aria-label="Join a ride">
                   Join a ride
@@ -117,7 +117,7 @@ export default function AboutPage() {
                   <HandHeart className="h-4 w-4" />
                 </Link>
               </AnimatedButton>
-              <div className="flex items-center gap-3 text-sm text-slate-400">
+              <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-slate-400">
                 <span className="inline-flex items-center gap-2 rounded-full bg-card/80 px-3 py-2 border border-border/40 hover:border-primary/50 transition-all duration-300 hover-card-lift">
                   <ShieldCheck className="h-4 w-4 text-primary" />
                   Verified students only
@@ -130,9 +130,9 @@ export default function AboutPage() {
             </div>
           </Reveal>
 
-          <Reveal delay={120} className="relative">
-            <div className="absolute -left-6 -top-10 h-28 w-28 rounded-full bg-primary/25 blur-3xl animate-float" aria-hidden />
-            <div className="absolute -right-4 -bottom-12 h-32 w-32 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: "0.4s" }} aria-hidden />
+          <Reveal delay={120} className="relative overflow-hidden">
+            <div className="absolute left-0 top-0 h-28 w-28 rounded-full bg-primary/25 blur-3xl animate-float" aria-hidden />
+            <div className="absolute right-0 bottom-0 h-32 w-32 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: "0.4s" }} aria-hidden />
             <AnimatedCard className="relative overflow-hidden border border-primary/25 bg-gradient-to-br from-card/80 via-card/70 to-card/60 p-6 rounded-3xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -179,14 +179,14 @@ export default function AboutPage() {
         </section>
       </div>
 
-      <section className="section-shell grid gap-8 lg:grid-cols-[1.1fr,0.9fr]">
+      <section className="section-shell grid gap-3 sm:gap-4 md:gap-6 lg:grid-cols-[1.1fr,0.9fr]">
         <div className="space-y-4">
           <Reveal className="space-y-3">
             <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Mission & Vision</p>
             <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Why we exist and where we are going</h2>
             <p className="text-slate-300 max-w-2xl">Purpose built for students, not general commuters. Every decision honors safety, transparency, and the warmth of trusted community rides.</p>
           </Reveal>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {missionVision.map((item, index) => (
               <Reveal key={item.title} delay={index * 100}>
                 <AnimatedCard className="h-full border border-border/30 bg-card/70 hover:border-primary/50">
@@ -230,16 +230,16 @@ export default function AboutPage() {
         </Reveal>
       </section>
 
-      <section className="relative overflow-hidden py-14">
+      <section className="relative overflow-hidden py-4 sm:py-8 md:py-10">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-accent/10 to-emerald-200/5 blur-3xl" aria-hidden />
         <div className="page-shell relative">
-          <Reveal className="space-y-4 text-center mb-10">
+          <Reveal className="space-y-4 text-center mb-4 sm:mb-6 md:mb-8">
             <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Platform Features</p>
             <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Built for trust and safety</h2>
             <p className="text-slate-300 max-w-2xl mx-auto">Every feature is designed with student safety, convenience, and community trust at its core.</p>
           </Reveal>
 
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[
               { 
                 icon: <ShieldCheck className="h-6 w-6 text-primary" />, 
@@ -340,16 +340,16 @@ export default function AboutPage() {
       </section>
 
       <section className="section-shell relative overflow-hidden">
-        <div className="pointer-events-none absolute -left-20 top-10 h-72 w-72 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
-        <div className="pointer-events-none absolute -right-20 bottom-10 h-72 w-72 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: '1.5s' }} aria-hidden />
+        <div className="pointer-events-none absolute left-0 top-10 h-72 w-72 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
+        <div className="pointer-events-none absolute right-0 bottom-10 h-72 w-72 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: '1.5s' }} aria-hidden />
         
-        <Reveal className="space-y-4 text-center mb-12 relative z-10">
+        <Reveal className="space-y-4 text-center mb-8 relative z-10">
           <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Universities We Serve</p>
           <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Active at FAST & NED University Karachi</h2>
           <p className="text-slate-300 max-w-2xl mx-auto">Campus Ride is officially active and serving students at both FAST University Karachi and NED University Karachi with equal focus and dedication.</p>
         </Reveal>
 
-        <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto relative z-10">
+        <div className="grid md:grid-cols-2 gap-6 max-w-5xl mx-auto relative z-10">
           <Reveal delay={100}>
             <AnimatedCard 
               animation="scale-up"
@@ -448,7 +448,7 @@ export default function AboutPage() {
           </Reveal>
         </div>
 
-        <Reveal delay={300} className="mt-12 text-center relative z-10">
+        <Reveal delay={300} className="mt-8 text-center relative z-10">
           <div className="inline-block rounded-2xl border border-primary/20 bg-gradient-to-br from-card/90 to-card/70 px-8 py-6 backdrop-blur-sm">
             <p className="text-slate-300">
               <span className="font-semibold text-slate-50">Equal Focus, Equal Service:</span> Both universities receive the same level of attention, features, and support from Campus Ride.
@@ -502,7 +502,7 @@ export default function AboutPage() {
               <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Built with students, moderated by peers</h2>
               <p className="text-slate-300 max-w-2xl">Our community council reviews reports, refines safety rituals, and keeps the vibe respectful. Hover to feel the warmth.</p>
             </div>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4">
               {team.map((person, index) => (
                 <div key={person.name} className="group relative overflow-hidden rounded-2xl border border-border/30 bg-slate-900/60 p-4 text-center transition-all duration-500 hover:-translate-y-2 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/20 animate-fade-in" style={{ animationDelay: `${index * 100}ms` }}>
                   <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br ${person.color} text-slate-50 font-semibold text-xl group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 shadow-lg`}>

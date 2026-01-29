@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { collection, query, where, orderBy, doc, updateDoc, serverTimestamp, getDoc, arrayUnion, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, doc, updateDoc, serverTimestamp, getDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { useFirestore, useUser } from '@/firebase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -13,23 +13,633 @@ import NotificationBadge from '@/components/NotificationBadge';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { MapPin, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
+import { MapPin, Clock, Users, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { ErrorState, EmptyState, LoadingState } from '@/components/StateComponents';
+import { safeGet } from '@/lib/safeApi';
 
-function formatDate(ts: any) {
+/**
+ * Safe array helper
+ */
+function toArray<T>(value: T[] | T | null | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  if (value !== null && value !== undefined) return [value];
+  return [];
+}
+
+/**
+ * Safe date formatting utility
+ */
+function formatDate(ts: any, defaultValue = '') {
   try {
-    return new Date(ts.seconds * 1000).toLocaleString('en-US', {
+    if (!ts || typeof ts !== 'object') return defaultValue;
+    const milliseconds = ts.seconds ? ts.seconds * 1000 : ts;
+    const date = new Date(milliseconds);
+    if (isNaN(date.getTime())) return defaultValue;
+    
+    return date.toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
       weekday: 'short',
       hour: '2-digit',
       minute: '2-digit'
     });
-  } catch (_) { return '' }
+  } catch (error) {
+    console.debug('[formatDate] Error formatting date:', error);
+    return defaultValue;
+  }
 }
 
-function BookingCard({ booking, university }: { booking: BookingType, university: string }) {
+interface BookingCardProps {
+  booking: BookingType | null | undefined;
+  university: string | null | undefined;
+  onRetry?: () => void;
+}
+
+function BookingCard({ booking, university, onRetry }: BookingCardProps) {
+  // Safety checks
+  if (!booking || !booking.id || !university) {
+    return null;
+  }
+
+  const ride = safeGet(booking, 'ride');
+  const driver = safeGet(booking, 'driverDetails') || safeGet(booking, 'ride.driverInfo') || { fullName: 'Driver' };
+  
+  const [confirming, setConfirming] = React.useState(false);
+  const [confirmationProcessed, setConfirmationProcessed] = React.useState(booking.status === 'CONFIRMED');
+  const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
+  const [departureTimer, setDepartureTimer] = React.useState<string>('');
+  const [statusError, setStatusError] = React.useState<string | null>(null);
+  const [localBookingStatus, setLocalBookingStatus] = React.useState<string>(booking.status || 'pending');
+  
+  const firestore = useFirestore();
+  const { user } = useUser();
+  const { toast } = useToast();
+  const { getUnreadForRide } = useNotifications();
+
+  // Safe ride status check
+  const checkRideStatus = React.useCallback(async () => {
+    if (!firestore || !ride || !ride.id) {
+      setStatusError('Ride data incomplete');
+      return;
+    }
+
+    try {
+      setStatusError(null);
+      
+      // Check departure time
+      const departureTimeData = safeGet(ride, 'departureTime');
+      if (!departureTimeData) {
+        setStatusError('Departure time not available');
+        return;
+      }
+
+      const departureTime = new Date(
+        departureTimeData.seconds ? departureTimeData.seconds * 1000 : departureTimeData
+      );
+      
+      if (isNaN(departureTime.getTime())) {
+        setStatusError('Invalid departure time');
+        return;
+      }
+
+      if (departureTime <= new Date()) {
+        setRideStatus('expired');
+        return;
+      }
+
+      // Check seat availability
+      const rideRef = doc(firestore, 'universities', university, 'rides', ride.id);
+      const rideSnap = await getDoc(rideRef);
+      
+      if (!rideSnap.exists()) {
+        setStatusError('Ride not found');
+        setRideStatus('expired');
+        return;
+      }
+
+      const rideData = rideSnap.data();
+      const confirmedBookings = safeGet(rideData, 'confirmedPassengers.length', 0);
+      const totalSeats = safeGet(rideData, 'seats', 4);
+      const seatsAvailable = totalSeats - confirmedBookings;
+
+      setRideStatus(seatsAvailable > 0 ? 'available' : 'full');
+    } catch (err) {
+      console.debug('[BookingCard] Failed to check ride status:', err);
+      setStatusError(err instanceof Error ? err.message : 'Failed to check status');
+    }
+  }, [firestore, ride, university]);
+
+  // Check status on mount and set up polling
+  React.useEffect(() => {
+    checkRideStatus();
+    const interval = setInterval(checkRideStatus, 5000);
+    return () => clearInterval(interval);
+  }, [checkRideStatus]);
+
+  const handleConfirmRide = async () => {
+    // ONE-CLICK PROTECTION: Prevent duplicate confirmations
+    if (confirmationProcessed || localBookingStatus === 'CONFIRMED') {
+      toast({
+        title: 'Already Confirmed',
+        description: 'This ride has already been confirmed.'
+      });
+      return;
+    }
+
+    if (!firestore || !user?.uid || !booking?.id || !booking?.rideId || !ride?.id) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Missing required booking information'
+      });
+      return;
+    }
+    
+    try {
+      // IMMEDIATE UI UPDATE: Show loading state and disable button
+      setConfirming(true);
+      setStatusError(null);
+      setConfirmationProcessed(true);
+      setLocalBookingStatus('CONFIRMED');
+
+      // Re-check before confirming
+      const rideRef = doc(firestore, 'universities', university, 'rides', ride.id);
+      const bookingRef = doc(firestore, 'universities', university, 'bookings', booking.id);
+      
+      const bookingSnap = await getDoc(bookingRef);
+      
+      // IDEMPOTENT CHECK: If already confirmed, skip confirmation logic
+      if (bookingSnap.exists() && bookingSnap.data().status === 'CONFIRMED') {
+        toast({
+          title: 'Success',
+          description: 'Ride already confirmed!'
+        });
+        setLocalBookingStatus('CONFIRMED');
+        checkRideStatus();
+        return;
+      }
+
+      const rideSnap = await getDoc(rideRef);
+      
+      if (!rideSnap.exists()) {
+        toast({ variant: 'destructive', title: 'Error', description: 'Ride not found' });
+        setConfirmationProcessed(false);
+        setLocalBookingStatus(booking.status);
+        return;
+      }
+
+      const rideData = rideSnap.data();
+      const confirmedBookings = safeGet(rideData, 'confirmedPassengers.length', 0);
+      const totalSeats = safeGet(rideData, 'seats', 4);
+      const seatsAvailable = totalSeats - confirmedBookings;
+
+      // Check departure time
+      const departureTimeData = safeGet(rideData, 'departureTime');
+      if (!departureTimeData) {
+        toast({ variant: 'destructive', title: 'Error', description: 'Invalid ride time' });
+        setConfirmationProcessed(false);
+        setLocalBookingStatus(booking.status);
+        return;
+      }
+
+      const departureTime = new Date(
+        departureTimeData.seconds ? departureTimeData.seconds * 1000 : departureTimeData
+      );
+
+      if (departureTime <= new Date()) {
+        toast({ variant: 'destructive', title: 'Ride Expired', description: 'This ride has already departed' });
+        setRideStatus('expired');
+        setConfirmationProcessed(false);
+        setLocalBookingStatus(booking.status);
+        return;
+      }
+
+      if (seatsAvailable <= 0) {
+        toast({ variant: 'destructive', title: 'Seats Full', description: 'No seats available for this ride' });
+        setRideStatus('full');
+        setConfirmationProcessed(false);
+        setLocalBookingStatus(booking.status);
+        return;
+      }
+
+      // ATOMIC TRANSACTION: Ensure idempotent confirmation
+      await runTransaction(firestore, async (transaction) => {
+        const currentBookingSnap = await transaction.get(bookingRef);
+        
+        // CRITICAL: Check if already confirmed within transaction
+        if (currentBookingSnap.exists() && currentBookingSnap.data().status === 'CONFIRMED') {
+          throw new Error('ALREADY_CONFIRMED');
+        }
+
+        const currentRideSnap = await transaction.get(rideRef);
+        if (!currentRideSnap.exists()) throw new Error('Ride no longer exists');
+        
+        const currentRideData = currentRideSnap.data();
+        const currentSeats = safeGet(currentRideData, 'availableSeats', 0);
+        const confirmedCount = safeGet(currentRideData, 'confirmedPassengers.length', 0);
+        const actualAvailable = currentSeats - confirmedCount;
+
+        if (actualAvailable <= 0) {
+          throw new Error('SEATS_FULL');
+        }
+
+        // Check if user already confirmed (idempotency key)
+        const confirmedPassengers = currentRideData.confirmedPassengers || [];
+        if (confirmedPassengers.includes(user.uid)) {
+          throw new Error('ALREADY_CONFIRMED');
+        }
+
+        // Confirm the booking
+        transaction.update(bookingRef, {
+          status: 'CONFIRMED',
+          confirmedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        // Add to confirmed passengers (only if not already present)
+        transaction.update(rideRef, {
+          confirmedPassengers: [...confirmedPassengers, user.uid],
+          availableSeats: Math.max(0, currentSeats - 1),
+          updatedAt: serverTimestamp(),
+          ...(currentSeats - 1 === 0 && { status: 'full' })
+        });
+      });
+
+      // SUCCESS: UI already updated optimistically
+      toast({
+        title: 'Success',
+        description: 'Ride confirmed! Driver can now pick you up.'
+      });
+      
+      checkRideStatus();
+    } catch (err: any) {
+      console.debug('[handleConfirmRide] Error:', err);
+      
+      // RESET STATE ON ERROR
+      setConfirmationProcessed(false);
+      setLocalBookingStatus(booking.status || 'pending');
+      
+      if (err.message === 'SEATS_FULL') {
+        toast({
+          variant: 'destructive',
+          title: 'Seats Full',
+          description: 'All seats have been taken'
+        });
+        setRideStatus('full');
+      } else if (err.message === 'ALREADY_CONFIRMED') {
+        toast({
+          title: 'Already Confirmed',
+          description: 'This ride has already been confirmed.'
+        });
+        setLocalBookingStatus('CONFIRMED');
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: err?.message || 'Failed to confirm ride'
+        });
+      }
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  // Departure timer
+  React.useEffect(() => {
+    if (booking?.status !== 'CONFIRMED' || !ride?.departureTime) return;
+
+    const updateTimer = () => {
+      try {
+        const now = new Date();
+        const departureData = safeGet(ride, 'departureTime');
+        const departure = new Date(
+          departureData?.seconds ? departureData.seconds * 1000 : departureData
+        );
+
+        if (isNaN(departure.getTime())) {
+          setDepartureTimer('Invalid time');
+          return;
+        }
+
+        const diff = departure.getTime() - now.getTime();
+
+        if (diff <= 0) {
+          setDepartureTimer('Ride has started');
+          return;
+        }
+
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+        setDepartureTimer(`${hours}h ${minutes}m ${seconds}s`);
+      } catch (err) {
+        console.debug('[Timer] Error updating timer:', err);
+        setDepartureTimer('Unable to calculate');
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [booking?.status, ride?.departureTime]);
+
+  const driverName = safeGet(driver, 'fullName', 'Driver');
+  const driverInitials = driverName.split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase();
+  const rideFrom = safeGet(ride, 'from', 'Unknown');
+  const rideTo = safeGet(ride, 'to', 'Unknown');
+  const ridePrice = safeGet(ride, 'price') ?? safeGet(booking, 'price', 0);
+  const rideRoute = safeGet(ride, 'route', []);
+  const pickupPoint = safeGet(booking, 'pickupPoint');
+  const pickupPlaceName = safeGet(booking, 'pickupPlaceName', '');
+  const dropoffPlaceName = safeGet(booking, 'dropoffPlaceName', '');
+
+  const rideId = safeGet(ride, 'id');
+  const unreadCount = rideId ? getUnreadForRide(rideId) : 0;
+  const chatId = safeGet(booking, 'chatId') || booking.id;
+
+  return (
+    <Card className="overflow-hidden transition-all duration-300 ease-out hover:shadow-xl hover:shadow-primary/20 border border-slate-700 bg-gradient-to-br from-slate-900/80 to-slate-950/80 backdrop-blur-xl">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5 flex-1 min-w-0">
+            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-xs flex-shrink-0 shadow-lg">
+              {driverInitials || 'U'}
+              {rideId && unreadCount > 0 && (
+                <NotificationBadge count={unreadCount} dot position="top-right" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-sm font-bold text-white truncate">{driverName}</CardTitle>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                {booking.status === 'CONFIRMED' && (
+                  <Badge className="gap-1 bg-green-600/80 text-white text-[10px] py-0 px-1.5">
+                    <CheckCircle2 className="h-2.5 w-2.5" /> Confirmed
+                  </Badge>
+                )}
+                {booking.status === 'accepted' && (
+                  <Badge className="gap-1 bg-blue-600/80 text-white text-[10px] py-0 px-1.5">
+                    <CheckCircle2 className="h-2.5 w-2.5" /> Pending
+                  </Badge>
+                )}
+                {booking.status === 'pending' && (
+                  <Badge className="gap-1 bg-amber-600/80 text-white text-[10px] py-0 px-1.5">
+                    <AlertCircle className="h-2.5 w-2.5" /> Awaiting
+                  </Badge>
+                )}
+                {(booking.status === 'declined' || booking.status === 'rejected') && (
+                  <Badge className="gap-1 bg-red-600/80 text-white text-[10px] py-0 px-1.5">
+                    <AlertCircle className="h-2.5 w-2.5" /> Rejected
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-lg font-bold text-primary">PKR {ridePrice}</div>
+            <div className="text-[10px] text-slate-400">per seat</div>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="pb-2.5 space-y-2">
+        {/* Route */}
+        <div className="space-y-2 text-xs">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-green-500 flex-shrink-0"></div>
+              <span className="text-slate-400 font-medium">From</span>
+            </div>
+            <div className="ml-4 text-slate-200 truncate">{rideFrom}</div>
+          </div>
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-red-500 flex-shrink-0"></div>
+              <span className="text-slate-400 font-medium">To</span>
+            </div>
+            <div className="ml-4 text-slate-200 truncate">{rideTo}</div>
+          </div>
+        </div>
+
+        {/* Pickup/Dropoff */}
+        <div className="space-y-1.5 text-xs">
+          {pickupPlaceName && (
+            <div>
+              <span className="text-slate-400 font-medium">Pickup:</span>
+              <div className="text-slate-300 truncate">{pickupPlaceName}</div>
+            </div>
+          )}
+          {dropoffPlaceName && (
+            <div>
+              <span className="text-slate-400 font-medium">Dropoff:</span>
+              <div className="text-slate-300 truncate">{dropoffPlaceName}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Departure time */}
+        <div className="text-xs">
+          <span className="text-slate-400 font-medium">Departure:</span>
+          <div className="text-slate-300">{formatDate(ride?.departureTime, 'Unknown time')}</div>
+        </div>
+
+        {/* Departure timer for confirmed rides */}
+        {booking.status === 'CONFIRMED' && departureTimer && (
+          <div className="text-xs">
+            <span className="text-slate-400 font-medium">Time remaining:</span>
+            <div className="text-blue-400 font-mono">{departureTimer}</div>
+          </div>
+        )}
+
+        {/* Status error */}
+        {statusError && (
+          <div className="text-xs bg-red-900/30 border border-red-700/50 text-red-200 p-2 rounded">
+            {statusError}
+          </div>
+        )}
+      </CardContent>
+
+      <CardFooter className="flex gap-2 pt-3">
+        {booking.status === 'accepted' && rideStatus === 'available' && !confirmationProcessed && (
+          <>
+            <Button
+              onClick={handleConfirmRide}
+              disabled={confirming || confirmationProcessed}
+              size="sm"
+              className="flex-1"
+            >
+              {confirming ? 'Confirming...' : 'Confirm Ride'}
+            </Button>
+            {onRetry && (
+              <Button
+                onClick={onRetry}
+                variant="outline"
+                size="sm"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            )}
+          </>
+        )}
+        {(localBookingStatus === 'CONFIRMED' || confirmationProcessed) && (
+          <div className="w-full">
+            <div className="flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-green-600/20 border border-green-600/50 text-green-200 text-sm font-medium">
+              <CheckCircle2 className="h-4 w-4" />
+              Ride Confirmed!
+            </div>
+            {chatId && <ChatButton chatId={chatId} university={university} label="Chat" />}
+          </div>
+        )}
+        {(rideStatus === 'full' || rideStatus === 'expired') && (
+          <div className="w-full text-center text-xs text-slate-400">
+            {rideStatus === 'full' ? 'Seats are full' : 'Ride has expired'}
+          </div>
+        )}
+      </CardFooter>
+    </Card>
+  );
+}
+
+export default function MyBookingsPage() {
+  const { user, data: userData, loading: userLoading } = useUser();
+  const firestore = useFirestore();
+  const [retryKey, setRetryKey] = React.useState(0);
+  const [pageError, setPageError] = React.useState<string | null>(null);
+
+  // Safety checks
+  const hasRequiredData = user?.uid && firestore && userData?.university;
+
+  const bookingsQuery = hasRequiredData ? query(
+    collection(firestore, 'universities', userData.university, 'bookings'),
+    where('passengerId', '==', user.uid),
+    orderBy('createdAt', 'desc')
+  ) : null;
+
+  const { data: bookingsData, loading, error: queryError } = useCollection<BookingType>(
+    bookingsQuery,
+    { listen: true, includeUserDetails: 'driverId' }
+  );
+
+  // Safe bookings array
+  const bookings = toArray(bookingsData).filter((b) => b && b.id);
+
+  const isLoading = userLoading || loading;
+  const hasError = !!queryError || !!pageError;
+  const errorMessage = queryError?.message || pageError;
+
+  React.useEffect(() => {
+    if (queryError) {
+      console.debug('[MyBookings] Query error:', queryError);
+      setPageError(queryError.message);
+    }
+  }, [queryError]);
+
+  const handleRetry = () => {
+    setRetryKey((prev) => prev + 1);
+    setPageError(null);
+  };
+
+  const handleGoHome = () => {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/dashboard';
+    }
+  };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <LoadingState count={3} height="h-40" />
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (hasError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <ErrorState
+            title="Failed to Load Bookings"
+            description="We couldn't load your bookings. Please try again."
+            error={errorMessage}
+            onRetry={handleRetry}
+            onGoHome={handleGoHome}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Empty state
+  if (!bookings || bookings.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <EmptyState
+            title="No Bookings Yet"
+            description="You haven't booked any rides yet. Browse available rides and make a booking."
+            action={{
+              label: 'Find a Ride',
+              onClick: () => window.location.href = '/dashboard/rides'
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Success state
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+      <div className="fixed inset-0 -z-10 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+        <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+      </div>
+
+      <div className="section-shell py-8 relative z-10">
+        <div className="mb-6 sm:mb-8 animate-page">
+          <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Bookings</h1>
+          <p className="text-slate-300">View and manage your ride bookings ({bookings.length})</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {bookings.map((booking) => (
+            <BookingCard
+              key={`${booking.id}-${retryKey}`}
+              booking={booking}
+              university={userData?.university}
+              onRetry={handleRetry}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function BookingCardLegacy({ booking, university }: { booking: BookingType, university: string }) {
   const ride = booking.ride;
   const driver = booking.driverDetails || ride?.driverInfo || { fullName: 'Ride Provider' } as any;
   const [confirming, setConfirming] = React.useState(false);
@@ -135,7 +745,7 @@ function BookingCard({ booking, university }: { booking: BookingType, university
 
         // Add to confirmedPassengers and reduce available seats
         transaction.update(rideRef, {
-          confirmedPassengers: arrayUnion(user.uid),
+          confirmedPassengers: [...(currentRideData.confirmedPassengers || []), user.uid],
           availableSeats: currentSeats - 1,
           updatedAt: serverTimestamp(),
           ...(currentSeats - 1 === 0 && { status: 'full' })
@@ -294,12 +904,6 @@ function BookingCard({ booking, university }: { booking: BookingType, university
               <div className="text-slate-300">{booking.pickupPlaceName}</div>
             </div>
           )}
-          {booking.dropoffPlaceName && (
-            <div>
-              <span className="text-slate-400 font-medium">Dropoff Point:</span>
-              <div className="text-slate-300 truncate">{booking.dropoffPlaceName}</div>
-            </div>
-          )}
         </div>
 
         {/* Time */}
@@ -366,15 +970,15 @@ function BookingCard({ booking, university }: { booking: BookingType, university
             <div className="text-sm text-red-400 font-medium">Request rejected by driver</div>
           </div>
         )}
-        {booking.status === 'accepted' && rideStatus !== 'expired' && booking.status !== 'declined' ? (
+        {booking.status === 'accepted' && rideStatus === 'available' ? (
           <>
             <Button 
               onClick={handleConfirmRide} 
-              disabled={confirming || rideStatus === 'full'} 
+              disabled={confirming} 
               className="flex-1 gap-1.5 h-9 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="h-4 w-4" />
-              {confirming ? 'Confirming...' : rideStatus === 'full' ? 'Seats Full' : 'Confirm Ride'}
+              {confirming ? 'Confirming...' : 'Confirm Ride'}
             </Button>
             {((booking as any).chatId || booking.id) ? (
               <ChatButton chatId={(booking as any).chatId || booking.id} university={university} label="Chat" />
@@ -405,7 +1009,7 @@ function BookingCard({ booking, university }: { booking: BookingType, university
                   {ride?.route && ride.route.length ? (
                     <MapLeaflet 
                       route={ride.route as any} 
-                      markers={booking.pickupPoint ? [{ lat: booking.pickupPoint.lat || booking.pickupPoint[0], lng: booking.pickupPoint.lng || booking.pickupPoint[1], label: 'Pickup' }] : []} 
+                      markers={booking.pickupPoint ? [[booking.pickupPoint.lat || booking.pickupPoint[0], booking.pickupPoint.lng || booking.pickupPoint[1]]] : []} 
                       style={{ height: '100%', width: '100%' }} 
                     />
                   ) : (
@@ -421,80 +1025,6 @@ function BookingCard({ booking, university }: { booking: BookingType, university
         )}
       </CardFooter>
     </Card>
-  );
-}
-
-export default function MyBookingsPage() {
-  const { user, data: userData, loading: userLoading } = useUser();
-  const firestore = useFirestore();
-
-  const bookingsQuery = (user && firestore && userData) ? query(
-    collection(firestore, 'universities', userData.university, 'bookings'),
-    where('passengerId', '==', user.uid),
-    orderBy('createdAt', 'desc')
-  ) : null;
-
-  const { data: bookings, loading } = useCollection<BookingType>(bookingsQuery, { listen: true, includeUserDetails: 'driverId' });
-
-  const isLoading = userLoading || loading;
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
-        <div className="fixed inset-0 -z-10 pointer-events-none">
-          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
-          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
-          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
-        </div>
-        <div className="section-shell py-8 relative z-10">
-          <div className="grid grid-cols-1 gap-4">
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!bookings || bookings.length === 0) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
-        <div className="fixed inset-0 -z-10 pointer-events-none">
-          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
-          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
-          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
-        </div>
-        <div className="section-shell py-8 relative z-10">
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-slate-50">No Bookings</h2>
-            <p className="text-slate-300">You have not booked any rides yet.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
-      {/* Floating background orbs */}
-      <div className="fixed inset-0 -z-10 pointer-events-none">
-        <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
-        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
-        <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
-      </div>
-
-      <div className="section-shell py-8 relative z-10">
-        <div className="mb-8 animate-page">
-          <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Bookings</h1>
-          <p className="text-slate-300">View and manage your ride bookings</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {bookings.map((b) => (
-            <BookingCard key={b.id} booking={b} university={userData!.university} />
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 

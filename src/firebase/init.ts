@@ -1,6 +1,6 @@
 // src/firebase/init.ts
 import { getApps, initializeApp } from 'firebase/app';
-import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getAuth, setPersistence, browserLocalPersistence, browserSessionPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
@@ -18,10 +18,17 @@ function initializeFirebase(): { firebaseApp?: ReturnType<typeof initializeApp>;
   if (!apps.length && !firebaseApp) {
     const app = initializeApp(firebaseConfig);
     const a = getAuth(app);
-    // Ensure auth persistence is explicitly set to local so sessions survive page reloads.
+    // Ensure auth persistence is explicitly set to LOCAL so sessions survive:
+    // - Page close/reopen
+    // - App background/foreground
+    // - Phone restart
+    // This persists tokens in browser local storage with 30-day expiry
     setPersistence(a, browserLocalPersistence).catch((e) => {
-      // Non-fatal, but helpful to see in console during development.
-      console.warn('Failed to set Firebase auth persistence:', e);
+      // If local persistence fails, fall back to session persistence
+      console.warn('[Firebase] Local persistence failed, attempting session persistence:', e);
+      setPersistence(a, browserSessionPersistence).catch((e2) => {
+        console.warn('[Firebase] Both persistence modes failed (non-fatal):', e2);
+      });
     });
     const fs = getFirestore(app);
 

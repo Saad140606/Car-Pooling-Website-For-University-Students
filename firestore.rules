@@ -129,12 +129,12 @@ service cloud.firestore {
         allow update, delete: if isAdmin() || (isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid));
       }
 
-      // Notifications
+      // Notifications - Allow authenticated users to access their own notifications
       match /notifications/{notificationId} {
         allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
-        allow get, list: if isAuth() && resource.data.userId == request.auth.uid;
-        allow update: if isAuth() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
-        allow delete: if isAuth() && resource.data.userId == request.auth.uid;
+        allow get, list: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
+        allow update: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin()) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+        allow delete: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
       }
 
       // Chats and messages
@@ -193,6 +193,30 @@ service cloud.firestore {
       allow update, delete: if false;
       allow list: if false;
     }
+
+    // Calls collection: Real-time calling system
+    match /calls/{callId} {
+      // Allow create for initiating a call
+      allow create: if isAuth()
+        && request.resource.data.callerId == request.auth.uid
+        && request.resource.data.receiverId is string
+        && request.resource.data.callType in ['audio', 'video']
+        && request.resource.data.status in ['ringing', 'connected', 'rejected', 'missed', 'ended']
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.candidates is list;
+      
+      // Allow get/update for participants only
+      allow get, update: if isAuth()
+        && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      
+      // Allow delete only for participants
+      allow delete: if isAuth()
+        && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      
+      // No listing calls
+      allow list: if false;
+    }
+
     // Default deny for any other paths
     match /{document=**} {
       allow read, write: if false;

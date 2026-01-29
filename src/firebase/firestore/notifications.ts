@@ -135,12 +135,25 @@ export function subscribeToNotifications(
     orderBy('createdAt', 'desc')
   );
   
-  return onSnapshot(q, (snapshot) => {
-    const notifications: Notification[] = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data()
-    } as Notification));
-    
-    callback(notifications);
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const notifications: Notification[] = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data()
+      } as Notification));
+      
+      callback(notifications);
+    },
+    (error) => {
+      // Gracefully handle permission denied errors
+      if (error.code === 'permission-denied') {
+        console.warn('[NotificationFirestore] Permission denied for notifications query. User may not have full permissions yet.');
+        // Return empty notifications instead of crashing
+        callback([]);
+      } else {
+        console.error('[NotificationFirestore] Error subscribing to notifications:', error);
+      }
+    }
+  );
 }

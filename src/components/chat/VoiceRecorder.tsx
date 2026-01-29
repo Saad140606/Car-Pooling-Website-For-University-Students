@@ -1,14 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Trash2, Send } from 'lucide-react';
-import { uploadFile } from '@/firebase/storage/upload';
+import { voiceMessageService } from '@/lib/voiceMessageService';
 
 export default function VoiceRecorder({ onSend }: { onSend: (url: string) => void }) {
   const [recording, setRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [duration, setDuration] = useState(0);
   const [uploading, setUploading] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -19,30 +17,12 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
 
   const startRecording = async () => {
     try {
-      // Check if MediaRecorder is supported
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('Voice recording is not supported in your browser. Please use a modern browser like Chrome, Firefox, or Edge.');
+      if (!voiceMessageService.isSupported()) {
+        alert('Voice recording is not supported in your browser. Please use Chrome, Firefox, or Edge.');
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        setAudioBlob(blob);
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
+      await voiceMessageService.startRecording();
       setRecording(true);
       setDuration(0);
 
@@ -50,7 +30,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
         setDuration(d => d + 1);
       }, 1000);
     } catch (err: any) {
-      console.error('Failed to start recording:', err);
+      console.error('[VoiceRecorder] Failed to start recording:', err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         alert('Microphone permission denied. Please allow microphone access in your browser settings to record voice messages.');
       } else if (err.name === 'NotFoundError') {
@@ -62,44 +42,40 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && recording) {
-      mediaRecorderRef.current.stop();
+    try {
+      const blob = voiceMessageService.stopRecording();
+      setAudioBlob(blob);
       setRecording(false);
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+    } catch (err) {
+      console.error('[VoiceRecorder] Failed to stop recording:', err);
     }
   };
 
   const cancelRecording = () => {
-    stopRecording();
     setAudioBlob(null);
     setDuration(0);
   };
+
 
   const sendVoice = async () => {
     if (!audioBlob) return;
     setUploading(true);
     try {
-      const file = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-      const path = `uploads/chats/voice/${Date.now()}_${file.name}`;
-      const url = await uploadFile(file, path, () => {});
-      onSend(url);
+      const path = `uploads/voice_messages/${Date.now()}_${Date.now()}.webm`;
+      const voiceData = await voiceMessageService.uploadVoiceMessage(audioBlob, path);
+      onSend(voiceData.url);
       setAudioBlob(null);
       setDuration(0);
     } catch (err) {
-      console.error('Failed to upload voice:', err);
-      alert('Failed to send voice message');
+      console.error('[VoiceRecorder] Failed to upload voice:', err);
+      alert('Failed to send voice message. Please try again.');
     } finally {
       setUploading(false);
     }
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   if (audioBlob) {
@@ -124,7 +100,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
               ))}
             </div>
           </div>
-          <span className="text-xs text-slate-400">{formatTime(duration)}</span>
+          <span className="text-xs text-slate-400">{voiceMessageService.formatDuration(duration)}</span>
         </div>
         <button
           onClick={sendVoice}
@@ -147,7 +123,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
         <div className="flex items-center gap-2 flex-1 px-2">
           <div className="h-3 w-3 bg-red-500 rounded-full animate-pulse" />
           <span className="text-sm text-white font-medium">Recording...</span>
-          <span className="text-sm text-slate-300">{formatTime(duration)}</span>
+          <span className="text-sm text-slate-300">{voiceMessageService.formatDuration(duration)}</span>
         </div>
         <button
           onClick={stopRecording}

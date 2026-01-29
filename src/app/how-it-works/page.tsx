@@ -116,7 +116,7 @@ function StepCard({ step, delay = '0ms', index }: { step: Step; delay?: string; 
       className="group relative overflow-hidden border-primary/20 bg-gradient-to-br from-card/80 to-card/60 shadow-lg hover:border-primary/40 hover:shadow-primary/30 transition-all duration-500"
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/15 via-accent/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
-      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-primary/10 blur-2xl transition-all duration-500 group-hover:scale-150" />
+      <div className="pointer-events-none absolute right-0 top-0 h-32 w-32 rounded-full bg-primary/10 blur-2xl transition-all duration-500 group-hover:scale-150" />
       <CardHeader className="flex flex-row items-start gap-4 relative z-10">
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/25 to-accent/20 text-primary shadow-lg group-hover:scale-110 group-hover:rotate-6 transition-all duration-500">
           {step.icon}
@@ -144,12 +144,12 @@ export default function HowItWorks() {
       <SiteHeader />
 
       <main className="flex-grow">
-        <section className="relative overflow-hidden py-16 sm:py-24">
+        <section className="relative overflow-hidden py-8 sm:py-12 md:py-16 lg:py-24">
           <div className="absolute inset-0 bg-gradient-to-b from-primary/10 via-accent/10 to-transparent" aria-hidden />
-          <div className="pointer-events-none absolute -left-32 top-20 h-96 w-96 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
-          <div className="pointer-events-none absolute -right-32 bottom-20 h-80 w-80 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: '1s' }} aria-hidden />
+          <div className="pointer-events-none absolute left-0 top-20 h-96 w-96 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
+          <div className="pointer-events-none absolute right-0 bottom-20 h-80 w-80 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: '1s' }} aria-hidden />
           
-          <div className="container relative mx-auto grid items-center gap-12 px-4 lg:grid-cols-2">
+          <div className="container relative mx-auto grid items-center gap-6 md:gap-12 px-4 lg:grid-cols-2">
             <Reveal className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary animate-bounce-in backdrop-blur-sm">
                 <Sparkles className="h-4 w-4 animate-subtle-bounce" />
@@ -189,7 +189,7 @@ export default function HowItWorks() {
             </Reveal>
 
             <Reveal delay={120} className="relative animate-fade-slide" style={{ animationDelay: '120ms' }}>
-              <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-primary/20 blur-3xl" aria-hidden />
+              <div className="absolute left-0 top-0 h-32 w-32 rounded-full bg-primary/20 blur-3xl" aria-hidden />
               <div className="absolute -bottom-12 -right-6 h-36 w-36 rounded-full bg-accent/20 blur-3xl" aria-hidden />
 
               <div className="relative space-y-4 rounded-3xl border border-primary/20 bg-card/70 p-6 shadow-xl backdrop-blur">
@@ -241,8 +241,8 @@ export default function HowItWorks() {
           {/* Floating background orbs */}
           <div className="absolute inset-0 -z-10 pointer-events-none">
             <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
-            <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
-            <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+            <div className="absolute left-0 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+            <div className="absolute right-0 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
           </div>
           <div className="container mx-auto px-4 relative z-10">
             <div className="flex items-center gap-3">
@@ -337,7 +337,7 @@ export default function HowItWorks() {
           {/* Floating background orbs */}
           <div className="absolute inset-0 -z-10 pointer-events-none">
             <div className="absolute inset-0 bg-gradient-to-b from-accent/15 via-transparent to-transparent" />
-            <div className="absolute -right-32 top-0 h-96 w-96 rounded-full bg-accent/20 blur-3xl opacity-30 animate-float" />
+            <div className="absolute right-0 top-0 h-96 w-96 rounded-full bg-accent/20 blur-3xl opacity-30 animate-float" />
             <div className="absolute -left-40 bottom-20 h-80 w-80 rounded-full bg-primary/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '1s' }} />
           </div>
           <div className="container mx-auto px-4 relative z-10">
@@ -357,7 +357,7 @@ export default function HowItWorks() {
               ))}
             </div>
 
-            <div className="mt-12 grid gap-6 md:grid-cols-[1.1fr,0.9fr]">
+            <div className="mt-8 sm:mt-12 grid gap-6 md:grid-cols-[1.1fr,0.9fr]\">
               <Reveal>
                 <Card className="relative overflow-hidden border-primary/25 bg-background/70 p-6 shadow-lg animate-fade-slide">
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-accent/10 to-transparent" aria-hidden />
@@ -467,9 +467,9 @@ export default function HowItWorks() {
               </Reveal>
             </div>
 
-            <div className="mt-12 relative">
+            <div className="mt-8 sm:mt-12 relative">
               <div className="absolute -inset-6 bg-gradient-to-r from-primary/20 via-accent/20 to-primary/20 blur-3xl opacity-30 animate-pulse-slow" aria-hidden />
-              <div className="relative flex flex-wrap items-center justify-between gap-6 rounded-3xl border-2 border-primary/30 bg-gradient-to-br from-primary/10 via-card/80 to-accent/10 p-8 shadow-2xl backdrop-blur-xl">
+              <div className="relative flex flex-wrap items-center justify-between gap-4 sm:gap-6 rounded-3xl border-2 border-primary/30 bg-gradient-to-br from-primary/10 via-card/80 to-accent/10 p-4 sm:p-6 md:p-8 shadow-2xl backdrop-blur-xl">
                 <div className="flex-1">
                   <h3 className="font-headline text-3xl text-slate-50">Ready to try it?</h3>
                   <p className="mt-2 text-slate-300 max-w-xl">Request a ride, see who accepts, lock a seat, and confirm when you are sure.</p>

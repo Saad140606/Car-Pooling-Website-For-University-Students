@@ -127,13 +127,13 @@ export default function AdminDashboardPage() {
       </div>
 
       <div className="section-shell py-8 relative z-10">
-        <div className="mb-8 animate-page">
+        <div className="mb-6 sm:mb-8 animate-page">
           <h1 className="text-4xl font-headline font-bold text-slate-50 mb-2">Admin Dashboard</h1>
           <p className="text-slate-300">Manage reports, messages, and user moderation</p>
         </div>
 
         <DebugPanel />
-        <section className="mb-12 animate-slide-in-down" style={{ animationDelay: '0.1s' }}>
+        <section className="mb-8 sm:mb-12 animate-slide-in-down" style={{ animationDelay: '0.1s' }}>
           <div className="mb-6">
             <h2 className="text-2xl font-headline font-bold text-slate-50 mb-1">Reported Issues</h2>
             <p className="text-slate-400 text-sm">User reports and policy violations</p>

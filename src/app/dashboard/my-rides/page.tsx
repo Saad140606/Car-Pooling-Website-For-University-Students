@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { Check, MapPin, X, Trash } from 'lucide-react';
+import { Check, MapPin, X, Trash, CheckCircle2, Clock } from 'lucide-react';
 import { useCollection as useBookingCollection } from '@/firebase/firestore/use-collection';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
@@ -17,7 +17,9 @@ import { Ride as RideType, Booking as BookingType } from '@/lib/types';
 import { decodePolyline } from '@/lib/route';
 import MapLeaflet from '@/components/MapLeaflet';
 import ChatButton from '@/components/chat/ChatButton';
+import NotificationBadge from '@/components/NotificationBadge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
+import { useNotifications } from '@/contexts/NotificationContext';
 import React from 'react';
 
 // Fix for default icon not showing in Leaflet
@@ -48,7 +50,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   // can safely list only requests for their ride (rules allow listing here).
   const bookingsQuery = firestore ? query(
     collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
-    where('status', '==', 'pending')
+    where('status', 'in', ['PENDING', 'pending'])
   ) : null;
 
   const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId' });
@@ -82,15 +84,12 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
         const requestDoc = await transaction.get(requestRef);
         if (!requestDoc.exists()) throw new Error('Request no longer exists');
         const requestData = requestDoc.data() as BookingType & { status?: string };
-        if (requestData.status !== 'pending') return;
+        if (!['PENDING', 'pending'].includes(requestData.status)) return;
 
         if (newStatus === 'accepted') {
           const rideDoc = await transaction.get(rideRef);
           if (!rideDoc.exists()) throw new Error('Ride does not exist!');
           const currentRideData = rideDoc.data() as RideType;
-          const currentAvailable = (currentRideData.availableSeats ?? 0);
-          if (currentAvailable <= 0) throw new Error('No seats available');
-          const newAvailableSeats = currentAvailable - 1;
 
           const driverDetails = currentRideData.driverInfo || null;
           const rideSnapshot = {
@@ -104,7 +103,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             driverInfo: currentRideData.driverInfo,
           } as Partial<RideType>;
 
-          // Create booking doc only when accepted
+          // Create booking doc with 'accepted' status (not confirmed yet)
           const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
           const chatId = booking.id;
           const chatRef2 = doc(firestore, `universities/${university}/chats`, chatId);
@@ -129,7 +128,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
           transaction.set(chatRef2, chatData);
           transaction.set(bookingRef, bookingPayload);
           transaction.update(requestRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
-          transaction.update(rideRef, { availableSeats: newAvailableSeats, ...(newAvailableSeats === 0 && { status: 'full' }) });
+          // DO NOT reduce seats here - only reduce when passenger confirms
         } else {
           // For rejects: update request status only. Do not create a booking.
           transaction.update(requestRef, { status: newStatus });
@@ -167,17 +166,17 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   };
 
   if (loading) return <div className="space-y-2 mt-4"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>;
-  if (!bookings || bookings.length === 0) return <p className="text-muted-foreground text-sm mt-4">No pending requests.</p>
+  if (!bookings || bookings.length === 0) return <p className="text-slate-400 text-sm mt-4">No pending requests.</p>
 
   return (
     <div className="mt-4 space-y-3">
-      <h4 className="font-semibold">Booking Requests</h4>
+      <h4 className="font-semibold text-slate-200">Booking Requests</h4>
       {shownBookings.map((booking: any) => (
-        <div key={booking.id} className="flex items-center justify-between p-3 bg-secondary rounded-lg">
+        <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-800/40 backdrop-blur-sm rounded-lg">
           <div>
-            <p className="font-medium">{booking.passengerDetails?.fullName}</p>
+            <p className="font-medium text-slate-100">{booking.passengerDetails?.fullName}</p>
             {booking.passengerDetails?.phone ? (
-              <p className="text-sm text-muted-foreground">{booking.passengerDetails.phone}</p>
+              <p className="text-sm text-slate-300">{booking.passengerDetails.phone}</p>
             ) : null}
              {booking.pickupPlaceName ? (
               <p className="text-xs text-accent flex items-center mt-1">
@@ -206,17 +205,18 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
 function MyRideCard({ ride, university } : { ride: RideType, university: string }) {
     const firestore = useFirestore();
     const { user, data: userData } = useUser();
+    const { getUnreadForRide } = useNotifications();
 
     const acceptedBookingsQuery = firestore ? query(
         collection(firestore, `universities/${university}/bookings`),
         where('rideId', '==', ride.id),
-        where('status', '==', 'accepted')
+        where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED'])
     ) : null;
     const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery);
 
     const pendingRequestsQuery = firestore ? query(
       collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
-      where('status', '==', 'pending')
+      where('status', 'in', ['PENDING', 'pending'])
     ) : null;
     const { data: pendingRequests } = useBookingCollection<BookingType>(pendingRequestsQuery);
 
@@ -330,7 +330,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     }; 
 
     return (
-        <Card className="p-3">
+        <Card className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative">
             <CardHeader className="p-0 mb-2">
               <div className="flex justify-between items-start gap-2 min-w-0">
                   <div className="min-w-0 flex-1">
@@ -371,36 +371,114 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                 )}
               </div>
 
-              <BookingRequests ride={ride} university={university} onProcessed={(bookingId, status) => {
-                if (status === 'accepted') {
-                  setAvailableSeats((s) => Math.max(0, s - 1));
-                }
-              }} />
+              <BookingRequests ride={ride} university={university} />
 
-              {/* Accepted Passengers: show denormalized passenger & ride details so driver can contact and verify pickups */}
-              {acceptedBookings && acceptedBookings.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  <h4 className="font-semibold text-sm">Accepted Passengers</h4>
-                  {acceptedBookings.map((b) => (
-                    <div key={b.id} className="p-2 bg-secondary rounded-md text-sm flex items-start justify-between">
-                      <div className="min-w-0">
-                        <div className="font-medium text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
-                        <div className="text-xs text-slate-300 truncate">{b.passengerDetails?.fullName ? '' : ''}</div>
-                        <div className="text-xs text-accent mt-1">
-                          {(b as any).pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
+              {/* Confirmed Passengers: passengers who clicked Confirm Ride */}
+              {acceptedBookings && acceptedBookings.filter(b => b.status === 'CONFIRMED').length > 0 && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-2 relative">
+                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    <h4 className="font-bold text-sm text-white">Confirmed Passengers</h4>
+                    <Badge className="bg-green-600/80 text-white text-xs py-0.5 px-2">{acceptedBookings.filter(b => b.status === 'CONFIRMED').length}</Badge>
+                    {getUnreadForRide(ride.id) > 0 && (
+                      <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
+                    )}
+                  </div>
+                  {acceptedBookings.filter(b => b.status === 'CONFIRMED').map((b) => (
+                    <div key={b.id} className="p-4 bg-gradient-to-br from-green-900/20 to-slate-900/50 rounded-lg border border-green-700/50 hover:border-green-600/70 transition-all duration-200">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                            <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
+                            <Badge className="bg-green-600/80 text-white text-[10px] py-0 px-1.5">Confirmed</Badge>
+                          </div>
+                          <div className="space-y-2 text-xs text-slate-400">
+                            <div className="flex items-start gap-2">
+                              <MapPin className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                              <span className="text-slate-300 line-clamp-2">
+                                {(b as any).pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 ml-5">
+                              <span className="text-slate-400">Price: </span>
+                              <span className="font-semibold text-primary">PKR {(b.ride as any)?.price ?? (b as any).price ?? ride.price}</span>
+                            </div>
+                            <div className="flex items-center gap-2 ml-5 text-slate-500">
+                              <Clock className="h-3.5 w-3.5" />
+                              <span>{new Date((b.ride?.departureTime?.seconds ?? ride.departureTime.seconds) * 1000).toLocaleString('en-US', { 
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-400 mt-1">Price: PKR {(b.ride as any)?.price ?? (b as any).price ?? ride.price}</div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        {(b.passengerDetails as any)?.phone ? (
-                          <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-[0.72rem] px-2 py-1 rounded bg-primary/90 text-primary-foreground">Call</a>
-                        ) : null}
-                        <div className="mt-2 flex flex-col items-end gap-2">
+                        <div className="flex flex-col gap-2 flex-shrink-0">
+                          {(b.passengerDetails as any)?.phone ? (
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-colors">Call</a>
+                          ) : null}
                           {((b as any).chatId || b.id) ? (
                             <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
                           ) : null}
                         </div>
-                        <div className="text-[0.7rem] text-slate-400">{new Date((b.ride?.departureTime?.seconds ?? ride.departureTime.seconds) * 1000).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Pending Confirmation: accepted but not yet confirmed */}
+              {acceptedBookings && acceptedBookings.filter(b => b.status === 'accepted').length > 0 && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-2 relative">
+                    <Clock className="h-5 w-5 text-amber-500" />
+                    <h4 className="font-bold text-sm text-white">Pending Confirmation</h4>
+                    <Badge className="bg-amber-600/80 text-white text-xs py-0.5 px-2">{acceptedBookings.filter(b => b.status === 'accepted').length}</Badge>
+                    {getUnreadForRide(ride.id) > 0 && (
+                      <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
+                    )}
+                  </div>
+                  {acceptedBookings.filter(b => b.status === 'accepted').map((b) => (
+                    <div key={b.id} className="p-4 bg-gradient-to-br from-slate-800/50 to-slate-900/50 rounded-lg border border-slate-700 hover:border-slate-600 transition-all duration-200">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                            <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
+                            <Badge className="bg-amber-600/80 text-white text-[10px] py-0 px-1.5">Awaiting Confirmation</Badge>
+                          </div>
+                          <div className="space-y-2 text-xs text-slate-400">
+                            <div className="flex items-start gap-2">
+                              <MapPin className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                              <span className="text-slate-300 line-clamp-2">
+                                {(b as any).pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 ml-5">
+                              <span className="text-slate-400">Price: </span>
+                              <span className="font-semibold text-primary">PKR {(b.ride as any)?.price ?? (b as any).price ?? ride.price}</span>
+                            </div>
+                            <div className="flex items-center gap-2 ml-5 text-slate-500">
+                              <Clock className="h-3.5 w-3.5" />
+                              <span>{new Date((b.ride?.departureTime?.seconds ?? ride.departureTime.seconds) * 1000).toLocaleString('en-US', { 
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 flex-shrink-0">
+                          {(b.passengerDetails as any)?.phone ? (
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-colors">Call</a>
+                          ) : null}
+                          {((b as any).chatId || b.id) ? (
+                            <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -452,30 +530,69 @@ export default function MyRidesPage() {
   const { data: rides, loading: ridesLoading } = useCollection<RideType>(ridesQuery);
   const loading = userLoading || ridesLoading;
 
+  // Filter out rides that are 12+ hours past departure (should be auto-deleted)
+  const filteredRides = rides?.filter((ride) => {
+    if (!ride.departureTime) return true;
+    const departureMs = ride.departureTime.seconds * 1000;
+    const now = Date.now();
+    const twelveHoursMs = 12 * 60 * 60 * 1000;
+    // Hide rides that are more than 12 hours past departure
+    return (now - departureMs) < twelveHoursMs;
+  }) || [];
+
   if (loading) {
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        </div>
       </div>
     );
   }
 
-  if (!rides || rides.length === 0) {
+  if (!filteredRides || filteredRides.length === 0) {
     return (
-      <div className="text-center">
-        <h2 className="text-2xl font-bold">No Rides Offered</h2>
-        <p className="text-muted-foreground">You have not offered any rides yet.</p>
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold text-slate-50">No Rides Offered</h2>
+            <p className="text-slate-300">You have not offered any rides yet.</p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div>
-      <h1 className="text-3xl font-headline font-bold mb-6">My Offered Rides</h1>
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {rides
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+      {/* Floating background orbs */}
+      <div className="fixed inset-0 -z-10 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+        <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+      </div>
+
+      <div className="section-shell py-8 relative z-10">
+        <div className="mb-8 animate-page">
+          <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Offered Rides</h1>
+          <p className="text-slate-300">Track and manage your active ride offers</p>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        {filteredRides
           .sort((a: RideType, b: RideType) => {
             const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt as any)?.toMillis?.() ?? 0;
             const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt as any)?.toMillis?.() ?? 0;
@@ -484,6 +601,7 @@ export default function MyRidesPage() {
           .map((ride: RideType) => (
             <MyRideCard key={ride.id} ride={ride} university={userData!.university} />
           ))}
+        </div>
       </div>
     </div>
   );

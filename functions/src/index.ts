@@ -42,6 +42,106 @@ export const expireRides = functions.pubsub
     return null;
   });
 
+/**
+ * Scheduled function that permanently deletes expired rides 12 hours after departure.
+ * Also deletes related requests, bookings, chats and call signaling docs to avoid orphans.
+ */
+export const deleteExpiredRides = functions.pubsub
+  .schedule('every 10 minutes')
+  .onRun(async () => {
+    const now = admin.firestore.Timestamp.now();
+    // 12 hours in milliseconds
+    const twelveHoursMs = 12 * 60 * 60 * 1000;
+    const cutoffDate = new Date(now.toDate().getTime() - twelveHoursMs);
+    const cutoff = admin.firestore.Timestamp.fromDate(cutoffDate);
+
+    console.log('DeleteExpiredRides job running at', now.toDate().toISOString(), 'cutoff:', cutoff.toDate().toISOString());
+
+    const univDocs = await db.collection('universities').listDocuments();
+    let totalDeleted = 0;
+
+    for (const univDocRef of univDocs) {
+      // Select rides that are expired and at least 12h past departure
+      const q = db.collection(`${univDocRef.path}/rides`)
+        .where('status', '==', 'expired')
+        .where('departureTime', '<=', cutoff)
+        .limit(500);
+
+      const snap = await q.get();
+      if (snap.empty) continue;
+
+      for (const rideDoc of snap.docs) {
+        const rideId = rideDoc.id;
+        const univId = univDocRef.id;
+        console.log(`[deleteExpiredRides] Cleaning ride ${rideId} @ ${univId}`);
+
+        try {
+          // Delete bookings referencing this ride; triggers chat cleanup via cleanupChatOnBookingDelete
+          const bookingsQuery = db.collection(`universities/${univId}/bookings`).where('rideId', '==', rideId).limit(1000);
+          const bookingsSnap = await bookingsQuery.get();
+          if (!bookingsSnap.empty) {
+            const batch = db.batch();
+            bookingsSnap.forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+            console.log(`[deleteExpiredRides] Deleted ${bookingsSnap.size} bookings for ride ${rideId}`);
+          }
+
+          // Delete ride requests subcollection
+          try {
+            const reqsSnap = await db.collection(`universities/${univId}/rides/${rideId}/requests`).get();
+            if (!reqsSnap.empty) {
+              const batch = db.batch();
+              reqsSnap.forEach((d) => batch.delete(d.ref));
+              await batch.commit();
+              console.log(`[deleteExpiredRides] Deleted ${reqsSnap.size} requests for ride ${rideId}`);
+            }
+          } catch (e) {
+            console.warn(`[deleteExpiredRides] Failed to read/delete requests for ride ${rideId}`, e);
+          }
+
+          // Delete university-scoped chats linked by rideId (best-effort)
+          try {
+            const chatsSnap = await db.collection(`universities/${univId}/chats`).where('rideId', '==', rideId).get();
+            if (!chatsSnap.empty) {
+              const batch = db.batch();
+              for (const c of chatsSnap.docs) {
+                const chatId = c.id;
+                const messagesSnap = await db.collection(`universities/${univId}/chats/${chatId}/messages`).get();
+                messagesSnap.forEach((m) => batch.delete(m.ref));
+                batch.delete(c.ref);
+                // Also remove any call signaling docs tied to chatId
+                try {
+                  const callerCands = await db.collection(`universities/${univId}/calls/${chatId}/callerCandidates`).get();
+                  const calleeCands = await db.collection(`universities/${univId}/calls/${chatId}/calleeCandidates`).get();
+                  callerCands.forEach((d) => batch.delete(d.ref));
+                  calleeCands.forEach((d) => batch.delete(d.ref));
+                  batch.delete(db.doc(`universities/${univId}/calls/${chatId}`));
+                } catch (err) {
+                  console.warn('[deleteExpiredRides] Failed to cleanup call docs for chat', chatId, err);
+                }
+              }
+              await batch.commit();
+              console.log(`[deleteExpiredRides] Deleted ${chatsSnap.size} chats/messages for ride ${rideId}`);
+            }
+          } catch (e) {
+            console.warn(`[deleteExpiredRides] Failed to read/delete chats for ride ${rideId}`, e);
+          }
+
+          // Finally delete the ride document itself
+          await rideDoc.ref.delete();
+          totalDeleted++;
+        } catch (err) {
+          console.error(`[deleteExpiredRides] Error deleting ride ${rideId}:`, err);
+        }
+      }
+
+      console.log(`[deleteExpiredRides] University ${univDocRef.id}: processed ${snap.size} rides`);
+    }
+
+    console.log('DeleteExpiredRides job finished. Total rides deleted:', totalDeleted);
+    return null;
+  });
+
 
   /**
    * Booking deleted -> clean up associated chat and messages (best-effort).
@@ -208,14 +308,93 @@ export const expireRides = functions.pubsub
   }
 
   /**
+   * Request lifecycle notifications
+   */
+  export const notifyOnRequestAccepted = functions.firestore
+    .document('universities/{univ}/rides/{rideId}/requests/{requestId}')
+    .onUpdate(async (change, ctx) => {
+      const before = change.before.data() as any;
+      const after = change.after.data() as any;
+      if (!before || !after) return null;
+      if (before.status === after.status) return null;
+      
+      try {
+        const passengerId = after.passengerId;
+        const driverId = after.driverId;
+        
+        if (after.status === 'ACCEPTED' && passengerId) {
+          await createAndSendNotification(passengerId, {
+            title: 'Request Accepted! ✅',
+            body: 'Driver accepted your ride request. Confirm within 5 minutes.',
+            data: { type: 'request_accepted', requestId: ctx.params.requestId, rideId: ctx.params.rideId }
+          }, { excludeSender: driverId });
+        }
+        
+        if (after.status === 'CONFIRMED' && driverId) {
+          await createAndSendNotification(driverId, {
+            title: 'Ride Confirmed! 🎉',
+            body: 'Passenger confirmed the ride. You can now chat.',
+            data: { type: 'request_confirmed', requestId: ctx.params.requestId, rideId: ctx.params.rideId }
+          }, { excludeSender: passengerId });
+        }
+        
+        if (after.status === 'EXPIRED' && passengerId) {
+          await createAndSendNotification(passengerId, {
+            title: 'Request Expired ⏰',
+            body: 'You did not confirm in time. The request has expired.',
+            data: { type: 'request_expired', requestId: ctx.params.requestId, rideId: ctx.params.rideId }
+          });
+        }
+        
+        if (after.status === 'CANCELLED') {
+          const cancelledBy = after.cancelledBy;
+          const isLateCancellation = after.isLateCancellation;
+          
+          if (cancelledBy === passengerId && driverId) {
+            await createAndSendNotification(driverId, {
+              title: isLateCancellation ? 'Ride Cancelled (Late) ❌' : 'Request Cancelled',
+              body: 'Passenger cancelled the ride request.',
+              data: { type: 'request_cancelled', requestId: ctx.params.requestId, rideId: ctx.params.rideId }
+            });
+          } else if (cancelledBy === driverId && passengerId) {
+            await createAndSendNotification(passengerId, {
+              title: 'Ride Cancelled ❌',
+              body: 'Driver cancelled the ride. Please find another ride.',
+              data: { type: 'request_cancelled', requestId: ctx.params.requestId, rideId: ctx.params.rideId }
+            });
+          }
+        }
+        
+        if (after.status === 'AUTO_CANCELLED' && passengerId) {
+          await createAndSendNotification(passengerId, {
+            title: 'Other Requests Cancelled',
+            body: 'Your other pending requests were auto-cancelled after confirmation.',
+            data: { type: 'request_auto_cancelled', requestId: ctx.params.requestId }
+          });
+        }
+        
+        if (after.status === 'REJECTED' && passengerId) {
+          await createAndSendNotification(passengerId, {
+            title: 'Request Declined',
+            body: 'Driver declined your ride request.',
+            data: { type: 'request_rejected', requestId: ctx.params.requestId, rideId: ctx.params.rideId }
+          });
+        }
+      } catch (err) {
+        console.error('notifyOnRequestAccepted error', err);
+      }
+      return null;
+    });
+
+  /**
    * Booking request created under ride requests -> notify ride owner
    */
   export const notifyOnBookingRequest = functions.firestore
     .document('universities/{univ}/rides/{rideId}/requests/{requestId}')
     .onCreate(async (snap, ctx) => {
       const data = snap.data() as any;
-      const univ = ctx.params.univ as string;
       const rideId = ctx.params.rideId as string;
+      const univ = ctx.params.univ as string;
       try {
         const rideRef = db.doc(`universities/${univ}/rides/${rideId}`);
         const rideSnap = await rideRef.get();
@@ -243,7 +422,6 @@ export const expireRides = functions.pubsub
     .document('universities/{univ}/bookings/{bookingId}')
     .onCreate(async (snap, ctx) => {
       const data = snap.data() as any;
-      const univ = ctx.params.univ as string;
       try {
         const passenger = data?.passengerId as string | undefined;
         const driverId = data?.driverId as string | undefined;
@@ -298,6 +476,133 @@ export const expireRides = functions.pubsub
       return null;
     });
 
+  /**
+   * Scheduled job: expire ACCEPTED requests based on smart timer logic
+   * - Short timer (urgent): expire if confirmDeadline passed and reminders sent
+   * - Medium timer: expire if confirmDeadline passed
+   * - No timer: never auto-expire, only on manual expiry or when very close to pickup
+   * Releases reservedSeats on the related ride.
+   */
+  export const expireAcceptedRequests = functions.pubsub
+    .schedule('every 2 minutes')
+    .onRun(async () => {
+      const now = admin.firestore.Timestamp.now();
+      const nowMs = now.toMillis();
+      const univDocs = await db.collection('universities').listDocuments();
+      
+      for (const univ of univDocs) {
+        const ridesSnap = await db.collection(`${univ.path}/rides`).get();
+        
+        for (const rideDoc of ridesSnap.docs) {
+          const ride = rideDoc.data() as any;
+          const departureTimeMs = ride.departureTime?.seconds
+            ? ride.departureTime.seconds * 1000
+            : (ride.departureTime ? new Date(ride.departureTime).getTime() : null);
+
+          // Get all ACCEPTED requests with confirmDeadline passed
+          const reqSnap = await db.collection(`${rideDoc.ref.path}/requests`)
+            .where('status', '==', 'ACCEPTED')
+            .where('confirmDeadline', '<=', now)
+            .limit(500)
+            .get();
+            
+          if (reqSnap.empty) continue;
+          
+          const batch = db.batch();
+          let decrement = 0;
+          
+          for (const reqDoc of reqSnap.docs) {
+            const request = reqDoc.data() as any;
+            const timerType = request.timerType as string; // 'short', 'medium', 'none'
+            const confirmLater = request.confirmLater as boolean;
+            const minutesUntilPickup = departureTimeMs 
+              ? (departureTimeMs - nowMs) / (60 * 1000)
+              : 0;
+            
+            // For timerType 'none' (future/tomorrow rides), only expire if very close to pickup (10 min or less)
+            if (timerType === 'none' && minutesUntilPickup > 10) {
+              continue; // Don't expire yet, keep seat locked
+            }
+            
+            // For confirmLater, only expire if we've sent reminder and pickup is imminent
+            if (confirmLater && minutesUntilPickup > 5) {
+              continue; // Don't expire yet
+            }
+            
+            // Otherwise, expire the request
+            batch.update(reqDoc.ref, { 
+              status: 'EXPIRED', 
+              expiredAt: admin.firestore.Timestamp.now(),
+              expirationReason: confirmLater 
+                ? 'Did not confirm after reminder' 
+                : (timerType === 'short' ? 'Confirmation timer expired' : 'Pickup time approaching')
+            });
+            decrement += 1;
+          }
+          
+          if (decrement > 0) {
+            const r = rideDoc.ref;
+            const rs = (rideDoc.data()?.reservedSeats ?? 0) as number;
+            batch.update(r, { reservedSeats: Math.max(0, rs - decrement) });
+          }
+          
+          await batch.commit();
+        }
+      }
+      return null;
+    });
+
+  /**
+   * When a request is confirmed, auto-cancel other requests of the same passenger for the same tripKey.
+   * This function is best-effort and complements server APIs.
+   */
+  export const onRequestConfirmAutoCancelOthers = functions.firestore
+    .document('universities/{univ}/rides/{rideId}/requests/{requestId}')
+    .onUpdate(async (change, ctx) => {
+      const before = change.before.data() as any;
+      const after = change.after.data() as any;
+      if (!before || !after) return null;
+      if (before.status === after.status) return null;
+      if (after.status !== 'CONFIRMED') return null;
+      // const univ = ctx.params.univ as string; // not used
+      // const rideId = ctx.params.rideId as string; // not used
+      const passenger = after.passengerId as string | undefined;
+      const tripKey = after.tripKey as string | undefined;
+      if (!passenger || !tripKey) return null;
+      try {
+        const cg = await db.collectionGroup('requests')
+          .where('passengerId', '==', passenger)
+          .where('tripKey', '==', tripKey)
+          .get();
+        const batch = db.batch();
+        const ridesToAdjust: Record<string, number> = {};
+        cg.forEach((d) => {
+          // skip the confirmed one
+          if (d.ref.path === change.after.ref.path) return;
+          const data = d.data() as any;
+          if (data.status === 'PENDING' || data.status === 'ACCEPTED') {
+            batch.update(d.ref, { status: 'AUTO_CANCELLED', autoCancelledAt: admin.firestore.FieldValue.serverTimestamp() });
+            if (data.status === 'ACCEPTED') {
+              const rideRef = d.ref.parent.parent!; // ride doc
+              ridesToAdjust[rideRef.path] = (ridesToAdjust[rideRef.path] || 0) + 1;
+            }
+          }
+        });
+        // release reserved seats on affected rides
+        for (const path of Object.keys(ridesToAdjust)) {
+          const rref = db.doc(path);
+          const snap = await rref.get();
+          if (snap.exists) {
+            const current = (snap.data()?.reservedSeats ?? 0) as number;
+            batch.update(rref, { reservedSeats: Math.max(0, current - (ridesToAdjust[path] || 0)) });
+          }
+        }
+        await batch.commit();
+      } catch (err) {
+        console.error('Auto-cancel others error', err);
+      }
+      return null;
+    });
   /**
    * Ride updates: cancelled, completed, availableSeats changes -> notify passengers
    */
@@ -465,7 +770,7 @@ export const expireRides = functions.pubsub
 export const cleanupChatsOnRideUpdate = functions.firestore
   .document('universities/{univ}/rides/{rideId}')
   .onUpdate(async (change, ctx) => {
-    const before = change.before.data();
+    // const before = change.before.data(); // not used
     const after = change.after.data();
     if (!after) return null;
 
@@ -505,8 +810,98 @@ export const cleanupChatsOnRideUpdate = functions.firestore
   });
 
 
-/**
- * Firestore trigger: when a call document is created under
+/** * Scheduled job: Send smart reminders for ACCEPTED requests
+ * - If rider chose "confirm later", remind them before pickup
+ * - For urgent rides, remind after 1 minute if not confirmed yet
+ * Runs every 1 minute
+ */
+export const sendAcceptanceReminders = functions.pubsub
+  .schedule('every 1 minutes')
+  .onRun(async () => {
+    const now = admin.firestore.Timestamp.now();
+    const nowMs = now.toMillis();
+    const univDocs = await db.collection('universities').listDocuments();
+
+    for (const univ of univDocs) {
+      const ridesSnap = await db.collection(`${univ.path}/rides`).get();
+      
+      for (const rideDoc of ridesSnap.docs) {
+        const ride = rideDoc.data() as any;
+        const departureTimeMs = ride.departureTime?.seconds
+          ? ride.departureTime.seconds * 1000
+          : (ride.departureTime ? new Date(ride.departureTime).getTime() : null);
+
+        // Query all ACCEPTED requests
+        const reqSnap = await db.collection(`${rideDoc.ref.path}/requests`)
+          .where('status', '==', 'ACCEPTED')
+          .limit(500)
+          .get();
+
+        for (const reqDoc of reqSnap.docs) {
+          const request = reqDoc.data() as any;
+          const passengerId = request.passengerId;
+          const remindersCount = (request.remindersCount ?? 0) as number;
+          const timerType = request.timerType as string; // 'short', 'medium', 'none'
+          const confirmLater = request.confirmLater as boolean;
+          const acceptedAtMs = request.acceptedAt?.toMillis?.() ?? nowMs;
+
+          if (!passengerId || !departureTimeMs) continue;
+
+          // Skip if already confirmed
+          if (request.status !== 'ACCEPTED') continue;
+
+          // For "confirm later" requests, send reminder 30 minutes before pickup
+          if (confirmLater) {
+            const minutesUntilPickup = (departureTimeMs - nowMs) / (60 * 1000);
+            if (minutesUntilPickup > 0 && minutesUntilPickup <= 30 && minutesUntilPickup > 29) {
+              // Send reminder
+              await createAndSendNotification(passengerId, {
+                title: 'Time to Confirm! ⏰',
+                body: `Driver ${ride.driverInfo?.fullName || 'is'} waiting. Confirm your ride in the app.`,
+                data: { 
+                  type: 'confirm_reminder', 
+                  requestId: reqDoc.id, 
+                  rideId: rideDoc.id,
+                  minutesUntilPickup: Math.floor(minutesUntilPickup)
+                }
+              });
+
+              // Increment reminder count
+              await db.doc(`${univ.path}/rides/${rideDoc.id}/requests/${reqDoc.id}`).update({
+                remindersCount: remindersCount + 1,
+                lastReminderAt: admin.firestore.Timestamp.now(),
+              });
+            }
+          } else if (timerType === 'short') {
+            // For urgent (short timer) rides, send reminder if 1+ minute has passed and not confirmed
+            const secondsSinceAccepted = (nowMs - acceptedAtMs) / 1000;
+            if (secondsSinceAccepted > 60 && remindersCount < 2) {
+              await createAndSendNotification(passengerId, {
+                title: 'Confirm ASAP! ⏱️',
+                body: `Driver ${ride.driverInfo?.fullName || 'is'} waiting. Your ride starts soon!`,
+                data: { 
+                  type: 'confirm_urgent_reminder', 
+                  requestId: reqDoc.id, 
+                  rideId: rideDoc.id
+                }
+              });
+
+              // Increment reminder count
+              await db.doc(`${univ.path}/rides/${rideDoc.id}/requests/${reqDoc.id}`).update({
+                remindersCount: remindersCount + 1,
+                lastReminderAt: admin.firestore.Timestamp.now(),
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  });
+
+
+/** * Firestore trigger: when a call document is created under
  * `universities/{univ}/calls/{chatId}`, send an FCM push notification to the
  * other chat participant(s) so they are alerted even if not currently in the chat.
  */

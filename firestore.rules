@@ -84,22 +84,34 @@ service cloud.firestore {
           && request.resource.data.availableSeats is int
           && request.resource.data.createdAt is timestamp;
 
+        // Allow full update/delete for creators and admins
         allow update, delete: if isAdmin() || (isAuth() && resource.data.createdBy == request.auth.uid);
+        
+        // Allow passengers to update ONLY confirmedPassengers, availableSeats, and status (for ride confirmation)
+        allow update: if isAuth() 
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedPassengers', 'availableSeats', 'status', 'updatedAt'])
+          && request.resource.data.confirmedPassengers.toSet().difference(resource.data.get('confirmedPassengers', []).toSet()).hasOnly([request.auth.uid])
+          && request.resource.data.availableSeats == resource.data.availableSeats - 1;
 
         // Requests for a ride
         match /requests/{requestId} {
+          // Riders create their own request docs
           allow create: if isAuth() && request.resource.data.passengerId == request.auth.uid;
 
-          // Allow read if: admin, or user is the passenger, or user is the driver/creator of the ride
+          // Allow read if: admin, or user is the passenger, or user is the driver/creator of the ride.
+          // Important: when the document doesn't exist yet, resource.data.* is undefined which would
+          // normally deny. Allow riders to probe their own deterministic requestId `${rideId}_${uid}`
+          // so the app can check existence without a permission-denied error.
           allow get: if isAdmin() || (isAuth() && (
             (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
             || (resource.data.driverId is string && resource.data.driverId == request.auth.uid)
+            || requestId.matches('^' + rideId + '_' + request.auth.uid + '$')
           ));
 
-          // Allow authenticated users to list requests. Client-side code validates ride ownership.
-          // This prevents permission errors when users try to view requests for their rides.
+          // Listing is allowed to authenticated users. UI filters ensure proper scoping.
           allow list: if isAdmin() || isAuth();
 
+          // Updates are allowed to the passenger or the driver (or admins).
           allow update, delete: if isAdmin() || (isAuth() && (
             (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
             || (resource.data.driverId is string && resource.data.driverId == request.auth.uid)
@@ -115,6 +127,14 @@ service cloud.firestore {
         // UI queries are filtered by passengerId/driverId; this prevents permission-denied loops seen in production.
         allow list: if isAdmin() || isAuth();
         allow update, delete: if isAdmin() || (isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid));
+      }
+
+      // Notifications
+      match /notifications/{notificationId} {
+        allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+        allow get, list: if isAuth() && resource.data.userId == request.auth.uid;
+        allow update: if isAuth() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+        allow delete: if isAuth() && resource.data.userId == request.auth.uid;
       }
 
       // Chats and messages
@@ -138,14 +158,20 @@ service cloud.firestore {
           allow create: if isAuth() && request.resource.data.senderId == request.auth.uid && (
             (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
             || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
-          ) && request.resource.data.timestamp is timestamp && (request.resource.data.type in ['text','image','video','emoji']);
+          ) && request.resource.data.timestamp is timestamp && (request.resource.data.type in ['text','image','video','emoji','voice']);
 
           allow list, get: if isAuth() && (
             (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
             || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
           );
 
-          allow update, delete: if false;
+          // Allow participants to update seenBy array only
+          allow update: if isAuth() && (
+            (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
+            || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
+          ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenBy']);
+
+          allow delete: if false;
         }
       }
     }

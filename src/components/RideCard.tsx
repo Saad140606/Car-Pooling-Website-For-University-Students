@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { Calendar, Users, Search, Clock, MapPin } from 'lucide-react';
 import { VerificationBadge } from './VerificationBadge';
@@ -25,6 +25,7 @@ type RideCardProps = {
   disabledReason?: string;
   className?: string;
   driverVerified?: boolean;
+  statusLabel?: string;
 };
 
 export default function RideCard({
@@ -47,8 +48,9 @@ export default function RideCard({
   disabledReason,
   className,
   driverVerified,
-}: RideCardProps) {
-  const dateText = useMemo(() => {
+  statusLabel,
+}: RideCardProps) {  const [isHovering, setIsHovering] = useState(false);
+    const dateText = useMemo(() => {
     const dt = typeof rideDateTime === 'string' ? new Date(rideDateTime) : rideDateTime;
     return dt.toLocaleString('en-US', {
       weekday: 'short',
@@ -70,24 +72,32 @@ export default function RideCard({
     <div
       className={clsx(
         'w-full min-w-0 rounded-xl bg-[#1e2340] border border-white/10 shadow-lg text-white flex flex-col overflow-hidden h-full',
+        'animate-bounce-in transition-all duration-300 hover-card-lift hover:shadow-2xl hover:shadow-primary/20',
+        'hover:border-primary/40',
         className
       )}
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
     >
       <div className="p-2 md:p-2.5 space-y-1.5 relative">
 
         {/* Price and University */}
-        <div className="absolute top-2 right-2 flex items-center gap-1.5">
-          {university && !hideUniversity && <span className="bg-white/10 px-1.5 py-0.5 rounded text-[0.65rem] font-semibold">{university.toUpperCase()}</span>}
-          <span className="bg-[#3b4cca] px-2 py-0.5 rounded-full text-[0.7rem] font-semibold">
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 transition-all duration-300" style={{
+          transform: isHovering ? 'scale(1.05)' : 'scale(1)',
+        }}>
+          {university && !hideUniversity && <span className="bg-white/10 hover-lift-sm px-1.5 py-0.5 rounded text-[0.65rem] font-semibold transition-all">{university.toUpperCase()}</span>}
+          <span className="bg-[#3b4cca] hover-glow px-2 py-0.5 rounded-full text-[0.7rem] font-semibold transition-all">
             PKR {price}
           </span>
         </div>
 
         {/* Provider */}
-        <div className="space-y-1">
-          <div className="text-xs text-white/60">Provider</div>
+        <div className="space-y-1 animate-scale-up">
+          <div className="text-xs text-white/60 transition-colors duration-300" style={{
+            color: isHovering ? 'rgb(255 255 255 / 0.8)' : 'rgb(255 255 255 / 0.6)',
+          }}>Provider</div>
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-6 h-6 rounded-full bg-[#334155] flex items-center justify-center font-semibold text-[0.6rem] flex-shrink-0">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center font-semibold text-[0.6rem] flex-shrink-0 hover-lift-sm transition-all">
               {initials}
             </div>
             <div className="min-w-0 flex items-center gap-1">
@@ -95,6 +105,9 @@ export default function RideCard({
               <VerificationBadge verified={driverVerified} showText={false} size="sm" />
             </div>
           </div>
+          {statusLabel ? (
+            <div className="text-[0.7rem] text-amber-300 font-medium mt-1">{statusLabel}</div>
+          ) : null}
         </div>
 
         {/* Locations */}
@@ -129,7 +142,7 @@ export default function RideCard({
         {/* Map - clickable */}
         <button
           onClick={onViewRoute}
-          className="relative h-14 md:h-16 rounded-lg overflow-hidden bg-[#0f172a] w-full cursor-pointer hover:opacity-90 transition"
+          className="relative h-14 md:h-16 rounded-lg overflow-hidden bg-[#0f172a] w-full cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-primary/20 group"
         >
           <img
             src="/map.png"
@@ -137,8 +150,8 @@ export default function RideCard({
             className="w-full h-full object-cover"
           />
 
-          <span className="absolute bottom-1 right-1 bg-black/60 px-1.5 py-0.5 rounded text-[0.65rem] flex items-center gap-0.5 pointer-events-none">
-            <Search className="w-2.5 h-2.5" />
+          <span className="absolute bottom-1 right-1 bg-black/80 backdrop-blur px-1.5 py-0.5 rounded text-[0.65rem] flex items-center gap-0.5 pointer-events-none transition-all duration-300 group-hover:bg-primary/60 group-hover:scale-110">
+            <Search className="w-2.5 h-2.5 animate-float" />
             View
           </span>
         </button>
@@ -167,11 +180,11 @@ export default function RideCard({
         </div>
 
         {/* Bottom Buttons */}
-        <div className="flex items-center justify-between gap-2 mt-1.5">
+        <div className="flex items-center justify-between gap-2 mt-1.5 animate-slide-and-fade">
           <div className="flex gap-1.5">
             <button
               onClick={onViewStops}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 hover:bg-white/15 text-xs"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 hover:shadow-md text-xs transition-all duration-200 btn-press"
             >
               <Search className="w-3 h-3" />
               View Stops
@@ -180,7 +193,7 @@ export default function RideCard({
 
           <button
             onClick={(e) => { if (!disabled && onBook) onBook(); }}
-            className={`rounded-md py-1 text-xs font-semibold flex items-center justify-center gap-1 ${disabled ? 'bg-white/10 text-white/60 cursor-not-allowed' : 'bg-[#3b4cca] hover:bg-[#2f3db8] text-white'}`}
+            className={`rounded-md py-1 text-xs font-semibold flex items-center justify-center gap-1 transition-all duration-200 btn-press ${disabled ? 'bg-white/10 text-white/60 cursor-not-allowed' : 'bg-gradient-to-r from-[#3b4cca] to-primary hover:shadow-lg hover:shadow-primary/40 text-white hover-glow'}`}
             style={{ minWidth: '6rem' }}
             title={disabled && disabledReason ? disabledReason : undefined}
           >

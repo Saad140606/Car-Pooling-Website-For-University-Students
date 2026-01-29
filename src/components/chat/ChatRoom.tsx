@@ -165,7 +165,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
       // Ensure pc is not closed before adding tracks
-      if (pc.signalingState === 'closed') {
+      if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') {
         console.warn('PC closed before adding local tracks');
         setInCall(false);
         await cleanupCall();
@@ -173,7 +173,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       }
       stream.getTracks().forEach(track => {
         try {
-          if (pc.signalingState === 'closed') throw new Error('pc closed');
+          if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') throw new Error('pc not usable');
           pc.addTrack(track, stream as MediaStream);
         } catch (e) {
           console.warn('failed to add track', e);
@@ -201,7 +201,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     // create offer
     try {
-      if (pc.signalingState === 'closed') {
+      if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') {
         console.warn('PC closed before creating offer');
         setInCall(false);
         await cleanupCall();
@@ -278,7 +278,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       const constraints: any = { audio: true }; if (data.mode === 'video') constraints.video = true;
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
-      if (pc.signalingState === 'closed') {
+      if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') {
         console.warn('PC closed before adding local tracks (answer)');
         setInCall(false);
         await cleanupCall();
@@ -286,7 +286,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       }
       stream.getTracks().forEach(track => {
         try {
-          if (pc.signalingState === 'closed') throw new Error('pc closed');
+          if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') throw new Error('pc not usable');
           pc.addTrack(track, stream as MediaStream);
         } catch (e) {
           console.warn('failed to add track (answer)', e);
@@ -357,31 +357,94 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   }
 
   return (
-    <div className="flex flex-col h-[70vh]">
+    <div className="flex flex-col h-[70vh] sm:h-[75vh] md:h-[70vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-700/50">
       <ChatHeader meta={meta} onStartCall={(mode) => startCall(mode)} onHangup={() => hangup()} calling={inCall} />
+      
       {/* Hidden audio element for local/remote streams */}
       <audio autoPlay ref={(el) => { if (el && remoteStream) { try { el.srcObject = remoteStream; } catch (_) {} } }} />
-      <div ref={listRef} className="flex-1 overflow-auto p-4 space-y-3 bg-card">
-        {loading ? <div className="text-sm text-muted-foreground">Loading...</div> : messages.map((m) => (
-          <MessageBubble key={m.id} message={m} isOwn={m.senderId === user?.uid} />
-        ))}
+      
+      {/* Messages area with gradient background */}
+      <div className="relative flex-1 overflow-hidden">
+        {/* Animated background */}
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-900/95 to-slate-950">
+          <div className="absolute inset-0 opacity-30">
+            <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-pulse" />
+            <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-accent/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+          </div>
+        </div>
+        
+        <div ref={listRef} className="relative h-full overflow-auto p-3 sm:p-4 space-y-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+          {loading ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="flex flex-col items-center gap-3">
+                <div className="h-10 w-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                <div className="text-sm text-slate-400 animate-pulse">Loading messages...</div>
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-2 animate-in fade-in duration-500">
+                <div className="text-4xl mb-2">💬</div>
+                <div className="text-sm text-slate-400">No messages yet</div>
+                <div className="text-xs text-slate-500">Start the conversation!</div>
+              </div>
+            </div>
+          ) : (
+            messages.map((m) => {
+              const senderName = m.senderId !== user?.uid ? (meta?.passengerDetails?.fullName || meta?.providerDetails?.fullName || meta?.driverDetails?.fullName || 'Student') : null;
+              const initials = senderName?.split(' ').map((n: string) => n[0]).slice(0, 2).join('') || '?';
+              return (
+                <MessageBubble 
+                  key={m.id} 
+                  message={m} 
+                  isOwn={m.senderId === user?.uid}
+                  senderName={senderName}
+                  senderInitials={initials}
+                />
+              );
+            })
+          )}
+        </div>
       </div>
+      
+      {/* Incoming call overlay */}
       {incomingCall && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="bg-black/80 text-white p-4 rounded-md pointer-events-auto flex items-center gap-4">
-            <div>
-              <div className="font-semibold">Incoming {incomingCall.mode} call</div>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 backdrop-blur-sm bg-black/50">
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 text-white p-6 sm:p-8 rounded-2xl shadow-2xl pointer-events-auto flex flex-col sm:flex-row items-center gap-6 mx-4 max-w-md border border-slate-700 animate-in zoom-in duration-300">
+            <div className="text-center sm:text-left space-y-2">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-white text-xl font-bold mx-auto sm:mx-0 animate-pulse">
+                📞
+              </div>
+              <div className="font-semibold text-xl">Incoming {incomingCall.mode} call</div>
               <div className="text-sm text-slate-300">From: {incomingCall.caller}</div>
             </div>
-            <div className="flex gap-2">
-              <button className="px-3 py-2 bg-green-500 rounded-md" onClick={async () => { setIncomingCall(null); await answerCall(); }}>Accept</button>
-              <button className="px-3 py-2 bg-red-500 rounded-md" onClick={async () => { setIncomingCall(null); try { if (callDocRef.current) await deleteDoc(callDocRef.current); } catch(_) {} }}>Reject</button>
+            <div className="flex gap-3">
+              <button 
+                className="px-6 py-3 bg-gradient-to-br from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg" 
+                onClick={async () => { setIncomingCall(null); await answerCall(); }}
+              >
+                Accept
+              </button>
+              <button 
+                className="px-6 py-3 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg" 
+                onClick={async () => { setIncomingCall(null); try { if (callDocRef.current) await deleteDoc(callDocRef.current); } catch(_) {} }}
+              >
+                Reject
+              </button>
             </div>
           </div>
         </div>
       )}
-      <div className="p-3 border-t border-border bg-surface">
-        <MessageInput onSend={async (text) => await sendMessage({ type: 'text', content: text })} onTyping={(v) => setTyping(Boolean(v))} onSendMedia={async (mediaUrl, type) => await sendMessage({ type, mediaUrl })} disabled={meta?.status !== 'active' || accessible === false} />
+      
+      {/* Input area */}
+      <div className="p-3 sm:p-4 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-md border-t border-slate-700/50">
+        <MessageInput 
+          onSend={async (text) => await sendMessage({ type: 'text', content: text })} 
+          onTyping={(v) => setTyping(Boolean(v))} 
+          onSendMedia={async (mediaUrl, type) => await sendMessage({ type, mediaUrl })}
+          onSendVoice={async (mediaUrl) => await sendMessage({ type: 'audio', mediaUrl })}
+          disabled={meta?.status !== 'active' || accessible !== true} 
+        />
       </div>
     </div>
   );

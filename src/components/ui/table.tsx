@@ -105,6 +105,21 @@ const TableCaption = React.forwardRef<
 ))
 TableCaption.displayName = "TableCaption"
 
+// DataGrid component for table display
+const DataGrid = React.forwardRef<
+  HTMLTableElement,
+  React.HTMLAttributes<HTMLTableElement> & {
+    columns?: Array<{ key: string; label: string }>;
+    data?: Array<any>;
+    pageSize?: number;
+    selectable?: boolean;
+    onSelectionChange?: (selected: any[]) => void;
+  }
+>(({ columns, data, pageSize, selectable, onSelectionChange, ...props }, ref) => (
+  <Table ref={ref} {...props} />
+))
+DataGrid.displayName = "DataGrid"
+
 export {
   Table,
   TableHeader,
@@ -114,4 +129,5 @@ export {
   TableRow,
   TableCell,
   TableCaption,
+  DataGrid,
 }

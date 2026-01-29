@@ -3,18 +3,19 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from 'next/navigation';
 import { useUser, useAuth, useFirestore } from '@/firebase';
-import { doc, setDoc, getDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, deleteDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { getUniversityShortLabel } from '@/lib/universities';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
-import { updateProfile, reauthenticateWithCredential, EmailAuthProvider, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
+import { updateProfile, reauthenticateWithCredential, EmailAuthProvider, updatePassword } from 'firebase/auth';
 import { Mail, CheckCircle2, InfoIcon } from 'lucide-react';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getUniversityEmailDomain, isValidUniversityEmail, getVerificationEmailMessage } from '@/lib/university-verification';
+import { checkPasswordChangeRateLimit, updatePasswordChangeTracking, formatResetDate } from '@/lib/passwordRateLimit';
 
 export default function AccountPage() {
   const router = useRouter();
@@ -43,6 +44,13 @@ export default function AccountPage() {
   const [newPassword, setNewPassword] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
+  const [passwordRateLimit, setPasswordRateLimit] = useState<{
+    allowed: boolean;
+    count: number;
+    remaining: number;
+    resetDate: Date | null;
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     if (userData) {
@@ -59,6 +67,17 @@ export default function AccountPage() {
       setFullName(user.displayName);
     }
   }, [userData, user]);
+
+  // Check password change rate limit on mount and userData change
+  useEffect(() => {
+    if (user && firestore && userData) {
+      const rateLimitCheck = checkPasswordChangeRateLimit({
+        passwordChangeCount: userData.passwordChangeCount,
+        passwordChangeWindowStart: userData.passwordChangeWindowStart,
+      });
+      setPasswordRateLimit(rateLimitCheck);
+    }
+  }, [user, firestore, userData]);
 
   useEffect(() => {
     if (!verificationSent || timeLeft <= 0) return;
@@ -176,8 +195,52 @@ export default function AccountPage() {
 
       // If reauthentication succeeded, proceed to update the password and handle errors separately
       try {
+        // Check password change rate limit (3 changes per 14 days)
+        if (!firestore || !user) {
+          throw new Error('Firestore or user not available');
+        }
+
+        const userRef = doc(firestore, 'users', user.uid);
+        const userDoc = await getDoc(userRef);
+        const currentUserData = userDoc.data();
+        
+        const rateLimitCheck = checkPasswordChangeRateLimit({
+          passwordChangeCount: currentUserData?.passwordChangeCount,
+          passwordChangeWindowStart: currentUserData?.passwordChangeWindowStart,
+        });
+
+        if (!rateLimitCheck.allowed) {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Password change limit reached', 
+            description: rateLimitCheck.message,
+          });
+          setPasswordRateLimit(rateLimitCheck);
+          return;
+        }
+        
+        // Update password in Firebase Auth
         await updatePassword(auth.currentUser, newPassword);
-        toast({ title: 'Password changed', description: 'Your password was updated successfully.' });
+        
+        // Update rate limit tracking (atomic operation)
+        const updatedTracking = updatePasswordChangeTracking({
+          passwordChangeCount: currentUserData?.passwordChangeCount,
+          passwordChangeWindowStart: currentUserData?.passwordChangeWindowStart,
+        });
+
+        await updateDoc(userRef, {
+          passwordChangeCount: updatedTracking.passwordChangeCount,
+          passwordChangeWindowStart: updatedTracking.passwordChangeWindowStart,
+        });
+
+        // Update local rate limit state
+        const newRateLimitCheck = checkPasswordChangeRateLimit(updatedTracking);
+        setPasswordRateLimit(newRateLimitCheck);
+        
+        toast({ 
+          title: 'Password changed', 
+          description: `Your password was updated successfully. ${newRateLimitCheck.message}`,
+        });
         setShowPwForm(false);
         setCurrentPassword('');
         setNewPassword('');
@@ -200,18 +263,52 @@ export default function AccountPage() {
       toast({ variant: 'destructive', title: 'Error', description: 'No email available for your account.' });
       return;
     }
+
+    // Check rate limit before sending
+    if (passwordRateLimit && !passwordRateLimit.allowed) {
+      toast({ 
+        variant: 'destructive', 
+        title: 'Password change limit reached', 
+        description: passwordRateLimit.message 
+      });
+      return;
+    }
+
     setResetLoading(true);
     try {
-      await sendPasswordResetEmail(auth, auth.currentUser.email!);
-      toast({ title: 'Reset email sent', description: 'Check your email to reset your password.' });
-      setShowPwForm(false);
-    } catch (e: any) {
-      console.error('Send reset email failed:', e);
-      if (e?.code === 'auth/invalid-email' || e?.code === 'auth/user-not-found') {
-        toast({ variant: 'destructive', title: 'Could not send reset email', description: 'No account found for this email. Try signing out and signing in with the correct account.' });
-      } else {
-        toast({ variant: 'destructive', title: 'Could not send reset email', description: e?.message || 'Please try again.' });
+      // Send OTP to the user's email
+      const response = await fetch('/api/send-password-reset-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: auth.currentUser.email }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        // Check if it's a rate limit error
+        if (response.status === 429 && data.rateLimitInfo) {
+          const rateLimitCheck = checkPasswordChangeRateLimit({
+            passwordChangeCount: data.rateLimitInfo.count,
+            passwordChangeWindowStart: data.rateLimitInfo.resetDate,
+          });
+          setPasswordRateLimit(rateLimitCheck);
+        }
+        throw new Error(data.error || 'Failed to send reset code');
       }
+
+      toast({ title: 'Verification code sent', description: 'Check your email for the verification code.' });
+      setShowPwForm(false);
+      
+      // Navigate to the OTP verification page
+      router.push(`/auth/reset-password/verify-code?email=${encodeURIComponent(auth.currentUser.email)}`);
+    } catch (e: any) {
+      console.error('Send reset code failed:', e);
+      toast({ 
+        variant: 'destructive', 
+        title: 'Could not send verification code', 
+        description: e?.message || 'Please try again.' 
+      });
     } finally {
       setResetLoading(false);
     }
@@ -326,61 +423,62 @@ export default function AccountPage() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <Card>
+      <Card className="bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg shadow-primary/5">
         <CardHeader>
-          <CardTitle>Your Account</CardTitle>
+          <CardTitle className="text-2xl font-headline text-slate-50">Your Account</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSave} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Email</label>
-              <Input value={user?.email ?? ''} disabled />
-              <p className="text-xs text-muted-foreground mt-1">Email cannot be changed.</p>
+              <label className="block text-sm font-medium text-slate-200 mb-1">Email</label>
+              <Input value={user?.email ?? ''} disabled className="border-border/40 bg-background/60" />
+              <p className="text-xs text-slate-400 mt-1">Email cannot be changed.</p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">University</label>
-              <Input value={userData?.university ? getUniversityShortLabel(userData?.university) : (userData?.university || 'Unknown')} disabled />
-              <p className="text-xs text-muted-foreground mt-1">Your university is set when you registered via the Select University page and cannot be changed here.</p>
+              <label className="block text-sm font-medium text-slate-200 mb-1">University</label>
+              <Input value={userData?.university ? getUniversityShortLabel(userData?.university) : (userData?.university || 'Unknown')} disabled className="border-border/40 bg-background/60" />
+              <p className="text-xs text-slate-400 mt-1">Your university is set when you registered via the Select University page and cannot be changed here.</p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Full Name</label>
-              <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+              <label className="block text-sm font-medium text-slate-200 mb-1">Full Name</label>
+              <Input value={fullName} onChange={(e) => setFullName(e.target.value)} className="border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50" />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Gender</label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">Gender</label>
                 <Select value={gender} onValueChange={(v) => setGender(v as any)} disabled={Boolean(userData?.gender)}>
-                  <SelectTrigger className="w-full"><SelectValue placeholder="Select Gender" /></SelectTrigger>
+                  <SelectTrigger className="w-full border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"><SelectValue placeholder="Select Gender" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="male">Male</SelectItem>
                     <SelectItem value="female">Female</SelectItem>
                   </SelectContent>
                 </Select>
-                {userData?.gender && <p className="text-xs text-muted-foreground mt-1">Your gender is locked and cannot be changed.</p>}
+                {userData?.gender && <p className="text-xs text-slate-400 mt-1">Your gender is locked and cannot be changed.</p>}
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Contact Number</label>
+              <label className="block text-sm font-medium text-slate-200 mb-1">Contact Number</label>
               <Input
                 value={contactNumber}
                 onChange={(e) => setContactNumber(e.target.value.replace(/\D/g, '').slice(0, 11))}
                 maxLength={11}
                 inputMode="numeric"
                 pattern="\d*"
+                className="border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"
               />
             </div>
 
             {/* University Email Verification Section */}
-            <div className="border-t pt-4 mt-4">
+            <div className="border-t border-slate-800/50 pt-4 mt-4">
               <div className="flex items-start gap-2 mb-3">
-                <InfoIcon className="h-4 w-4 text-blue-500 mt-0.5" />
+                <InfoIcon className="h-4 w-4 text-blue-400 mt-0.5" />
                 <div>
-                  <h3 className="text-sm font-semibold">Verify Your University Email (Optional)</h3>
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <h3 className="text-sm font-semibold text-slate-50">Verify Your University Email (Optional)</h3>
+                  <p className="text-xs text-slate-400 mt-1">
                     Verify your university email to gain a trusted badge and increase your acceptance rate.
                   </p>
                 </div>
@@ -400,7 +498,7 @@ export default function AccountPage() {
               ) : (
                 <div className="space-y-3">
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium">
+                    <label className="block text-sm font-medium text-slate-200">
                       University Email {userData?.university && `(${getUniversityEmailDomain(userData.university)})`}
                     </label>
                     <div className="flex gap-2">
@@ -410,7 +508,7 @@ export default function AccountPage() {
                         value={universityEmail}
                         onChange={(e) => setUniversityEmail(e.target.value)}
                         disabled={!userData?.university || sendingVerification}
-                        className="flex-1"
+                        className="flex-1 border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"
                       />
                       <Button
                         type="button"
@@ -445,7 +543,7 @@ export default function AccountPage() {
                               maxLength={6}
                               placeholder="123456"
                               inputMode="numeric"
-                              className="w-32"
+                              className="w-32 border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"
                             />
                             <Button type="button" size="sm" onClick={handleVerifyOtp} disabled={verifying || otp.length !== 6}>
                               {verifying ? 'Verifying...' : 'Verify'}
@@ -461,7 +559,7 @@ export default function AccountPage() {
             </div>
 
             <div className="flex gap-2">
-              <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</Button>
+              <Button type="submit" disabled={saving} className="shadow-lg shadow-primary/30 hover:shadow-primary/50 btn-press">{saving ? 'Saving...' : 'Save Changes'}</Button>
               <Button variant="ghost" onClick={() => {
                 setFullName(userData?.fullName || '');
                 setGender(userData?.gender || undefined);
@@ -472,24 +570,72 @@ export default function AccountPage() {
           </form>
 
           {showPwForm && (
-            <div className="mt-6">
-              <h3 className="font-medium">Change Password</h3>
+            <div className="mt-6 border-t border-slate-800/50 pt-6">
+              <h3 className="font-medium text-slate-50 mb-3">Change Password</h3>
+
+              {/* Rate Limit Information */}
+              {passwordRateLimit && !passwordRateLimit.allowed && (
+                <Alert variant="destructive" className="mb-4 border-destructive/50 bg-destructive/10">
+                  <AlertDescription className="text-destructive text-sm">
+                    <strong>⏰ Password Change Limit Reached</strong>
+                    <br />
+                    {passwordRateLimit.message}
+                    {passwordRateLimit.resetDate && (
+                      <>
+                        <br />
+                        Next available: <strong>{formatResetDate(passwordRateLimit.resetDate)}</strong>
+                      </>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {passwordRateLimit && passwordRateLimit.allowed && passwordRateLimit.count > 0 && (
+                <Alert className="mb-4 border-blue-500/50 bg-blue-500/10">
+                  <AlertDescription className="text-blue-700 dark:text-blue-300 text-sm">
+                    <InfoIcon className="h-4 w-4 inline mr-1" />
+                    <strong>Password Changes:</strong> {passwordRateLimit.remaining} of 3 remaining in this 14-day period.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <form onSubmit={handleChangePassword} className="space-y-3 mt-3">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Current Password</label>
-                  <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+                  <label className="block text-sm font-medium text-slate-200 mb-1">Current Password</label>
+                  <Input 
+                    type="password" 
+                    value={currentPassword} 
+                    onChange={(e) => setCurrentPassword(e.target.value)} 
+                    className="border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50" 
+                    disabled={!passwordRateLimit?.allowed}
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">New Password</label>
-                  <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                  <label className="block text-sm font-medium text-slate-200 mb-1">New Password</label>
+                  <Input 
+                    type="password" 
+                    value={newPassword} 
+                    onChange={(e) => setNewPassword(e.target.value)} 
+                    className="border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"
+                    disabled={!passwordRateLimit?.allowed}
+                  />
                   {currentPassword && newPassword && currentPassword === newPassword && (
                     <p className="text-xs text-destructive mt-1">New password must be different from your current password.</p>
                   )}
                 </div>
                 <div className="flex gap-2 items-center">
-                  <Button type="submit" disabled={pwLoading || (currentPassword.trim() !== '' && newPassword.trim() !== '' && currentPassword === newPassword)}>{pwLoading ? 'Updating...' : 'Update Password'}</Button>
+                  <Button 
+                    type="submit" 
+                    disabled={pwLoading || !passwordRateLimit?.allowed || (currentPassword.trim() !== '' && newPassword.trim() !== '' && currentPassword === newPassword)}
+                  >
+                    {pwLoading ? 'Updating...' : 'Update Password'}
+                  </Button>
                   <Button variant="ghost" onClick={() => setShowPwForm(false)}>Cancel</Button>
-                  <Button variant="outline" onClick={handleSendResetEmail} disabled={resetLoading || !auth?.currentUser?.email}>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleSendResetEmail} 
+                    disabled={resetLoading || !auth?.currentUser?.email || !passwordRateLimit?.allowed}
+                  >
                     {resetLoading ? 'Sending...' : 'Send reset email'}
                   </Button>
                 </div>

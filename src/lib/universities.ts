@@ -14,3 +14,12 @@ export function getUniversityShortLabel(university?: string | null) {
   if (university === 'fast') return 'FAST University';
   return university;
 }
+
+// Heuristic: detect if a free-text location string refers to a known university
+export function detectUniversityFromString(value?: string | null): 'ned' | 'fast' | null {
+  if (!value) return null;
+  const s = value.toLowerCase();
+  if (s.includes('ned') || s.includes('ned uet')) return 'ned';
+  if (s.includes('fast') || s.includes('national university of computer')) return 'fast';
+  return null;
+}

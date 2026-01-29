@@ -13,6 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { VerificationBadge } from '@/components/VerificationBadge';
+import { useNotifications } from '@/contexts/NotificationContext';
+import NotificationBadge from '@/components/NotificationBadge';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -27,6 +29,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const { user, loading: userLoading, data: userData, initialized } = useUser();
   const { isAdmin, loading: adminLoading } = useIsAdmin();
+  const { unreadCount } = useNotifications();
   const auth = useAuth();
   const router = useRouter();
 
@@ -58,7 +61,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (userLoading || !user) {
     return (
       <div className="flex min-h-screen">
-        <aside className="hidden md:flex w-64 flex-col border-r p-4 space-y-4">
+        <aside className="hidden md:flex w-64 flex-col p-4 space-y-4">
           <Logo />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
@@ -76,124 +79,167 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside className="hidden md:flex w-64 flex-col border-r border-border">
-        <div className="p-4 border-b border-border">
+    <div className="flex min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise relative">
+      {/* Animated background effects */}
+      <div className="fixed inset-0 -z-10">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+        <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '2s' }} />
+      </div>
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex w-64 flex-col bg-gradient-to-b from-slate-950/80 via-slate-900/60 to-slate-950/80 backdrop-blur-md sticky top-0 h-screen shadow-lg shadow-primary/5">
+        <div className="p-4 animate-slide-in-down">
           <Logo />
         </div>
-        <nav className="flex-grow p-4">
+        
+        <nav className="flex-grow p-4 space-y-2 overflow-y-auto">
+          <p className="text-xs uppercase tracking-[0.1em] text-slate-500 px-3 py-2 font-semibold">Navigation</p>
           <ul className="space-y-2">
-            {navItems.map((item) => (
-              <li key={item.href}>
-                <Button
-                  asChild
-                  variant={pathname === item.href ? 'secondary' : 'ghost'}
-                  className="w-full justify-start"
-                >
-                  <Link href={item.href}>
-                    <item.icon className="mr-2 h-5 w-5" />
-                    {item.label}
-                  </Link>
-                </Button>
-              </li>
-            ))}
+            {navItems.map((item, idx) => {
+              const isActive = pathname === item.href;
+              return (
+                <li key={item.href} className="animate-slide-in-left" style={{ animationDelay: `${idx * 50}ms` }}>
+                  <Button
+                    asChild
+                    variant={isActive ? 'secondary' : 'ghost'}
+                    className={cn(
+                      'w-full justify-start gap-3 rounded-lg transition-all duration-200 group',
+                      isActive && 'bg-gradient-to-r from-primary/25 to-accent/10 shadow-lg shadow-primary/15 text-primary',
+                      !isActive && 'text-slate-300 hover:text-slate-100 hover:bg-slate-800/40'
+                    )}
+                  >
+                    <Link href={item.href} className="flex items-center gap-3 w-full relative">
+                      <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                      <span className={isActive ? 'font-semibold' : 'font-medium'}>{item.label}</span>
+                      {item.label === 'My Rides' && unreadCount.total > 0 && (
+                        <NotificationBadge count={unreadCount.ride_status + unreadCount.booking} dot className="ml-auto" position="inline" />
+                      )}
+                      {item.label === 'My Bookings' && unreadCount.total > 0 && (
+                        <NotificationBadge count={unreadCount.booking + unreadCount.chat} dot className="ml-auto" position="inline" />
+                      )}
+                    </Link>
+                  </Button>
+                </li>
+              );
+            })}
             {isAdmin && (
-              <li>
+              <li className="animate-slide-in-left" style={{ animationDelay: `${navItems.length * 50}ms` }}>
                 <Button
                   asChild
                   variant={pathname === '/dashboard/admin/support' ? 'secondary' : 'ghost'}
-                  className="w-full justify-start"
+                  className={cn(
+                    'w-full justify-start gap-3 rounded-lg transition-all duration-200 group',
+                    pathname === '/dashboard/admin/support' && 'bg-gradient-to-r from-primary/25 to-accent/10 shadow-lg shadow-primary/15 text-primary',
+                    pathname !== '/dashboard/admin/support' && 'text-slate-300 hover:text-slate-100 hover:bg-slate-800/40'
+                  )}
                 >
-                  <Link href="/dashboard/admin/support">
-                    <Shield className="mr-2 h-5 w-5" />
-                    Admin
+                  <Link href="/dashboard/admin/support" className="flex items-center gap-3 w-full">
+                    <Shield className="h-5 w-5 text-slate-400 group-hover:text-primary transition-all duration-300" />
+                    <span className="font-medium">Admin Panel</span>
                   </Link>
                 </Button>
               </li>
             )}
           </ul>
         </nav>
-        <div className="p-4 border-t border-border">
+
+        {/* User Profile Section */}
+        <div className="p-4 space-y-3 bg-gradient-to-t from-slate-900/40 to-transparent animate-slide-up">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="w-full justify-start">
-                <Avatar className="h-8 w-8 mr-2">
+              <Button variant="ghost" className="w-full justify-start gap-3 rounded-lg hover:bg-slate-800/50 group text-slate-300 transition-all duration-200">
+                <Avatar className="h-10 w-10 flex-shrink-0 border-2 border-primary/40 group-hover:border-primary/60 transition-all duration-200">
                   <AvatarImage src={user.photoURL ?? ''} />
-                  <AvatarFallback>{getInitials(userData?.fullName)}</AvatarFallback>
+                  <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold text-sm">{getInitials(userData?.fullName)}</AvatarFallback>
                 </Avatar>
-                  <div className="flex flex-col items-start flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium">{userData?.fullName}</span>
-                        <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
-                      </div>
-                    <span className="text-xs text-muted-foreground">{user.email}</span>
+                <div className="flex flex-col items-start flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium truncate text-sm">{userData?.fullName}</span>
+                    <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
+                  </div>
+                  <span className="text-xs text-slate-500 truncate">{user.email}</span>
                 </div>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56" align="end" forceMount>
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />                <DropdownMenuItem asChild>
-                  <Link href="/dashboard/account" className="flex items-center">
-                    <User className="mr-2 h-4 w-4" />
-                    <span>Profile</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />                <DropdownMenuItem onClick={handleSignOut}>
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Log out</span>
-                </DropdownMenuItem>
+              <DropdownMenuLabel className="font-semibold">My Account</DropdownMenuLabel>
+              <DropdownMenuSeparator />                
+              <DropdownMenuItem asChild className="rounded-lg">
+                <Link href="/dashboard/account" className="flex items-center cursor-pointer">
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profile Settings</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />                
+              <DropdownMenuItem onClick={handleSignOut} className="rounded-lg text-destructive focus:text-destructive">
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>Log out</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </aside>
 
+      {/* Main Content */}
       <div className="flex flex-1 flex-col">
-        <header className="md:hidden flex items-center justify-between p-4 border-b">
+        {/* Mobile Header */}
+        <header className="md:hidden flex items-center justify-between p-4 bg-gradient-to-r from-slate-950/80 via-slate-900/60 to-slate-950/80 backdrop-blur-md sticky top-0 z-40 animate-slide-down shadow-lg shadow-primary/5">
           <Logo />
-           <DropdownMenu>
+          <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Avatar className="h-9 w-9">
+              <Avatar className="h-10 w-10 cursor-pointer border-2 border-primary/40 hover:border-primary/60 transition-all duration-200">
                 <AvatarImage src={user.photoURL ?? ''} />
-                <AvatarFallback>{getInitials(userData?.fullName)}</AvatarFallback>
+                <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold text-sm">{getInitials(userData?.fullName)}</AvatarFallback>
               </Avatar>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-                <DropdownMenuLabel className="flex items-center gap-2">
-                  <span>{userData?.fullName}</span>
-                  <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
-                </DropdownMenuLabel>
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/account" className={cn(pathname === '/dashboard/account' && "bg-secondary")}>
+            <DropdownMenuContent align="end" className="rounded-xl">
+              <DropdownMenuLabel className="flex items-center gap-2">
+                <span>{userData?.fullName}</span>
+                <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild className="rounded-lg">
+                <Link href="/dashboard/account" className={cn("cursor-pointer", pathname === '/dashboard/account' && "bg-muted")}>
                   <User className="mr-2 h-4 w-4" />
                   Profile
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-               {navItems.map((item) => (
-                <DropdownMenuItem key={item.href} asChild>
-                   <Link href={item.href} className={cn(pathname === item.href && "bg-secondary")}>
+              {navItems.map((item) => (
+                <DropdownMenuItem key={item.href} asChild className="rounded-lg">
+                  <Link href={item.href} className={cn("cursor-pointer relative", pathname === item.href && "bg-muted")}>
                     <item.icon className="mr-2 h-4 w-4" />
                     {item.label}
+                    {item.label === 'My Rides' && unreadCount.total > 0 && (
+                      <NotificationBadge count={unreadCount.ride_status + unreadCount.booking} dot className="ml-auto" position="inline" />
+                    )}
+                    {item.label === 'My Bookings' && unreadCount.total > 0 && (
+                      <NotificationBadge count={unreadCount.booking + unreadCount.chat} dot className="ml-auto" position="inline" />
+                    )}
                   </Link>
                 </DropdownMenuItem>
               ))}
               {isAdmin && (
-                <DropdownMenuItem asChild>
-                  <Link href="/dashboard/admin/support" className={cn(pathname === '/dashboard/admin/support' && "bg-secondary")}>
+                <DropdownMenuItem asChild className="rounded-lg">
+                  <Link href="/dashboard/admin/support" className={cn("cursor-pointer", pathname === '/dashboard/admin/support' && "bg-muted")}>
                     <Shield className="mr-2 h-4 w-4" />
                     Admin
                   </Link>
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleSignOut}>
+              <DropdownMenuItem onClick={handleSignOut} className="rounded-lg text-destructive focus:text-destructive cursor-pointer">
                 <LogOut className="mr-2 h-4 w-4" />
                 <span>Log out</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </header>
-        <main className="flex-1 p-4 md:p-8">{children}</main>
+
+        {/* Main Content Area */}
+        <main className="flex-1 px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8 bg-transparent overflow-x-hidden">
+          {children}
+        </main>
       </div>
     </div>
   );

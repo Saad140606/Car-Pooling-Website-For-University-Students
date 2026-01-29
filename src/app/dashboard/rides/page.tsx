@@ -494,14 +494,26 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
       // ignore reverse geocode failures; we'll store coords at minimum
     }
 
+    // Compute tripKey based on departure time (30-minute slot)
+    let tripKey: string | null = null;
+    try {
+      const dep = ride.departureTime?.seconds ? new Date(ride.departureTime.seconds * 1000) : (ride.departureTime ? new Date(ride.departureTime) : null);
+      if (dep) {
+        const slot = Math.floor(dep.getTime() / (30 * 60 * 1000));
+        const day = `${dep.getUTCFullYear()}-${(dep.getUTCMonth()+1).toString().padStart(2,'0')}-${dep.getUTCDate().toString().padStart(2,'0')}`;
+        tripKey = `${day}:${slot}`;
+      }
+    } catch {}
+
     const requestData = {
       rideId: ride.id,
       driverId: ride.driverId,
       passengerId: user.uid,
-      status: 'pending' as 'pending',
+      status: 'PENDING' as any,
       createdAt: serverTimestamp(),
       pickupPoint: { lat: pickupPoint.lat, lng: pickupPoint.lng },
       pickupPlaceName,
+      tripKey,
       passengerDetails: {
         uid: user.uid,
         fullName: userData?.fullName || '',
@@ -524,7 +536,7 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
         const existingRequestDoc = await transaction.get(requestRef);
         if (existingRequestDoc.exists()) {
           const data = existingRequestDoc.data();
-          if (data && data.status && data.status !== 'rejected') {
+          if (data && data.status && !['rejected','REJECTED','cancelled','CANCELLED','expired','EXPIRED','auto_cancelled','AUTO_CANCELLED'].includes((data.status as string))) {
             throw new Error('You have already requested a seat on this ride.');
           }
           // If the existing request was rejected, allow overwriting so the user can request again.
@@ -1000,11 +1012,19 @@ export default function RidesPage() {
   const clearFilters = () => setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: userData?.university || '', direction: 'any' });
 
   return (
-    <div>
-      <div className="flex items-center gap-3 mb-6">
-        {!user && <button onClick={() => router.back()} className="px-3 py-2 rounded-md bg-white/10 hover:bg-white/15 text-sm">← Back</button>}
-        <h1 className="text-3xl font-headline font-bold">Available Rides</h1>
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+      {/* Floating background orbs */}
+      <div className="fixed inset-0 -z-10 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+        <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
       </div>
+
+      <div className="section-shell py-8 relative z-10">
+        <div className="flex items-center gap-3 mb-6 animate-page">
+          {!user && <button onClick={() => router.back()} className="px-3 py-2 rounded-md bg-white/10 hover:bg-white/15 text-sm text-slate-200">← Back</button>}
+          <h1 className="text-3xl font-headline font-bold text-slate-50">Available Rides</h1>
+        </div>
 
       {/* Prompt users with incomplete profiles to complete their profile before booking/creating rides */}
       {user && userData && !hideProfileBanner && !userLoading && !(userData.fullName && userData.gender && userData.university) && (
@@ -1196,11 +1216,12 @@ export default function RidesPage() {
           })}
         </div>
       ) : (
-        <div className="text-center py-16 border-dashed border-2 rounded-lg">
-          <h2 className="text-2xl font-semibold">No Rides Available</h2>
-          <p className="text-muted-foreground mt-2">Check back later for new rides from your university!</p>
+        <div className="text-center py-16 rounded-2xl bg-gradient-to-br from-slate-800/40 via-slate-800/30 to-slate-900/40 backdrop-blur-md shadow-lg shadow-primary/5">
+          <h2 className="text-2xl font-semibold text-slate-50">No Rides Available</h2>
+          <p className="text-slate-400 mt-2">Check back later for new rides from your university!</p>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from '
 import L from 'leaflet';
 import { isPointNearPolyline, haversine, type LatLng } from '@/lib/route';
 import { deduplicateByName } from '@/lib/stopFiltering';
+import { detectUniversityFromString } from '@/lib/universities';
 
 interface Stop {
   id: string;
@@ -31,6 +32,7 @@ interface StopsViewerProps {
   onUpdateStops?: (stops: Stop[]) => Promise<void>;
   triggerText?: string;
   onRequestRide?: () => void;
+  university?: string;  // ===== NEW: Display university name =====
 }
 
 export default function StopsViewer({
@@ -41,8 +43,37 @@ export default function StopsViewer({
   onUpdateStops,
   triggerText = 'View Stops',
   onRequestRide,
+  university,  // ===== NEW: Accept university prop =====
 }: StopsViewerProps) {
-  const [stops, setStops] = useState<Stop[]>(initialStops);
+  // Helper function to get the display university name
+  const getUniversityDisplay = () => {
+    if (university) {
+      return university === 'fast' ? '🏫 FAST University' : university === 'ned' ? '🏫 NED University' : `🏫 ${university}`;
+    }
+    // Try to detect from first stop name
+    if (initialStops.length > 0) {
+      const detectedUni = detectUniversityFromString(initialStops[0].name);
+      if (detectedUni === 'fast') return '🏫 FAST University';
+      if (detectedUni === 'ned') return '🏫 NED University';
+    }
+    return null; // Return null instead of 'Your University'
+  };
+
+  const universityDisplay = getUniversityDisplay();
+
+  // ===== FIX: Deduplicate stops by name to prevent duplicates like 'Shahrah-e-Faisal' appearing twice =====
+  const [stops, setStops] = useState<Stop[]>(() => {
+    // Remove consecutive duplicate names
+    const deduped: Stop[] = [];
+    let lastName = '';
+    for (const stop of initialStops) {
+      if (stop.name !== lastName) {
+        deduped.push(stop);
+        lastName = stop.name;
+      }
+    }
+    return deduped;
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [showAddStop, setShowAddStop] = useState(false);
@@ -170,11 +201,32 @@ export default function StopsViewer({
         order: stops.length,
       };
 
-      // Add the new stop and sort all stops by distance from start
-      const updatedStops = [...stops, newStop].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
-      const sortedStops = updatedStops.map((stop, idx) => ({ ...stop, order: idx }));
+      // Add the new stop between START and END (keep fixed START/END positions)
+      // Find actual START and END markers by type, not just position
+      const startStop = stops.find(s => s.type === 'start' || s.type === 'fixed' && s.order === 0);
+      const endStop = stops.find(s => s.type === 'end' || s.type === 'fixed' && stops.indexOf(s) === stops.length - 1);
       
-      setStops(sortedStops);
+      if (startStop && endStop && stops.length > 1) {
+        // Both START and END exist - insert new stop between them
+        const middleStops = stops.filter(s => s !== startStop && s !== endStop);
+        
+        // Sort middle stops + new stop by distance
+        const stopsToSort = [...middleStops, newStop].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
+        
+        // Reconstruct: [START, ...sorted middle stops, END]
+        const updatedStops = [startStop, ...stopsToSort, endStop];
+        const sortedStops = updatedStops.map((stop, idx) => ({ ...stop, order: idx }));
+        setStops(sortedStops);
+      } else if (stops.length > 0) {
+        // Only START exists or no clear END - add new stop and sort by distance
+        const updatedStops = [...stops, newStop].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
+        const sortedStops = updatedStops.map((stop, idx) => ({ ...stop, order: idx }));
+        setStops(sortedStops);
+      } else {
+        // No stops exist, just add the new stop
+        setStops([{ ...newStop, order: 0 }]);
+      }
+      
       setMapSelectionMode(false);
       setSelectedMapPoint(null);
     } catch (error) {
@@ -236,13 +288,32 @@ export default function StopsViewer({
         order: stops.length,
       };
 
-      // Add the new stop and sort all stops by distance from start
-      const updatedStops = [...stops, newStop].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
+      // Add the new stop between START and END (keep fixed START/END positions)
+      // Find actual START and END markers by type, not just position
+      const startStop = stops.find(s => s.type === 'start' || s.type === 'fixed' && s.order === 0);
+      const endStop = stops.find(s => s.type === 'end' || s.type === 'fixed' && stops.indexOf(s) === stops.length - 1);
       
-      // Update order property after sorting
-      const sortedStops = updatedStops.map((stop, idx) => ({ ...stop, order: idx }));
+      if (startStop && endStop && stops.length > 1) {
+        // Both START and END exist - insert new stop between them
+        const middleStops = stops.filter(s => s !== startStop && s !== endStop);
+        
+        // Sort middle stops + new stop by distance
+        const stopsToSort = [...middleStops, newStop].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
+        
+        // Reconstruct: [START, ...sorted middle stops, END]
+        const updatedStops = [startStop, ...stopsToSort, endStop];
+        const sortedStops = updatedStops.map((stop, idx) => ({ ...stop, order: idx }));
+        setStops(sortedStops);
+      } else if (stops.length > 0) {
+        // Only START exists or no clear END - add new stop and sort by distance
+        const updatedStops = [...stops, newStop].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
+        const sortedStops = updatedStops.map((stop, idx) => ({ ...stop, order: idx }));
+        setStops(sortedStops);
+      } else {
+        // No stops exist, just add the new stop
+        setStops([{ ...newStop, order: 0 }]);
+      }
       
-      setStops(sortedStops);
       setNewStopName('');
       setShowAddStop(false);
     } catch (error) {
@@ -380,7 +451,16 @@ export default function StopsViewer({
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {formatDistance(stop.distanceFromStart)} from start • {stop.type}
+                          {formatDistance(stop.distanceFromStart)} from start
+                          {(isFirstStop || isLastStop) && universityDisplay && (
+                            <React.Fragment key={`uni-display-${stop.id}`}>
+                              {' • '}
+                              <span className="font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded">
+                                {universityDisplay}
+                              </span>
+                            </React.Fragment>
+                          )}
+                          {!isFixedStop && stop.type && ` • ${stop.type}`}
                           {isFixedStop && ' • Fixed'}
                         </div>
                       </div>
@@ -393,7 +473,7 @@ export default function StopsViewer({
                     </Badge>
 
                     {isCreator && !isFixedStop && (
-                      <>
+                      <div className="flex gap-2">
                         <Button
                           size="sm"
                           variant="ghost"
@@ -412,7 +492,7 @@ export default function StopsViewer({
                         >
                           <X className="w-4 h-4 text-destructive" />
                         </Button>
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -578,10 +658,11 @@ export default function StopsViewer({
                 {/* Show route polyline */}
                 {routeCoordinates && routeCoordinates.length > 0 && (
                   <Polyline
+                    key="route-polyline"
                     positions={routeCoordinates.map(c => [c.lat, c.lng])}
-                    color="#ffffff"
-                    weight={2}
-                    opacity={0.9}
+                    color="#87CEEB"
+                    weight={3}
+                    opacity={0.7}
                     dashArray="5,5"
                   />
                 )}
@@ -590,13 +671,21 @@ export default function StopsViewer({
                 {selectedMapPoint && mapSelectionMode && (
                   <Marker
                     position={[selectedMapPoint.lat, selectedMapPoint.lng]}
-                    icon={L.icon({
-                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
-                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                      iconSize: [25, 41],
-                      iconAnchor: [12, 41],
-                      popupAnchor: [1, -34],
-                      shadowSize: [41, 41]
+                    icon={L.divIcon({
+                      className: '',
+                      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="32" height="48">
+                        <defs>
+                          <filter id="shadow-selected" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur stdDeviation="2" />
+                          </filter>
+                        </defs>
+                        <path d="M12 2C8 2 5 5 5 9c0 6 7 25 7 25s7-19 7-25c0-4-3-7-7-7z" fill="#ff9800" stroke="#ffffff" stroke-width="1.5" filter="url(#shadow-selected)" />
+                        <circle cx="12" cy="9" r="3" fill="#ffffff" stroke="#ff9800" stroke-width="1.5" />
+                      </svg>`,
+                      iconSize: [32, 48],
+                      iconAnchor: [16, 48],
+                      popupAnchor: [0, -48],
+                      tooltipAnchor: [0, -48],
                     })}
                   >
                     <Popup>Selected location</Popup>
@@ -607,33 +696,79 @@ export default function StopsViewer({
                   <Marker
                     key={stop.id || `marker-${idx}`}
                     position={[stop.lat, stop.lng]}
-                    icon={
-                      stop.isAutoGenerated
-                        ? L.icon({
-                            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-                            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                            iconSize: [25, 41],
-                            iconAnchor: [12, 41],
-                            popupAnchor: [1, -34],
-                            shadowSize: [41, 41]
-                          })
-                        : L.icon({
-                            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-                            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                            iconSize: [25, 41],
-                            iconAnchor: [12, 41],
-                            popupAnchor: [1, -34],
-                            shadowSize: [41, 41]
-                          })
-                    }
+                    icon={L.divIcon({
+                      className: '',
+                      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="32" height="48">
+                        <defs>
+                          <filter id="shadow-${idx}" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur stdDeviation="2" />
+                          </filter>
+                        </defs>
+                        <path d="M12 2C8 2 5 5 5 9c0 6 7 25 7 25s7-19 7-25c0-4-3-7-7-7z" fill="${
+                          idx === 0 ? '#16a34a' :  // Green for START
+                          idx === stops.length - 1 ? '#2563eb' :  // Blue for END
+                          stop.isAutoGenerated ? '#8b5cf6' : '#f59e0b'  // Purple for auto, Amber for custom
+                        }" stroke="#ffffff" stroke-width="1.5" filter="url(#shadow-${idx})" />
+                        <circle cx="12" cy="9" r="2.5" fill="#ffffff" />
+                      </svg>`,
+                      iconSize: [32, 48],
+                      iconAnchor: [16, 48],
+                      popupAnchor: [0, -48],
+                      tooltipAnchor: [0, -48],
+                    })}
                   >
-                    <Popup>{stop.name}</Popup>
+                    <Popup><strong>${stop.name}</strong><br/>${stop.isAutoGenerated ? 'Auto' : 'Custom'}</Popup>
                   </Marker>
                 ))}
               </MapContainer>
             </div>
           )}
-        </div>
+
+          {/* ===== FIX: Show selected point and confirmation buttons when map selection is active =====*/}
+          {mapSelectionMode && selectedMapPoint && selectedPlaceName && (
+            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <div className="text-sm font-semibold mb-2">📍 Selected Location:</div>
+              <div className="text-sm text-blue-900 dark:text-blue-100 mb-3 font-medium">{selectedPlaceName}</div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    // Add the selected point as a new stop
+                    const newStop: Stop = {
+                      id: `stop-${Date.now()}`,
+                      name: selectedPlaceName,
+                      lat: selectedMapPoint.lat,
+                      lng: selectedMapPoint.lng,
+                      distanceFromStart: 0,
+                      type: 'map-selected',
+                      isCustom: true,
+                      isAutoGenerated: false,
+                      order: stops.length,
+                    };
+                    setStops([...stops, newStop]);
+                    setSelectedMapPoint(null);
+                    setSelectedPlaceName(null);
+                    setMapSelectionMode(false);
+                  }}
+                  className="flex-1"
+                >
+                  ✅ Add This Stop
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedMapPoint(null);
+                    setSelectedPlaceName(null);
+                    setMapSelectionMode(false);
+                  }}
+                  className="flex-1"
+                >
+                  ✕ Cancel
+                </Button>
+              </div>
+            </div>
+          )}
 
         {/* Request Ride Button - for non-creators */}
         {!isCreator && onRequestRide && (
@@ -646,6 +781,7 @@ export default function StopsViewer({
             </button>
           </div>
         )}
+        </div>
       </div>
     );
   }
@@ -664,6 +800,7 @@ export default function StopsViewer({
         <DialogHeader>
           <DialogTitle>Route Stops ({stops.length})</DialogTitle>
         </DialogHeader>
+        <p className="sr-only" id="stops-dialog-desc">Stops list and map preview for this route.</p>
 
         <div className="space-y-4">
           {/* Stops List */}
@@ -679,10 +816,10 @@ export default function StopsViewer({
                 const isFixedStop = isFirstStop || isLastStop;
                 
                 return (
-                <div
-                  key={stop.id}
-                  className={`p-3 border rounded-lg flex items-center gap-3 ${isFixedStop ? 'bg-muted/30' : ''}`}
-                >
+                  <div
+                    key={stop.id}
+                    className={`p-3 border rounded-lg flex items-center gap-3 ${isFixedStop ? 'bg-muted/30' : ''}`}
+                  >
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
                     isFixedStop 
                       ? 'bg-amber-500 text-white' 
@@ -721,7 +858,16 @@ export default function StopsViewer({
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {formatDistance(stop.distanceFromStart)} from start • {stop.type}
+                          {formatDistance(stop.distanceFromStart)} from start
+                          {(isFirstStop || isLastStop) && universityDisplay && (
+                            <React.Fragment key={`uni-display-2-${stop.id}`}>
+                              {' • '}
+                              <span className="font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded">
+                                {universityDisplay}
+                              </span>
+                            </React.Fragment>
+                          )}
+                          {!isFixedStop && stop.type && ` • ${stop.type}`}
                           {isFixedStop && ' • Fixed'}
                         </div>
                       </div>
@@ -815,6 +961,50 @@ export default function StopsViewer({
             </div>
           )}
 
+          {/* Selected Location Confirmation - when map selection is active */}
+          {mapSelectionMode && selectedMapPoint && selectedPlaceName && (
+            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4 space-y-3">
+              <div className="text-sm text-blue-900 dark:text-blue-100 mb-3 font-medium">{selectedPlaceName}</div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => {
+                    const newStop = {
+                      id: `stop-${Date.now()}`,
+                      name: selectedPlaceName,
+                      lat: selectedMapPoint.lat,
+                      lng: selectedMapPoint.lng,
+                      distanceFromStart: 0,
+                      type: 'map-selected',
+                      isCustom: true,
+                      isAutoGenerated: false,
+                      order: stops.length,
+                    };
+                    setStops([...stops, newStop]);
+                    setSelectedMapPoint(null);
+                    setSelectedPlaceName(null);
+                    setMapSelectionMode(false);
+                  }}
+                >
+                  ✅ Add This Stop
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedMapPoint(null);
+                    setSelectedPlaceName(null);
+                    setMapSelectionMode(false);
+                  }}
+                  className="flex-1"
+                >
+                  ✕ Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Map Display */}
           {routePolyline && routeCoordinates && routeCoordinates.length > 0 && (
             <div className="border rounded-lg overflow-hidden h-64">
@@ -828,8 +1018,9 @@ export default function StopsViewer({
                 />
                 <Polyline
                   positions={routeCoordinates as L.LatLngExpression[]}
-                  color="#3b82f6"
-                  weight={3}
+                  color="#87CEEB"
+                  weight={4}
+                  opacity={0.8}
                 />
                 <MapClickHandler />
                 {selectedMapPoint && (

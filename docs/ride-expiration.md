@@ -19,5 +19,6 @@ Testing locally
 - Run `node scripts/expire-rides.js` and confirm documents are updated to `status: 'expired'`.
 
 Notes
-- We intentionally update `status` to preserve ride data for drivers (`My Rides`), and we add an `expiredAt` timestamp for auditing.
-- If you prefer automatic deletion instead of marking `expired`, we can change the function to delete documents; marking `expired` is safer.
+- We update `status` to `expired` at departure time and add `expiredAt` for auditing.
+- Automatic deletion runs 12 hours after departure for expired rides, removing related bookings, requests, chats, and call signaling docs.
+- For local testing without the scheduler, run the admin script or invoke a one-off deletion by time range.

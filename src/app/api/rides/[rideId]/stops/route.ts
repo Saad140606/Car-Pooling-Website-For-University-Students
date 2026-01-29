@@ -23,10 +23,10 @@ const db = adminApp ? getFirestore(adminApp) : null;
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { rideId: string } }
+  { params }: { params: Promise<{ rideId: string }> }
 ) {
   try {
-    const { rideId } = params;
+    const { rideId } = await params;
     const { searchParams } = new URL(req.url);
     const university = searchParams.get('university') || 'fast';
 
@@ -59,10 +59,10 @@ export async function GET(
  */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { rideId: string } }
+  { params }: { params: Promise<{ rideId: string }> }
 ) {
   try {
-    const { rideId } = params;
+    const { rideId } = await params;
     const { stops, university = 'fast' } = await req.json();
 
     if (!db) {
@@ -136,10 +136,10 @@ export async function PUT(
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { rideId: string } }
+  { params }: { params: Promise<{ rideId: string }> }
 ) {
   try {
-    const { rideId } = params;
+    const { rideId } = await params;
     const { stop, university = 'fast' } = await req.json();
 
     if (!db) {
@@ -214,10 +214,10 @@ export async function POST(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { rideId: string } }
+  { params }: { params: Promise<{ rideId: string }> }
 ) {
   try {
-    const { rideId } = params;
+    const { rideId } = await params;
     const { searchParams } = new URL(req.url);
     const stopId = searchParams.get('stopId');
     const university = searchParams.get('university') || 'fast';

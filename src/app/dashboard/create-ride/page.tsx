@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { addDoc, collection, serverTimestamp, doc, getDoc, Timestamp } from 'firebase/firestore';
+import * as firestoreNamespace from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
@@ -43,6 +44,16 @@ const rideSchema = z.object({
   message: "Starting location and destination can't be the same.",
   path: ['to'],
 });
+
+type RideFormValues = {
+  from: string;
+  to: string;
+  departureTime: Date;
+  transportMode: 'car' | 'bike';
+  price: number;
+  totalSeats: number;
+  genderAllowed: 'male' | 'female' | 'both';
+};
 
 
 export interface MapComponentRef {
@@ -609,6 +620,12 @@ export default function CreateRidePage() {
 
   const UNI_MAX_RADIUS_METERS = 4000; // allow ~4km radius from campus center
 
+  const getUniversityShortName = () => {
+    const uni = (userData?.university || '').toString().toLowerCase();
+    if (uni === 'ned') return 'NED University';
+    return 'FAST University';
+  };
+
   const getCurrentUniversity = () => {
     const uni = (userData?.university || '').toString().toLowerCase();
     if (uni === 'ned') return NED_UNI;
@@ -637,28 +654,33 @@ export default function CreateRidePage() {
   const applyUniversitySelection = (sel: 'toUni' | 'fromUni') => {
     setUniAuto(sel);
     const uni = getCurrentUniversity();
+    const uniShortName = getUniversityShortName();
     if (sel === 'toUni') {
-      // Set destination to the student's university and clear the starting point (always)
-      if (!form.getValues('to')) form.setValue('to', String(uni.name ?? ''));
+      // Set destination to the student's university (exact coordinates)
+      form.setValue('to', uniShortName);
       setToCoords(uni);
       // Always clear opposite field and coords so switching presets behaves predictably
       form.setValue('from', '');
       setFromCoords(null);
-      const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
-      const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(uni.lat * Math.PI / 180));
+      // Set the map to show the university with a small zoom area
+      const smallRadius = 500; // 500 meters for visualization
+      const deltaLat = smallRadius / 111000;
+      const deltaLng = smallRadius / (111000 * Math.cos(uni.lat * Math.PI / 180));
       const bounds: L.LatLngBoundsExpression = [[uni.lat - deltaLat, uni.lng - deltaLng], [uni.lat + deltaLat, uni.lng + deltaLng]];
-      setPendingSelection?.({ center: [uni.lat, uni.lng], bounds, radius: UNI_MAX_RADIUS_METERS });
+      setPendingSelection?.({ center: [uni.lat, uni.lng], bounds, radius: smallRadius });
     } else if (sel === 'fromUni') {
-      // Set starting point to the student's university and clear the destination (always)
-      if (!form.getValues('from')) form.setValue('from', String(uni.name ?? ''));
+      // Set starting point to the student's university (exact coordinates)
+      form.setValue('from', uniShortName);
       setFromCoords(uni);
       // Always clear opposite field and coords so switching presets behaves predictably
       form.setValue('to', '');
       setToCoords(null);
-      const deltaLat = UNI_MAX_RADIUS_METERS / 111000;
-      const deltaLng = UNI_MAX_RADIUS_METERS / (111000 * Math.cos(uni.lat * Math.PI / 180));
+      // Set the map to show the university with a small zoom area
+      const smallRadius = 500; // 500 meters for visualization
+      const deltaLat = smallRadius / 111000;
+      const deltaLng = smallRadius / (111000 * Math.cos(uni.lat * Math.PI / 180));
       const bounds: L.LatLngBoundsExpression = [[uni.lat - deltaLat, uni.lng - deltaLng], [uni.lat + deltaLat, uni.lng + deltaLng]];
-      setPendingSelection?.({ center: [uni.lat, uni.lng], bounds, radius: UNI_MAX_RADIUS_METERS });
+      setPendingSelection?.({ center: [uni.lat, uni.lng], bounds, radius: smallRadius });
     }
   };
 
@@ -697,9 +719,9 @@ export default function CreateRidePage() {
     }
   }, [pendingSelection, mapRef.current]);
 
-  const form = useForm<z.infer<typeof rideSchema>>({
+  const form = useForm({
     resolver: zodResolver(rideSchema),
-    defaultValues: { from: '', to: '', price: 200, totalSeats: 4, genderAllowed: 'both', transportMode: 'car' },
+    defaultValues: { from: '', to: '', departureTime: undefined as any, price: 200, totalSeats: 4, genderAllowed: 'both', transportMode: 'car' },
   });
   
   const transportMode = form.watch('transportMode');
@@ -887,6 +909,7 @@ export default function CreateRidePage() {
         if (stops && stops.length > 0) {
           const finalStops = stops;
           const currentUni = getCurrentUniversity();
+          const uniShortName = getUniversityShortName();
           
           // Pre-set university names for first and last stops if they're at university location
           const initialStops = finalStops.map((stop, idx) => {
@@ -894,8 +917,7 @@ export default function CreateRidePage() {
             if (isFirstOrLast) {
               const isUniStop = distanceInMeters(currentUni, { lat: stop.lat, lng: stop.lng }) < 500;
               if (isUniStop) {
-                const uniName = userData?.university === 'ned' ? 'NED University, Karachi' : 'FAST University, Karachi';
-                return { ...stop, name: uniName };
+                return { ...stop, name: uniShortName };
               }
             }
             return stop;
@@ -918,10 +940,9 @@ export default function CreateRidePage() {
                   const isUniStop = distanceInMeters(currentUni, { lat: stop.lat, lng: stop.lng }) < 500;
                   
                   if (isUniStop) {
-                    // Use university name for stops at university
-                    const uniName = userData?.university === 'ned' ? 'NED University, Karachi' : 'FAST University, Karachi';
-                    console.log(`Stop ${idx + 1} is at university:`, uniName);
-                    return { idx, name: uniName };
+                    // Use short university name for stops at university
+                    console.log(`Stop ${idx + 1} is at university:`, uniShortName);
+                    return { idx, name: uniShortName };
                   }
                   
                   // Add staggered delay to avoid rate limiting
@@ -1125,7 +1146,42 @@ export default function CreateRidePage() {
     setQuery({ field: '', text: '' });
   };
   
-  const onSubmit = async (values: z.infer<typeof rideSchema>) => {
+  const onSubmit = async (values: RideFormValues) => {
+    // Check if stops are available
+    if (!generatedStops || generatedStops.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing Stops',
+        description: 'Please wait for route stops to load before creating a ride.',
+      });
+      return;
+    }
+
+    // Validate that university selections use exact coordinates
+    const currentUni = getCurrentUniversity();
+    const fromDistance = fromCoords ? distanceInMeters(currentUni, fromCoords) : Infinity;
+    const toDistance = toCoords ? distanceInMeters(currentUni, toCoords) : Infinity;
+    
+    // If user selected fromUni, ensure from position is at exact university
+    if (uniAuto === 'fromUni' && fromDistance > 100) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid Starting Location',
+        description: 'Starting location must be at the exact university center. Please select the university location.',
+      });
+      return;
+    }
+    
+    // If user selected toUni, ensure to position is at exact university
+    if (uniAuto === 'toUni' && toDistance > 100) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid Destination',
+        description: 'Destination must be at the exact university center. Please select the university location.',
+      });
+      return;
+    }
+
     const missing: string[] = [];
     if (!initialized) missing.push('auth not initialized');
     if (!user) missing.push('not signed in');
@@ -1458,8 +1514,8 @@ export default function CreateRidePage() {
   const renderSuggestionsFor = (field: 'from' | 'to') => {
     if (query.field !== field || suggestions.length === 0) return null;
     return (
-      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-popover border rounded-md mt-1 z-[10050] max-h-60 overflow-auto shadow-lg">
-        <div className="px-3 py-2 text-xs text-muted-foreground border-b">Suggestions</div>
+      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-slate-800/80 backdrop-blur-md rounded-md mt-1 z-[10050] max-h-60 overflow-auto shadow-lg">
+        <div className="px-3 py-2 text-xs text-slate-400">Suggestions</div>
             {suggestions.map((s, idx) => (
                 <button
                   key={s.place_id || `${s.lat}-${s.lon}-${idx}`}
@@ -1480,7 +1536,7 @@ export default function CreateRidePage() {
                 </button>
             ))}
         {suggestions.length >= suggestLimit && (
-          <div className="p-2 border-t bg-card sticky bottom-0">
+          <div className="p-2 bg-slate-800/50 sticky bottom-0">
             <button type="button" className="text-xs text-accent hover:underline" onMouseDown={() => setSuggestLimit((v) => Math.min(200, v + 30))}>Show more results</button>
           </div>
         )}
@@ -1491,25 +1547,25 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = userLoading || isSubmitting || !routePolyline;
+  const isButtonDisabled = userLoading || isSubmitting || !routePolyline || !generatedStops || generatedStops.length === 0;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
-      <Card>
+      <Card className="bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg shadow-primary/5">
         <CardHeader>
-          <CardTitle className="font-headline text-3xl">Offer a New Ride</CardTitle>
+          <CardTitle className="font-headline text-3xl text-slate-50">Offer a New Ride</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="mb-4">
-            <label className="text-sm font-medium mb-2 block">Trip Type (required)</label>
+            <label className="text-sm font-medium text-slate-200 mb-2 block">Trip Type (required)</label>
             <div className="grid grid-cols-2 gap-2">
-              <button type="button" aria-pressed={uniAuto === 'toUni'} onClick={() => applyUniversitySelection('toUni')} className={`rounded-md border p-3 text-left transition focus:outline-none ${uniAuto === 'toUni' ? 'bg-primary text-primary-foreground border-primary' : 'bg-card'}`}>
+              <button type="button" aria-pressed={uniAuto === 'toUni'} onClick={() => applyUniversitySelection('toUni')} className={`rounded-md p-3 text-left transition focus:outline-none ${uniAuto === 'toUni' ? 'bg-primary text-primary-foreground' : 'bg-slate-800/50'}`}>
                 <div className="font-medium">Going to university</div>
-                <div className="text-xs text-muted-foreground mt-1">Set destination to {userData?.university === 'ned' ? 'NED University' : 'FAST University'}</div>
+                <div className="text-xs text-muted-foreground mt-1">Set destination to your university</div>
               </button>
-              <button type="button" aria-pressed={uniAuto === 'fromUni'} onClick={() => applyUniversitySelection('fromUni')} className={`rounded-md border p-3 text-left transition focus:outline-none ${uniAuto === 'fromUni' ? 'bg-primary text-primary-foreground border-primary' : 'bg-card'}`}>
+              <button type="button" aria-pressed={uniAuto === 'fromUni'} onClick={() => applyUniversitySelection('fromUni')} className={`rounded-md p-3 text-left transition focus:outline-none ${uniAuto === 'fromUni' ? 'bg-primary text-primary-foreground' : 'bg-slate-800/50'}`}>
                 <div className="font-medium">Leaving from university</div>
-                <div className="text-xs text-muted-foreground mt-1">Set start point to {userData?.university === 'ned' ? 'NED University' : 'FAST University'}</div>
+                <div className="text-xs text-muted-foreground mt-1">Set start point to your university</div>
               </button>
             </div>
           </div>
@@ -1560,7 +1616,7 @@ export default function CreateRidePage() {
                 )}/>
               </div>
             
-              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden border shadow-sm relative">
+              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden shadow-sm relative">
                   <MapComponent 
                     ref={mapRef} 
                     onMapClick={handleMapClick}
@@ -1661,7 +1717,7 @@ export default function CreateRidePage() {
               )}
 
               {!process.env.NEXT_PUBLIC_ORS_API_KEY && (
-                <div className="text-sm text-center p-3 bg-destructive/20 text-destructive-foreground rounded-md border border-destructive/50">
+                <div className="text-sm text-center p-3 bg-red-500/10 text-red-400 rounded-md">
                     <strong>Route Service Not Configured:</strong> The map cannot draw routes. Please add your OpenRouteService API key to the <strong>.env</strong> file as <code>NEXT_PUBLIC_ORS_API_KEY</code> and restart the development server.
                 </div>
               )}

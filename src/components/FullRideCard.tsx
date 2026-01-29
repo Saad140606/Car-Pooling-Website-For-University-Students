@@ -10,6 +10,7 @@ import L, { LatLng, LatLngExpression } from 'leaflet';
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMapEvents, Tooltip } from '@/components/map';
 import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { decodePolyline } from '@/lib/route';
+import { detectUniversityFromString } from '@/lib/universities';
 
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
@@ -29,6 +30,9 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const { toast } = useToast();
+  const [confirmCountdown, setConfirmCountdown] = useState<string | null>(null);
+  const [showConfirmWarning, setShowConfirmWarning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const isDriver = user && ride.driverId === user.uid;
   const isFull = (ride.availableSeats ?? 0) <= 0;
@@ -70,9 +74,10 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const existingRequestStatus = existingRequest ? existingRequest.status : null;
   const bookingStatus = existingBooking ? existingBooking.status : null;
   // Only treat accepted when a booking exists and is accepted. Pending requests should show pending.
-  const isAcceptedBooking = bookingStatus === 'accepted';
-  const isPendingRequest = existingRequestStatus === 'pending';
-  const isRejectedRequest = existingRequestStatus === 'rejected';
+  const isAcceptedBooking = bookingStatus === 'accepted' || bookingStatus === 'ACCEPTED';
+  const isPendingRequest = existingRequestStatus === 'pending' || existingRequestStatus === 'PENDING';
+  const isRejectedRequest = existingRequestStatus === 'rejected' || existingRequestStatus === 'REJECTED';
+  const isAcceptedRequest = existingRequestStatus === 'ACCEPTED' || existingRequestStatus === 'accepted';
 
   const disabledReason = isDriver ? "Can't book own ride"
     : isFull ? 'Ride is full'
@@ -80,6 +85,44 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
     : isAcceptedBooking ? `You already requested this ride (accepted)`
     : isPendingRequest ? `You already requested this ride (pending)`
     : (hasActiveBooking ? 'You already have an active booking on another ride' : undefined);
+
+  // Smart countdown for accepted request confirmation window
+  // Respects dynamic timer based on pickup time (short/medium/none)
+  useEffect(() => {
+    if (!isAcceptedRequest || !existingRequest?.confirmDeadline) { setConfirmCountdown(null); return; }
+    const getMs = (t: any) => {
+      if (!t) return 0;
+      if (typeof t.toDate === 'function') return t.toDate().getTime();
+      return new Date(t).getTime();
+    };
+    
+    const deadlineMs = getMs(existingRequest.confirmDeadline);
+    const timerType = existingRequest.timerType || 'short';
+    const confirmLater = existingRequest.confirmLater || false;
+    
+    // If rider chose "confirm later", show different message instead of countdown
+    if (confirmLater) {
+      setConfirmCountdown('waiting'); // special value for "confirm later" state
+      return;
+    }
+    
+    // For "none" timer type (future rides), don't show countdown timer
+    if (timerType === 'none') {
+      setConfirmCountdown(null);
+      return;
+    }
+    
+    // Show countdown for short/medium timer types
+    const tick = () => {
+      const remain = Math.max(0, deadlineMs - Date.now());
+      const mm = Math.floor(remain / 60000);
+      const ss = Math.floor((remain % 60000) / 1000);
+      setConfirmCountdown(`${mm}:${ss.toString().padStart(2,'0')}`);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [isAcceptedRequest, existingRequest?.confirmDeadline, existingRequest?.timerType, existingRequest?.confirmLater]);
 
   // geometry helpers (approx meters)
   const toMeters = (latlng: { lat: number; lng: number }) => {
@@ -217,14 +260,26 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
       }
     } catch (e) {}
 
+    // Compute a tripKey to group concurrent requests (30-minute slot of departure day)
+    let tripKey: string | null = null;
+    try {
+      const dep = ride.departureTime?.seconds ? new Date(ride.departureTime.seconds * 1000) : (ride.departureTime ? new Date(ride.departureTime) : null);
+      if (dep) {
+        const slot = Math.floor(dep.getTime() / (30 * 60 * 1000));
+        const day = `${dep.getUTCFullYear()}-${(dep.getUTCMonth()+1).toString().padStart(2,'0')}-${dep.getUTCDate().toString().padStart(2,'0')}`;
+        tripKey = `${day}:${slot}`;
+      }
+    } catch {}
+
     const requestData = {
       rideId: ride.id,
       driverId: ride.driverId,
       passengerId: user.uid,
-      status: 'pending',
+      status: 'PENDING',
       createdAt: serverTimestamp(),
       pickupPoint: pickup ? { lat: pickup.lat, lng: pickup.lng } : null,
       pickupPlaceName,
+      tripKey,
       passengerDetails: {
         uid: user.uid,
         fullName: userData?.fullName || '',
@@ -246,7 +301,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         const existingRequest = await transaction.get(requestRef);
         if (existingRequest.exists()) {
           const data: any = existingRequest.data();
-          if (data && data.status && data.status !== 'rejected') {
+          if (data && data.status && !['rejected','REJECTED','cancelled','CANCELLED','expired','EXPIRED','auto_cancelled','AUTO_CANCELLED'].includes((data.status as string))) {
             throw new Error('You have already requested a seat on this ride.');
           }
           // allow overwrite if previous request was rejected
@@ -260,10 +315,92 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
       setPickupPlaceName(null);
       return true;
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Booking Failed', description: err?.message || String(err) });
+      if (err?.message?.includes('3 active requests')) {
+        toast({ 
+          variant: 'destructive', 
+          title: 'Request Limit Reached', 
+          description: 'Please confirm or cancel an existing request before requesting another ride.' 
+        });
+      } else {
+        toast({ variant: 'destructive', title: 'Booking Failed', description: err?.message || String(err) });
+      }
       return false;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmRequest = async () => {
+    if (!user || !userData || !firestore || !existingRequest) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/requests/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          university: userData.university,
+          rideId: ride.id,
+          requestId: `${ride.id}_${user.uid}`,
+          passengerId: user.uid,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to confirm');
+      toast({ title: 'Ride Confirmed! 🎉', description: 'Your seat is now reserved. Other requests have been cancelled.' });
+      setShowConfirmWarning(false);
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Confirmation Failed', description: err?.message || String(err) });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmLater = async () => {
+    if (!user || !userData || !firestore || !existingRequest) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/requests/confirm-later', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          university: userData.university,
+          rideId: ride.id,
+          requestId: `${ride.id}_${user.uid}`,
+          passengerId: user.uid,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to defer confirmation');
+      toast({ title: 'Confirm Later ✅', description: 'You can confirm this ride later. We will remind you before pickup time.' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Confirm Later Failed', description: err?.message || String(err) });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelRequest = async () => {
+    if (!user || !userData || !firestore || !existingRequest) return;
+    setCancelling(true);
+    try {
+      const res = await fetch('/api/requests/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          university: userData.university,
+          rideId: ride.id,
+          requestId: `${ride.id}_${user.uid}`,
+          cancelledBy: user.uid,
+          reason: 'User cancelled',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to cancel');
+      toast({ title: 'Request Cancelled', description: 'Your request has been cancelled.' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Cancellation Failed', description: err?.message || String(err) });
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -292,6 +429,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const start = ride.from;
   const end = ride.to;
   const departure = ride.departureTime ? new Date(ride.departureTime.seconds * 1000).toISOString() : '';
+  const isFromUniversity = !!detectUniversityFromString(start);
 
   return (
     <div className="w-full h-full">
@@ -309,6 +447,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         hideUniversity={userData?.university === ride.university}
         stops={ride.stops}
         driverVerified={ride.driverInfo?.universityEmailVerified}
+        statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
         onViewRoute={() => setOpenView(true)}
         onViewStops={() => setOpenStops(true)}
         onBook={() => {
@@ -333,6 +472,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           </DialogHeader>
           <div className="h-[60vh] w-full relative">
             <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
+          <p className="sr-only" id="route-desc">Route preview for selected ride.</p>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
               <Polyline positions={ride.route as LatLngExpression[]} color="#60A5FA" weight={4} opacity={0.9} />
               {ride.route && ride.route.length > 0 && (
@@ -379,6 +519,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           <div />
         </DialogTrigger>
         <DialogContent className="max-w-2xl">
+          <p className="sr-only" id="stops-desc">All stops for this route.</p>
           <DialogHeader>
             <DialogTitle>Route Stops</DialogTitle>
           </DialogHeader>
@@ -397,6 +538,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
                 }
                 setOpenBook(true);
               }}
+              university={ride.university}
             />
           ) : (
             <div className="text-center py-8 text-muted-foreground">No stops available for this route</div>
@@ -411,10 +553,147 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         </DialogTrigger>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Select Pickup Point</DialogTitle>
+            <DialogTitle>{isFromUniversity ? 'Select Drop Point' : 'Select Pickup Point'}</DialogTitle>
           </DialogHeader>
+
+          {/* Request Status Display */}
+          {isAcceptedRequest && existingRequest && (
+            <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-green-900 dark:text-green-100">Request Accepted! ✅</h3>
+                {existingRequest.timerType !== 'none' && confirmCountdown && confirmCountdown !== 'waiting' && (
+                  <span className="text-sm font-mono text-green-700 dark:text-green-300">
+                    {confirmCountdown}
+                  </span>
+                )}
+              </div>
+              
+              {/* Smart timer messages based on timerType */}
+              {existingRequest.timerType === 'short' && !existingRequest.confirmLater && (
+                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                  🚗 <strong>Ride starting soon!</strong> Please confirm within {confirmCountdown ? `${confirmCountdown}` : '2-3 minutes'} to secure your seat.
+                </p>
+              )}
+              {existingRequest.timerType === 'medium' && !existingRequest.confirmLater && (
+                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                  ⏰ <strong>Confirm within 30 minutes.</strong> Driver Ali is waiting for your confirmation.
+                </p>
+              )}
+              {existingRequest.timerType === 'none' && !existingRequest.confirmLater && (
+                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                  📅 <strong>This ride is tomorrow or later.</strong> You can confirm anytime before pickup. Take your time!
+                </p>
+              )}
+              {existingRequest.confirmLater && (
+                <p className="text-sm text-blue-800 dark:text-blue-200 mb-3 bg-blue-50 dark:bg-blue-900/20 p-2 rounded border border-blue-200 dark:border-blue-800">
+                  ⏸️ <strong>Confirm Later:</strong> You chose to confirm later. We will remind you 30 minutes before pickup.
+                </p>
+              )}
+              
+              {showConfirmWarning ? (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 p-3 rounded-md mb-3">
+                  <p className="text-sm text-amber-900 dark:text-amber-100 mb-2">
+                    ⚠️ <strong>Important:</strong> Confirming this ride will automatically cancel all your other pending and accepted requests for rides around the same time.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleConfirmRequest}
+                      disabled={loading}
+                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+                    >
+                      {loading ? 'Confirming...' : 'Yes, Confirm This Ride'}
+                    </button>
+                    <button
+                      onClick={() => setShowConfirmWarning(false)}
+                      className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {/* Show Confirm Later option for non-urgent rides (medium/none timer types) */}
+                  {!existingRequest.confirmLater && (existingRequest.timerType === 'medium' || existingRequest.timerType === 'none') && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowConfirmWarning(true)}
+                        disabled={loading}
+                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+                      >
+                        Confirm Now
+                      </button>
+                      <button
+                        onClick={handleConfirmLater}
+                        disabled={loading}
+                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+                      >
+                        {loading ? 'Setting...' : 'Confirm Later'}
+                      </button>
+                      <button
+                        onClick={handleCancelRequest}
+                        disabled={cancelling}
+                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
+                      >
+                        {cancelling ? 'Cancelling...' : 'Cancel'}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* For urgent rides or if already confirmed later, show standard buttons */}
+                  {(existingRequest.confirmLater || existingRequest.timerType === 'short') && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowConfirmWarning(true)}
+                        disabled={loading}
+                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+                      >
+                        Confirm Ride
+                      </button>
+                      <button
+                        onClick={handleCancelRequest}
+                        disabled={cancelling}
+                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
+                      >
+                        {cancelling ? 'Cancelling...' : 'Cancel'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isPendingRequest && existingRequest && (
+            <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-100">Request Pending ⏳</h3>
+              </div>
+              <p className="text-sm text-blue-800 dark:text-blue-200 mb-3">
+                Your request is waiting for the driver to respond.
+              </p>
+              <button
+                onClick={handleCancelRequest}
+                disabled={cancelling}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
+              >
+                {cancelling ? 'Cancelling...' : 'Cancel Request'}
+              </button>
+            </div>
+          )}
+
+          {isRejectedRequest && existingRequest && (
+            <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-lg">
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Request Declined ❌</h3>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                The driver declined your request. You can request again if seats are still available.
+              </p>
+            </div>
+          )}
+
           <div className="h-[60vh] w-full relative" style={{ minHeight: '400px' }}>
             <div className="absolute left-4 top-4 z-[99999] w-[calc(100%-4rem)] md:w-2/3 pointer-events-auto">
+          <p className="sr-only" id="book-desc">Select your pickup point and request a seat.</p>
               <div className="flex gap-2">
                 <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search places near route..." className="w-full rounded-md px-3 py-2 text-sm bg-white text-slate-900 placeholder:text-slate-500 ring-1 ring-slate-200" />
                 <button className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm" onClick={() => { /* manual search triggered by input effect */ }} disabled={searching}>{searching ? 'Searching...' : 'Search'}</button>
@@ -481,7 +760,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
               
               {pickupPoint && (
                 <CircleMarker center={pickupPoint as any} pathOptions={{ color: '#3F51B5', fillColor: '#3F51B5' }} radius={6}>
-                  <Tooltip>Pickup</Tooltip>
+                  <Tooltip>{isFromUniversity ? 'Drop' : 'Pickup'}</Tooltip>
                 </CircleMarker>
               )}
               <MapEvents onSelect={handleSelectPickup} />
@@ -490,11 +769,11 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
             <div className="mt-4 flex items-center justify-between gap-4">
             <div className="text-sm text-muted-foreground">{pickupPoint ? (
               <span className="inline-block">Selected: <span className="font-medium text-slate-900 dark:text-slate-100">{pickupPlaceLoading ? 'Resolving place…' : (pickupPlaceName || `${pickupPoint.lat.toFixed(5)}, ${pickupPoint.lng.toFixed(5)}`)}</span></span>
-            ) : 'Click on the route or search to select a pickup point.'}</div>
+            ) : (isFromUniversity ? 'Click on the route or search to select a drop point.' : 'Click on the route or search to select a pickup point.')}</div>
 
             <div className="flex gap-3 items-center">
               <button
-                aria-label="Cancel pickup request"
+                aria-label={isFromUniversity ? 'Cancel drop request' : 'Cancel pickup request'}
                 onClick={() => { setOpenBook(false); setPickupPoint(null); setPickupPlaceName(null); }}
                 className="px-3 py-2 rounded-md border border-slate-200 bg-transparent text-sm text-slate-200 hover:bg-slate-700/40 transition"
               >
@@ -502,12 +781,12 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
               </button>
 
               <button
-                aria-label="Request pickup"
+                aria-label={isFromUniversity ? 'Request drop' : 'Request pickup'}
                 onClick={() => handleBook(pickupPoint)}
                 disabled={!existingChecked || !pickupPoint || loading || !!disabledReason}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition shadow-sm min-w-[140px] ${(!existingChecked || !pickupPoint || loading || disabledReason) ? 'bg-slate-500/60 text-slate-100 cursor-not-allowed' : 'bg-[#3F51B5] text-white hover:brightness-105'}`}
               >
-                {loading ? 'Sending...' : (disabledReason ? 'Not allowed' : 'Request Pickup')}
+                {loading ? 'Sending...' : (disabledReason ? 'Not allowed' : (isFromUniversity ? 'Request Drop' : 'Request Pickup'))}
               </button>
 
               {disabledReason && (

@@ -69,6 +69,24 @@ export async function POST(request: NextRequest) {
 
     console.log('OTP verified successfully for uid:', uid);
 
+    // ===== CRITICAL: Check if email already exists in another university =====
+    const otherUni = otpData.university === 'fast' ? 'ned' : 'fast';
+    const otherUniUsersRef = db.collection('universities').doc(otherUni).collection('users');
+    const existingEmailQuery = await otherUniUsersRef.where('email', '==', otpData.email).limit(1).get();
+    
+    if (!existingEmailQuery.empty) {
+      console.error(`SECURITY: Email ${otpData.email} already exists in ${otherUni} university! Blocking registration.`);
+      // Delete the signup OTP doc
+      await signupOtpRef.delete();
+      return NextResponse.json(
+        { 
+          error: `This email is already registered with ${otherUni === 'fast' ? 'FAST' : 'NED'} University. Please use a different email or sign in to your existing account.`
+        },
+        { status: 409 }
+      );
+    }
+    // ===== END CRITICAL CHECK =====
+
     // Check if the email is a university email
     const isUniversityEmail = otpData.university && isValidUniversityEmail(otpData.email, otpData.university as 'fast' | 'ned');
     
@@ -94,6 +112,7 @@ export async function POST(request: NextRequest) {
     if (otpData.university) {
       const uniUserRef = db.collection('universities').doc(otpData.university).collection('users').doc(uid);
       const uniUpdateData: any = {
+        email: otpData.email,  // ===== CRITICAL: Store email in university-scoped collection so check-email-available can find it =====
         emailVerified: true,
         emailVerifiedAt: FieldValue.serverTimestamp(),
       };

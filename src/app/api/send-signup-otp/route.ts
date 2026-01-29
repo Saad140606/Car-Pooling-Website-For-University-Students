@@ -42,6 +42,23 @@ export async function POST(request: NextRequest) {
     const expiresAt = now + OTP_EXPIRY_MS;
 
     const db = adminDb ?? getFirestore();
+
+    // ===== CRITICAL FIX: Check if email already exists in another university =====
+    // This prevents a user registered at FAST from signing up at NED with the same email
+    const otherUniversity = university === 'fast' ? 'ned' : 'fast';
+    const otherUniUsersRef = db.collection('universities').doc(otherUniversity).collection('users');
+    const existingUserQuery = await otherUniUsersRef.where('email', '==', email).limit(1).get();
+    
+    if (!existingUserQuery.empty) {
+      console.warn(`Email ${email} already registered at ${otherUniversity} university`);
+      return NextResponse.json(
+        { 
+          error: `This email is already registered with ${otherUniversity === 'fast' ? 'FAST' : 'NED'} University. Please use a different email or sign in to your existing account.`
+        },
+        { status: 409 } // Conflict status code
+      );
+    }
+    // ===== END CRITICAL FIX =====
     const signupOtpRef = db.collection('signup_otps').doc(uid);
     const snapshot = await signupOtpRef.get();
     const data = snapshot.exists ? snapshot.data() : null;

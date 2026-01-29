@@ -1,8 +1,37 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useFirestore, useUser } from '@/firebase';
 import { subscribeMessages, sendMessage as sendMsg, chatRef } from '@/firebase/firestore/chats';
-import { getDoc } from 'firebase/firestore';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { getDoc, getDocs, query, collection, where, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import { useNotifications } from '@/contexts/NotificationContext';
+
+// Helper function to mark messages as seen
+async function markMessagesAsSeen(firestore: any, universityId: string, chatId: string, userId: string, messages: any[]) {
+  try {
+    const batch = writeBatch(firestore);
+    const messagesRef = collection(firestore, `universities/${universityId}/chats/${chatId}/messages`);
+    
+    // Find messages not sent by current user and not yet seen by them
+    const unseenMessages = messages.filter((msg: any) => 
+      msg.senderId !== userId && 
+      (!msg.seenBy || !msg.seenBy.includes(userId))
+    );
+    
+    if (unseenMessages.length === 0) return;
+    
+    // Update each unseen message
+    unseenMessages.forEach((msg: any) => {
+      const msgRef = doc(messagesRef, msg.id);
+      batch.update(msgRef, {
+        seenBy: arrayUnion(userId)
+      });
+    });
+    
+    await batch.commit();
+  } catch (err) {
+    console.error('Failed to mark messages as seen:', err);
+  }
+}
 
 export function useChat(chatId?: string | null, universityId?: string | null) {
   const firestore = useFirestore();
@@ -103,6 +132,11 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           if (!mounted) return;
           setMessages(items as any[]);
           setLoading(false);
+          
+          // Mark messages as seen by current user
+          if (user?.uid) {
+            markMessagesAsSeen(firestore, universityId as string, chatId as string, user.uid, items);
+          }
         });
       } catch (err: any) {
         console.error('Failed to init chat subscription', err);
@@ -116,15 +150,18 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
     return () => { mounted = false; unsubRef.current?.(); unsubRef.current = null; };
   }, [firestore, chatId, universityId, user?.uid]);
 
-  const sendMessage = useCallback(async (payload: { type?: string; content?: string; mediaUrl?: string }) => {
+  const sendMessage = useCallback(async (payload: { type?: string; content?: string; mediaUrl?: string; recipientId?: string; rideId?: string; senderName?: string }) => {
     if (!firestore || !chatId || !user || accessible === false || !universityId) return null;
     return sendMsg(firestore, universityId, chatId, {
       senderId: user.uid,
       type: payload.type || 'text',
       content: payload.content || '',
       mediaUrl: payload.mediaUrl || null,
+      recipientId: payload.recipientId,
+      rideId: payload.rideId,
+      senderName: payload.senderName
     });
-  }, [firestore, chatId, user, accessible]);
+  }, [firestore, chatId, user, accessible, universityId]);
 
   const setTyping = useCallback(async (isTyping: boolean) => {
     if (!firestore || !chatId || !user || !universityId) return;

@@ -10,8 +10,9 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import {
   Tooltip,
   TooltipContent,
@@ -205,8 +206,9 @@ const Sidebar = React.forwardRef<
               } as React.CSSProperties
             }
             side={side}
-          >
-            <div className="flex h-full w-full flex-col">{children}</div>
+          >            <VisuallyHidden>
+              <SheetTitle>Sidebar Menu</SheetTitle>
+            </VisuallyHidden>            <div className="flex h-full w-full flex-col">{children}</div>
           </SheetContent>
         </Sheet>
       )

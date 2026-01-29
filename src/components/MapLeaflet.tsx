@@ -128,51 +128,54 @@ export default function MapLeaflet({
     // Add initial route / polyline (outline + highlight for contrast)
     if (route && route.length) {
       // Use SVG renderer explicitly to avoid canvas draw errors on teardown in Strict Mode
-      const mainColor = '#2563eb'; // blue to match UI
-      const outlineColor = '#0b1220';
+      const mainColor = '#3b82f6'; // Vibrant blue
+      const outlineColor = '#1e3a8a'; // Dark blue outline for depth
       try {
-        // Outline behind the visible route for better contrast over labels
-        polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.9, renderer: L.svg() }).addTo(map);
-        polyRef.current = L.polyline(route, { color: mainColor, weight: 6, renderer: L.svg() }).addTo(map);
+        // Draw outline for depth and contrast
+        polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 10, opacity: 0.8, renderer: L.svg() }).addTo(map);
+        // Draw main route with gradient-like effect
+        polyRef.current = L.polyline(route, { color: mainColor, weight: 6, opacity: 0.95, renderer: L.svg(), lineCap: 'round', lineJoin: 'round' }).addTo(map);
       } catch (e) {
         // fallback to default if svg renderer isn't available
-        polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.9 }).addTo(map);
-        polyRef.current = L.polyline(route, { color: mainColor, weight: 6 }).addTo(map);
+        polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 10, opacity: 0.8 }).addTo(map);
+        polyRef.current = L.polyline(route, { color: mainColor, weight: 6, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map);
       }
     }
 
     // Add initial markers (pickup pins) plus optional start/end pins
     markerLayerRef.current = L.layerGroup().addTo(map);
 
-    const pickupIcon = L.icon({
-      iconUrl: (L.Icon.Default.prototype as any).options.iconUrl,
-      iconRetinaUrl: (L.Icon.Default.prototype as any).options.iconRetinaUrl,
-      iconSize: [32, 50],
-      iconAnchor: [16, 46],
-      popupAnchor: [0, -46],
-      tooltipAnchor: [0, -46],
+    const pickupIcon = L.divIcon({
+      className: 'pickup-marker',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="44" height="60" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
+        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#06b6d4" stroke="#0f766e" stroke-width="2" />
+        <circle cx="12" cy="9" r="3.2" fill="#ffffff" stroke="#0f766e" stroke-width="1.5" />
+      </svg>`,
+      iconAnchor: [22, 55],
+      popupAnchor: [0, -55],
+      tooltipAnchor: [0, -55],
     });
 
     const startIcon = L.divIcon({
-      className: '',
-      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
-        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#16a34a" stroke="#0b1220" stroke-width="1.2" />
-        <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
+      className: 'start-marker',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="44" height="60" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
+        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#10b981" stroke="#047857" stroke-width="2" />
+        <circle cx="12" cy="9" r="3.2" fill="#ffffff" stroke="#047857" stroke-width="1.5" />
       </svg>`,
-      iconAnchor: [20, 50],
-      popupAnchor: [0, -50],
-      tooltipAnchor: [0, -50],
+      iconAnchor: [22, 55],
+      popupAnchor: [0, -55],
+      tooltipAnchor: [0, -55],
     });
 
     const endIcon = L.divIcon({
-      className: '',
-      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
-        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#2563eb" stroke="#0b1220" stroke-width="1.2" />
-        <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
+      className: 'end-marker',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="44" height="60" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
+        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#ef4444" stroke="#7f1d1d" stroke-width="2" />
+        <circle cx="12" cy="9" r="3.2" fill="#ffffff" stroke="#7f1d1d" stroke-width="1.5" />
       </svg>`,
-      iconAnchor: [20, 50],
-      popupAnchor: [0, -50],
-      tooltipAnchor: [0, -50],
+      iconAnchor: [22, 55],
+      popupAnchor: [0, -55],
+      tooltipAnchor: [0, -55],
     });
 
     // Start pin

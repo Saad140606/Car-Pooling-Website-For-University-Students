@@ -2,6 +2,7 @@ import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseClientProvider } from '@/firebase/client-provider';
+import { NotificationProvider } from '@/contexts/NotificationContext';
 import 'leaflet/dist/leaflet.css'; // CRITICAL: Import Leaflet CSS for markers, popups, and controls to render correctly.
 import SafeConsolePatch from '@/components/SafeConsolePatch';
 
@@ -26,7 +27,9 @@ export default function RootLayout({
       <body className="font-body antialiased">
         <SafeConsolePatch />
         <FirebaseClientProvider>
-          {children}
+          <NotificationProvider>
+            {children}
+          </NotificationProvider>
         </FirebaseClientProvider>
         <Toaster />
       </body>

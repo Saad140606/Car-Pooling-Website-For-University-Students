@@ -40,7 +40,8 @@ export default function FiltersPage() {
 
   useEffect(() => {
     try {
-      const params = Object.fromEntries(searchParams ? Array.from(searchParams.entries()) : []);
+      const iterable = searchParams ? Array.from(searchParams.entries()) as Iterable<readonly [string, string]> : [];
+      const params = Object.fromEntries(iterable);
       setFilters({
         transport: (params.transport as any) || 'any',
         gender: (params.gender as any) || 'any',
@@ -82,32 +83,41 @@ export default function FiltersPage() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+      {/* Floating background orbs */}
+      <div className="fixed inset-0 -z-10 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+        <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+        <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+      </div>
+      
+      <div className="section-shell py-8 relative z-10">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold">Filters</h1>
-          <p className="text-sm text-muted-foreground">Refine your search for rides</p>
+          <h1 className="text-3xl font-headline font-bold text-slate-50 mb-1">Refine Your Search</h1>
+          <p className="text-slate-300">Customize filters to find the perfect ride</p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={() => router.back()}>Back</Button>
-          <Button onClick={clear} variant="outline">Clear</Button>
-          <Button onClick={apply}>Apply</Button>
+          <Button variant="ghost" onClick={() => router.back()} className="text-slate-200 hover:text-slate-50">Back</Button>
+          <Button onClick={clear} className="bg-slate-800/50 text-slate-200 hover:bg-slate-800 hover:text-slate-50">Clear</Button>
+          <Button onClick={apply} className="shadow-lg shadow-primary/30 hover:shadow-primary/50">Apply</Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <div className="text-xs text-muted-foreground">University</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* University Filter */}
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.1s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">University</div>
           {user && userData && userData.university ? (
             <div className="flex items-center gap-2">
-              <Input value={getUniversityShortLabel(userData.university) || userData.university} disabled />
-              <Badge variant="outline">Locked</Badge>
+              <Input value={getUniversityShortLabel(userData.university) || userData.university} disabled className="bg-slate-800/50 backdrop-blur-sm text-slate-300 disabled:opacity-70" />
+              <Badge className="bg-primary/20 text-primary">Locked</Badge>
             </div>
           ) : (
             <Select value={filters.university || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, university: v }))}>
-              <SelectTrigger className="w-44"><SelectValue>{filters.university && filters.university !== 'any' ? getUniversityShortLabel(filters.university) || filters.university : 'Select'}</SelectValue></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary"><SelectValue>{filters.university && filters.university !== 'any' ? getUniversityShortLabel(filters.university) || filters.university : 'Select'}</SelectValue></SelectTrigger>
+              <SelectContent className="bg-slate-900">
                 <SelectItem value="any">Any</SelectItem>
                 <SelectItem value="fast">FAST</SelectItem>
                 <SelectItem value="ned">NED</SelectItem>
@@ -116,11 +126,12 @@ export default function FiltersPage() {
           )}
         </div>
 
-        <div>
-          <div className="text-xs text-muted-foreground">Transport</div>
+        {/* Transport Filter */}
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.15s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Transport</div>
           <Select value={filters.transport} onValueChange={(v) => setFilters(f => ({ ...f, transport: v as any }))}>
-            <SelectTrigger className="w-44"><SelectValue>{filters.transport === 'any' ? 'Any' : filters.transport}</SelectValue></SelectTrigger>
-            <SelectContent>
+            <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary"><SelectValue>{filters.transport === 'any' ? 'Any' : filters.transport}</SelectValue></SelectTrigger>
+            <SelectContent className="bg-slate-900">
               <SelectItem value="any">Any</SelectItem>
               <SelectItem value="car">Car</SelectItem>
               <SelectItem value="bike">Bike</SelectItem>
@@ -128,11 +139,12 @@ export default function FiltersPage() {
           </Select>
         </div>
 
-        <div>
-          <div className="text-xs text-muted-foreground">Gender</div>
+        {/* Gender Filter */}
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.2s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Gender</div>
           <Select value={filters.gender} onValueChange={(v) => setFilters(f => ({ ...f, gender: v as any }))}>
-            <SelectTrigger className="w-44"><SelectValue>{filters.gender === 'any' ? 'Any' : filters.gender}</SelectValue></SelectTrigger>
-            <SelectContent>
+            <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary"><SelectValue>{filters.gender === 'any' ? 'Any' : filters.gender}</SelectValue></SelectTrigger>
+            <SelectContent className="bg-slate-900 border-border/40">
               <SelectItem value="any">Any</SelectItem>
               <SelectItem value="male">Male</SelectItem>
               <SelectItem value="female">Female</SelectItem>
@@ -140,20 +152,23 @@ export default function FiltersPage() {
           </Select>
         </div>
 
-        <div>
-          <div className="text-xs text-muted-foreground">Price Min</div>
-          <Input value={filters.minPrice} onChange={(e) => setFilters(f => ({ ...f, minPrice: e.target.value }))} placeholder="Min" />
+        {/* Price Min Filter */}
+        <div className="p-5 rounded-2xl border border-primary/25 bg-gradient-to-br from-card/90 via-card/80 to-card/70 backdrop-blur-lg shadow-lg hover:shadow-xl hover:border-primary/50 transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.25s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Min Price</div>
+          <Input value={filters.minPrice} onChange={(e) => setFilters(f => ({ ...f, minPrice: e.target.value }))} placeholder="Enter min price" className="border-border/40 bg-background/60 backdrop-blur-sm text-slate-200 placeholder:text-slate-400 focus:border-primary/50" />
         </div>
 
-        <div>
-          <div className="text-xs text-muted-foreground">Price Max</div>
-          <Input value={filters.maxPrice} onChange={(e) => setFilters(f => ({ ...f, maxPrice: e.target.value }))} placeholder="Max" />
+        {/* Price Max Filter */}
+        <div className="p-5 rounded-2xl border border-primary/25 bg-gradient-to-br from-card/90 via-card/80 to-card/70 backdrop-blur-lg shadow-lg hover:shadow-xl hover:border-primary/50 transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.3s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Max Price</div>
+          <Input value={filters.maxPrice} onChange={(e) => setFilters(f => ({ ...f, maxPrice: e.target.value }))} placeholder="Enter max price" className="border-border/40 bg-background/60 backdrop-blur-sm text-slate-200 placeholder:text-slate-400 focus:border-primary/50" />
         </div>
 
-        <div className="md:col-span-2">
-          <div className="text-xs text-muted-foreground">Place</div>
+        {/* Place Filter */}
+        <div className="md:col-span-2 p-5 rounded-2xl border border-primary/25 bg-gradient-to-br from-card/90 via-card/80 to-card/70 backdrop-blur-lg shadow-lg hover:shadow-xl hover:border-primary/50 transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.35s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Place</div>
           <div className="relative">
-            <Input aria-autocomplete="list" aria-expanded={suggestions.length>0} placeholder="Search place (e.g. Main Gate)" value={filters.pointInput} onChange={(e) => {
+            <Input aria-autocomplete="list" aria-expanded={suggestions.length>0} placeholder="Search place (e.g. Main Gate)" value={filters.pointInput} className="border-border/40 bg-background/60 backdrop-blur-sm text-slate-200 placeholder:text-slate-400 focus:border-primary/50" onChange={(e) => {
               const v = e.target.value;
               setFilters(f => ({ ...f, pointInput: v, point: null }));
               if (!v || v.trim().length < 2) {
@@ -190,9 +205,9 @@ export default function FiltersPage() {
             }} />
 
             {suggestions.length > 0 && (
-              <ul role="listbox" className="absolute z-50 left-0 right-0 bg-popover border border-border rounded mt-1 max-h-56 overflow-auto">
+              <ul role="listbox" className="absolute z-50 left-0 right-0 bg-slate-900/95 border border-border/40 backdrop-blur-lg rounded-xl mt-2 max-h-56 overflow-auto shadow-2xl">
                 {suggestions.map((s, i) => (
-                  <li key={s.place_id || s.osm_id} role="option" tabIndex={0} className="p-2 cursor-pointer hover:bg-slate-100" onClick={() => {
+                  <li key={s.place_id || s.osm_id} role="option" tabIndex={0} className="p-3 cursor-pointer hover:bg-primary/10 border-b border-border/20 last:border-b-0 transition-colors" onClick={() => {
                     const lat = Number(s.lat || s.latitude || (s.center && s.center.lat));
                     const lon = Number(s.lon || s.longitude || (s.center && s.center.lng));
                     if (!isNaN(lat) && !isNaN(lon)) {
@@ -202,7 +217,7 @@ export default function FiltersPage() {
                     }
                     setSuggestions([]);
                   }} onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLElement).click(); } }}>
-                    <div className="text-sm">{s.display_name || s.name}</div>
+                    <div className="text-sm text-slate-200">{s.display_name || s.name}</div>
                   </li>
                 ))}
               </ul>
@@ -210,11 +225,12 @@ export default function FiltersPage() {
           </div>
         </div>
 
-        <div>
-          <div className="text-xs text-muted-foreground">Direction</div>
+        {/* Direction Filter */}
+        <div className="md:col-span-2 p-5 rounded-2xl border border-primary/25 bg-gradient-to-br from-card/90 via-card/80 to-card/70 backdrop-blur-lg shadow-lg hover:shadow-xl hover:border-primary/50 transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.4s' }}>
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Direction</div>
           <Select value={filters.direction} onValueChange={(v) => setFilters(f => ({ ...f, direction: v as any }))}>
-            <SelectTrigger className="w-44"><SelectValue>{filters.direction === 'any' ? 'Any' : filters.direction === 'toUniversity' ? 'To University' : 'From University'}</SelectValue></SelectTrigger>
-            <SelectContent>
+            <SelectTrigger className="w-full border-border/40 bg-background/60 backdrop-blur-sm text-slate-200 focus:border-primary/50"><SelectValue>{filters.direction === 'any' ? 'Any' : filters.direction === 'toUniversity' ? 'To University' : 'From University'}</SelectValue></SelectTrigger>
+            <SelectContent className="bg-slate-900 border-border/40">
               <SelectItem value="any">Any</SelectItem>
               <SelectItem value="toUniversity">Going To University</SelectItem>
               <SelectItem value="fromUniversity">Leaving From University</SelectItem>
@@ -223,10 +239,16 @@ export default function FiltersPage() {
         </div>
       </div>
 
-      <div className="mt-6 flex items-center gap-3">
-        <Badge>Tip</Badge>
-        <div className="text-sm text-muted-foreground">Filters are applied to the list and are bookmarkable via the URL.</div>
+      <div className="mt-8 p-5 rounded-2xl border border-accent/25 bg-gradient-to-br from-accent/5 via-accent/5 to-transparent backdrop-blur-lg shadow-lg animate-slide-in-down" style={{ animationDelay: '0.45s' }}>
+        <div className="flex items-start gap-3">
+          <div className="text-accent text-xl mt-0.5">💡</div>
+          <div>
+            <div className="text-sm font-semibold text-slate-200 mb-1">Pro Tip</div>
+            <div className="text-sm text-slate-300">Filters are applied to the list and are bookmarkable via the URL. Save your favorite search combinations!</div>
+          </div>
+        </div>
       </div>
+    </div>
     </div>
   );
 }

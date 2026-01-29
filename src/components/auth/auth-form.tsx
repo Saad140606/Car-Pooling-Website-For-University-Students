@@ -15,7 +15,7 @@ import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
 import { setPendingUniversity, getPendingUniversity, getPendingGender, clearPendingUniversity, clearPendingGender, isValidUniversity } from "@/lib/university";
 import { getPendingBooking, clearPendingBooking } from '@/lib/bookings';
 
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -91,6 +91,40 @@ export function AuthForm({ university, action }: AuthFormProps) {
 
     try {
       if (action === "register") {
+        // ===== CRITICAL: Check email availability across all universities BEFORE creating user =====
+        try {
+          const emailCheckResponse = await fetch('/api/check-email-available', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: values.email,
+              university,
+            }),
+          });
+
+          const emailCheckData = await emailCheckResponse.json();
+
+          if (!emailCheckData.available) {
+            toast({
+              variant: 'destructive',
+              title: 'Email Already Registered',
+              description: emailCheckData.message || `This email is already registered with another university. Please use a different email or sign in to your existing account.`,
+            });
+            setLoading(false);
+            return;
+          }
+        } catch (err: any) {
+          console.error('Error checking email availability:', err);
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: 'Could not verify email availability. Please try again.',
+          });
+          setLoading(false);
+          return;
+        }
+        // ===== END CRITICAL CHECK =====
+
         // Persist the intended university so the onAuthStateChanged hook can use it
         try {
           setPendingUniversity(university);
@@ -287,7 +321,13 @@ export function AuthForm({ university, action }: AuthFormProps) {
             // Member exists but under the other university
             if (!isAdminAccount) {
               try { await signOut(auth); } catch (e) { /* ignore */ }
-              toast({ variant: 'destructive', title: 'Wrong University', description: 'Please sign up first with your university.' });
+              const registeredUni = serverResult.registeredIn || otherUni;
+              const uniName = registeredUni === 'fast' ? 'FAST University' : 'NED University';
+              toast({ 
+                variant: 'destructive', 
+                title: 'Account Already Exists', 
+                description: `This email is registered with ${uniName}. Please sign in to the correct university portal or use a different email.` 
+              });
               return;
             }
 
@@ -394,9 +434,13 @@ export function AuthForm({ university, action }: AuthFormProps) {
   const isLogin = action === 'login';
 
   return (
-    <Card className="w-full max-w-md bg-card/50 backdrop-blur-lg border-primary/20">
-      <CardHeader>
-        <CardTitle className="font-headline text-3xl">{isLogin ? 'Welcome Back' : 'Create Account'}</CardTitle>
+    <Card className="w-full max-w-md border-primary/25 bg-card/80 shadow-2xl backdrop-blur-xl hover-card-lift soft-shadow animate-fade-slide">
+      <CardHeader className="space-y-3">
+        <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+          <ShieldCheck className="h-4 w-4" />
+          Secure portal
+        </div>
+        <CardTitle className="font-headline text-3xl leading-tight">{isLogin ? 'Welcome Back' : 'Create Account'}</CardTitle>
         <CardDescription>
           {isLogin ? 'Sign in to your' : 'Create an account for'} {config.name}
         </CardDescription>
@@ -481,7 +525,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
               </div>
             )}
             
-            <Button type="submit" className="w-full" size="lg" disabled={loading || (!isLogin && !form.watch('consent'))}>
+            <Button type="submit" className="w-full rounded-full px-6" size="lg" disabled={loading || (!isLogin && !form.watch('consent'))}>
               {loading ? (
                 <Loader2 className="animate-spin" />
               ) : (

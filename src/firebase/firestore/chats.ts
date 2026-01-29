@@ -2,6 +2,7 @@ import { collection, doc, addDoc, setDoc, serverTimestamp, query, orderBy, onSna
 import type { Firestore } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { createNotification } from '@/firebase/firestore/notifications';
 
 // Unified chat helpers using top-level `chats/{chatId}` and `chats/{chatId}/messages`
 export function chatRef(firestore: Firestore, universityId: string, chatId: string) {
@@ -25,8 +26,37 @@ export async function sendMessage(firestore: Firestore, universityId: string, ch
     content: message.content || '',
     mediaUrl: message.mediaUrl || null,
     timestamp: serverTimestamp(),
+    seenBy: [message.senderId], // Initialize with sender's ID
   };
-  return await addDoc(messages, msg);
+  
+  const result = await addDoc(messages, msg);
+  
+  // Create chat notification for the recipient
+  if (message.recipientId && message.recipientId !== message.senderId) {
+    try {
+      await createNotification(
+        firestore,
+        universityId,
+        message.recipientId,
+        'chat',
+        {
+          relatedRideId: message.rideId || chatId,
+          relatedChatId: chatId,
+          title: 'New Message',
+          message: message.senderName ? `${message.senderName} sent you a message` : 'You have a new message',
+          metadata: {
+            senderName: message.senderName,
+            senderId: message.senderId,
+            messageType: message.type
+          }
+        }
+      );
+    } catch (err) {
+      console.error('Failed to create chat notification:', err);
+    }
+  }
+  
+  return result;
 }
 export function subscribeMessages(firestore: Firestore, universityId: string, chatId: string, onUpdate: (docs: any[]) => void) {
   const q = query(chatMessagesRef(firestore, universityId, chatId), orderBy('timestamp', 'asc'));

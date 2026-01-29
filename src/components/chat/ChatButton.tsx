@@ -1,13 +1,33 @@
-import React from 'react';
+'use client';
+
+import React, { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import ChatRoom from './ChatRoom';
+import NotificationBadge from '@/components/NotificationBadge';
+import { useNotifications } from '@/contexts/NotificationContext';
+import { MessageCircle } from 'lucide-react';
 
 export default function ChatButton({ chatId, university, label = 'Chat', disabled = false }: { chatId: string, university: string, label?: string, disabled?: boolean }) {
+  const { getUnreadForChat, markChatAsRead } = useNotifications();
+  const [open, setOpen] = React.useState(false);
+  const unreadCount = getUnreadForChat(chatId);
+
+  useEffect(() => {
+    if (open) {
+      // Mark notifications as read when chat is opened
+      markChatAsRead(chatId);
+    }
+  }, [open, chatId, markChatAsRead]);
+
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button disabled={disabled} className="bg-primary text-primary-foreground">{label}</Button>
+        <Button disabled={disabled} className="bg-primary text-primary-foreground relative">
+          <MessageCircle className="h-4 w-4 mr-2" />
+          {label}
+          {unreadCount > 0 && <NotificationBadge count={unreadCount} dot={unreadCount === 1} />}
+        </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl w-full">
         <DialogHeader>

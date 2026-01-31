@@ -29,7 +29,7 @@ export default function Home() {
 
   return (
     <HomePageClient>
-      <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
+      <div className="flex flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
       <SiteHeader />
       <main className="flex-grow">
         <section className="relative overflow-hidden">

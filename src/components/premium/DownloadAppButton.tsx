@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
-import { Download, Smartphone, Loader2, Check } from 'lucide-react';
+import { Download, Smartphone, Loader2, Check, AlertCircle } from 'lucide-react';
 import { downloadAppManager } from '@/lib/downloadAppManager';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -24,6 +23,15 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
   const [isInstallable, setIsInstallable] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+  const [deviceType, setDeviceType] = useState<'mobile' | 'tablet' | 'desktop'>('desktop');
+
+  // Handle hydration by only showing device-specific content after mount
+  useEffect(() => {
+    setIsMounted(true);
+    setDeviceType(downloadAppManager.getDeviceType());
+  }, []);
 
   useEffect(() => {
     // Check if we should show the button
@@ -31,25 +39,46 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
       return;
     }
 
-    // Check if PWA is installable
+    // Check initial state
     setIsInstallable(downloadAppManager.isPWAInstallable());
+    setIsInstalled(downloadAppManager.isAppInstalled());
 
-    // Subscribe to install events
+    // Subscribe to installable event
     const unsubscribeInstallable = downloadAppManager.subscribe('installable', ({ isInstallable }: any) => {
+      console.log('[Download Button] Installable state changed:', isInstallable);
       setIsInstallable(isInstallable);
     });
 
+    // Subscribe to installed event
     const unsubscribeInstalled = downloadAppManager.subscribe('installed', ({ success }: any) => {
+      console.log('[Download Button] Installation event:', success);
       if (success) {
         setIsInstalled(true);
         setIsInstallable(false);
-        setTimeout(() => setIsInstalled(false), 3000);
+        setError(null);
+        
+        // Show installed state for 3 seconds
+        setTimeout(() => {
+          setIsInstalled(false);
+        }, 3000);
       }
+    });
+
+    // Subscribe to error events
+    const unsubscribeError = downloadAppManager.subscribe('error', ({ message }: any) => {
+      console.log('[Download Button] Error:', message);
+      setError(message);
+      
+      // Clear error after 4 seconds
+      setTimeout(() => {
+        setError(null);
+      }, 4000);
     });
 
     return () => {
       unsubscribeInstallable();
       unsubscribeInstalled();
+      unsubscribeError();
     };
   }, [pathname]);
 
@@ -58,14 +87,28 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
     return null;
   }
 
-  const handleClick = async () => {
+  const handleClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    // Ensure click is only on the button
+    e.stopPropagation();
+    
     setIsLoading(true);
+    setError(null);
+    
     try {
       await downloadAppManager.handleDownloadApp();
     } catch (error) {
-      console.error('Download app error:', error);
+      console.error('[Download Button] Download error:', error);
+      setError('Failed to start installation. Please try again.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    // Only trigger on Enter or Space
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleClick(e as any);
     }
   };
 
@@ -76,24 +119,22 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ delay: 0.1 }}
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      className="inline-block"
-      style={{ pointerEvents: 'auto' }}
-    >
+    <div className="inline-block">
       <Button
+        type="button"
         onClick={handleClick}
-        disabled={isLoading}
+        onKeyDown={handleKeyDown}
+        disabled={isLoading || isInstalled}
         variant={isInstalled ? 'default' : variant}
+        aria-label={isInstalled ? 'App installed' : 'Install app'}
+        aria-busy={isLoading}
         className={`
           relative group
           ${sizeClasses[size]}
           ${isInstalled ? 'bg-green-500 hover:bg-green-600' : ''}
-          transition-all duration-300
+          ${error ? 'bg-red-500 hover:bg-red-600' : ''}
+          transition-all duration-300 hover:scale-102 active:scale-98
+          cursor-pointer
           ${className}
         `}
       >
@@ -107,9 +148,15 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
             <Check className="w-4 h-4 mr-2" />
             {showText && <span>Installed!</span>}
           </>
+        ) : error ? (
+          <>
+            <AlertCircle className="w-4 h-4 mr-2" />
+            {showText && <span>Error</span>}
+          </>
         ) : (
           <>
-            {isInstallable || downloadAppManager.getDeviceType() !== 'desktop' ? (
+            {/* Always render Download icon on server, update to device-specific on client */}
+            {isMounted && (isInstallable || deviceType !== 'desktop') ? (
               <>
                 <Smartphone className="w-4 h-4 mr-2" />
                 {showText && <span>Get App</span>}
@@ -123,16 +170,24 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
           </>
         )}
 
-        {/* Shine effect on hover */}
+        {/* Shine effect on hover - pointer-events-none prevents interaction */}
         <div
-          className="absolute inset-0 rounded-md opacity-0 group-hover:opacity-20 transition-opacity duration-300"
+          className="absolute inset-0 rounded-md opacity-0 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none"
           style={{
             background: 'linear-gradient(90deg, transparent, white, transparent)',
             transform: 'translateX(-100%)',
           }}
+          aria-hidden="true"
         />
       </Button>
-    </motion.div>
+      
+      {/* Error tooltip */}
+      {error && (
+        <div className="absolute top-full mt-2 p-2 bg-red-100 border border-red-300 rounded text-red-700 text-xs whitespace-nowrap">
+          {error}
+        </div>
+      )}
+    </div>
   );
 };
 

@@ -1,6 +1,14 @@
 /**
  * Download App Manager - Smart app installation and download detection
  * Auto-detects device type and offers appropriate installation method
+ * 
+ * Features:
+ * - Feature detection (beforeinstallprompt) instead of user-agent guessing
+ * - Android: PWA install + APK fallback
+ * - iOS: Manual "Add to Home Screen" instructions
+ * - Desktop: PWA install with browser-specific instructions
+ * - HTTPS enforcement for PWA requirements
+ * - Installation detection and button disabling
  */
 
 export interface InstallPromptEvent extends Event {
@@ -12,10 +20,16 @@ export class DownloadAppManager {
   private static instance: DownloadAppManager;
   private deferredPrompt: InstallPromptEvent | null = null;
   private isInstallable = false;
+  private isInstalled = false;
   private listeners: Map<string, Set<(data: any) => void>> = new Map();
+  private manifestLoaded = false;
+
+  // APK download link (configure as needed)
+  private APK_DOWNLOAD_URL = '/downloads/campus-rides.apk';
 
   private constructor() {
     this.initializeInstallPrompt();
+    this.validatePWARequirements();
   }
 
   static getInstance(): DownloadAppManager {
@@ -26,61 +40,209 @@ export class DownloadAppManager {
   }
 
   /**
-   * Initialize PWA install prompt listener
+   * Validate PWA requirements (HTTPS, manifest, service worker)
+   */
+  private validatePWARequirements(): void {
+    if (typeof window === 'undefined') return;
+
+    const checks = {
+      isHttps: window.location.protocol === 'https:' || window.location.hostname === 'localhost',
+      hasManifest: !!document.querySelector('link[rel="manifest"]'),
+      supportsSW: 'serviceWorker' in navigator,
+      supportsInstallPrompt: 'beforeinstallprompt' in window,
+    };
+
+    console.log('[PWA] Validation:', checks);
+
+    if (!checks.isHttps) {
+      console.warn('[PWA] HTTPS is required for PWA features. Currently on HTTP.');
+    }
+    if (!checks.hasManifest) {
+      console.warn('[PWA] Web manifest not found. Add link[rel="manifest"] to head.');
+    }
+    if (!checks.supportsSW) {
+      console.warn('[PWA] Service Workers not supported in this browser.');
+    }
+  }
+
+  /**
+   * Initialize PWA install prompt listener with feature detection
    */
   private initializeInstallPrompt() {
     if (typeof window === 'undefined') return;
 
-    // Listen for beforeinstallprompt event
+    // Check if already in standalone mode (app already installed)
+    const isStandalone = ('standalone' in navigator) && (navigator as any).standalone === true;
+    if (isStandalone) {
+      this.isInstalled = true;
+      this.emit('installed', { success: true });
+      console.log('[PWA] App is already installed (standalone mode detected)');
+      return;
+    }
+
+    // Feature detection: beforeinstallprompt - ONLY fires on supported platforms
+    // This is the most reliable way to detect PWA install capability
     window.addEventListener('beforeinstallprompt', (e: Event) => {
       e.preventDefault();
       this.deferredPrompt = e as InstallPromptEvent;
       this.isInstallable = true;
       this.emit('installable', { isInstallable: true });
-      console.log('[DownloadApp] PWA install prompt available');
+      console.log('[PWA] beforeinstallprompt available - PWA installable');
     });
 
-    // Check if app is already installed
+    // Check if app is already installed (triggered after successful installation)
     window.addEventListener('appinstalled', () => {
-      console.log('[DownloadApp] App installed successfully');
+      console.log('[PWA] App installed successfully');
+      this.isInstalled = true;
       this.emit('installed', { success: true });
       this.deferredPrompt = null;
       this.isInstallable = false;
     });
+
+    // Additional detection: Check for display mode
+    // If app is running in standalone or fullscreen, it's installed
+    if (window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches) {
+      this.isInstalled = true;
+      console.log('[PWA] App running in standalone/fullscreen mode');
+    }
+
+    // Listen for changes to display mode
+    window.matchMedia('(display-mode: standalone)').addListener(media => {
+      if (media.matches) {
+        this.isInstalled = true;
+        this.emit('installed', { success: true });
+      }
+    });
   }
 
   /**
-   * Get device type
+   * Set APK download URL
+   */
+  setAPKDownloadURL(url: string): void {
+    this.APK_DOWNLOAD_URL = url;
+  }
+
+  /**
+   * Get APK download URL
+   */
+  getAPKDownloadURL(): string {
+    return this.APK_DOWNLOAD_URL;
+  }
+
+  /**
+   * Check if device is Android
+   */
+  isAndroidDevice(): boolean {
+    if (typeof window === 'undefined') return false;
+    return /android/i.test(navigator.userAgent);
+  }
+
+  /**
+   * Check if device is iOS
+   */
+  isIOSDevice(): boolean {
+    if (typeof window === 'undefined') return false;
+    return /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase());
+  }
+
+  /**
+   * Get device type using feature detection
    */
   getDeviceType(): 'mobile' | 'tablet' | 'desktop' {
     if (typeof window === 'undefined') return 'desktop';
 
+    // Feature detection: touch support
+    const hasTouchSupport = () => {
+      return (('ontouchstart' in window) ||
+              ('onmsgesturechange' in window) ||
+              (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+              (navigator.msMaxTouchPoints && navigator.msMaxTouchPoints > 0));
+    };
+
+    // Screen size detection
+    const screenWidth = window.innerWidth;
     const ua = navigator.userAgent.toLowerCase();
 
-    // Mobile detection
-    if (/android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua)) {
+    // If no touch support, it's desktop
+    if (!hasTouchSupport()) {
+      return 'desktop';
+    }
+
+    // Tablet detection: larger screen with touch
+    if (screenWidth >= 768) {
+      // Additional check: iPad Pro looks like desktop but is tablet
       if (/ipad|android(?!.*mobile)/.test(ua)) {
         return 'tablet';
       }
-      return 'mobile';
+      // If very large and touch, likely tablet
+      return screenWidth >= 1024 ? 'tablet' : 'mobile';
     }
 
-    return 'desktop';
+    return 'mobile';
   }
 
   /**
-   * Get OS type
+   * Get OS type using feature detection and UA as fallback
    */
   getOS(): 'android' | 'ios' | 'windows' | 'mac' | 'linux' | 'unknown' {
     if (typeof window === 'undefined') return 'unknown';
 
     const ua = navigator.userAgent.toLowerCase();
 
+    // iOS detection
+    if (/iphone|ipad|ipod|mac/i.test(ua)) {
+      // Additional check: Mac with touch support is likely iPad
+      if (/ipad/i.test(ua) || (/(mac|iphone|ipod)/i.test(ua) && 'ontouchstart' in window)) {
+        return 'ios';
+      }
+      if (/mac/i.test(ua)) return 'mac';
+    }
+
     if (/android/.test(ua)) return 'android';
-    if (/iphone|ipad|ipod/.test(ua)) return 'ios';
     if (/windows/.test(ua)) return 'windows';
     if (/macintosh|macintel/.test(ua)) return 'mac';
     if (/linux/.test(ua)) return 'linux';
+
+    return 'unknown';
+  }
+
+  /**
+   * Get browser name using feature detection
+   * Returns browser with highest confidence
+   */
+  getBrowserName(): string {
+    if (typeof window === 'undefined') return 'unknown';
+
+    const ua = navigator.userAgent;
+
+    // Chromium-based browsers (must check Edge before Chrome)
+    if (/edg/i.test(ua)) return 'Edge';
+    if (/chrome|chromium|crios/i.test(ua) && !/edg/i.test(ua)) {
+      // Distinguish Chrome from other Chromium browsers
+      if (/crios/i.test(ua)) return 'Chrome (iOS)';
+      return 'Chrome';
+    }
+
+    // Samsung Internet
+    if (/samsungbrowser|samsung/i.test(ua)) return 'Samsung Internet';
+
+    // Opera (must check before Firefox)
+    if (/opera|opr/i.test(ua)) return 'Opera';
+
+    // Firefox
+    if (/firefox|fxios/i.test(ua)) return 'Firefox';
+
+    // Safari (must check last as it shares many markers)
+    if (/safari/i.test(ua) && !/chrome/i.test(ua)) {
+      if (/iphone|ipad|ipod/.test(ua.toLowerCase())) {
+        return 'Safari (iOS)';
+      }
+      return 'Safari';
+    }
+
+    // Brave (uses Chromium, check user agent)
+    if (/brave/i.test(ua)) return 'Brave';
 
     return 'unknown';
   }
@@ -91,6 +253,13 @@ export class DownloadAppManager {
   isPWAInstallable(): boolean {
     if (typeof window === 'undefined') return false;
     return this.isInstallable;
+  }
+
+  /**
+   * Check if app is already installed
+   */
+  isAppInstalled(): boolean {
+    return this.isInstalled;
   }
 
   /**
@@ -120,140 +289,263 @@ export class DownloadAppManager {
   }
 
   /**
+   * Download APK file (Android fallback)
+   */
+  downloadAPK(): void {
+    try {
+      console.log('[DownloadApp] Downloading APK:', this.APK_DOWNLOAD_URL);
+      
+      // Create a temporary link and click it
+      const link = document.createElement('a');
+      link.href = this.APK_DOWNLOAD_URL;
+      link.download = 'campus-rides.apk';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      this.emit('download-started', { method: 'apk', success: true });
+    } catch (error) {
+      console.error('[DownloadApp] APK download error:', error);
+      // Fallback: Open download URL in new tab
+      window.open(this.APK_DOWNLOAD_URL, '_blank');
+      this.emit('download-started', { method: 'apk', success: false });
+    }
+  }
+
+  /**
    * Get app store link based on OS
    */
   getAppStoreLink(): string {
     const os = this.getOS();
 
-    // Since there's no native app yet, just return the web app URL
-    // Users will get instructions to add to home screen
+    if (os === 'ios') {
+      // iOS App Store link (update with actual app ID)
+      return 'https://apps.apple.com/app/campus-rides/id1234567890';
+    }
+
+    if (os === 'android') {
+      // Google Play Store link (update with actual package name)
+      return 'https://play.google.com/store/apps/details?id=com.campusrides.app';
+    }
+
     return window.location.origin;
   }
 
   /**
-   * Handle download app action
+   * Handle download app action - main entry point
+   * Routes to appropriate installation method based on platform and browser
    */
   async handleDownloadApp(): Promise<void> {
-    const deviceType = this.getDeviceType();
-    const os = this.getOS();
+    try {
+      const deviceType = this.getDeviceType();
+      const os = this.getOS();
+      const browser = this.getBrowserName();
 
-    console.log('[DownloadApp] Download requested - Device:', deviceType, 'OS:', os);
+      console.log('[PWA] Download requested:', { deviceType, os, browser });
 
-    // Try PWA install first (works on Chrome, Edge, Samsung Internet)
-    if (this.isPWAInstallable()) {
-      const installed = await this.promptInstall();
-      if (installed) {
-        this.emit('download-started', { method: 'pwa', success: true });
+      // Check if app is already installed
+      if (this.isInstalled) {
+        console.log('[PWA] App already installed');
+        this.emit('download-started', { method: 'already-installed', success: true });
         return;
       }
-    }
 
-    // iOS Safari - Show instructions to add to home screen
-    if (os === 'ios') {
-      const isInStandaloneMode = ('standalone' in window.navigator) && (window.navigator as any).standalone;
-      
-      if (!isInStandaloneMode) {
-        this.showInstallInstructions('ios');
-        this.emit('download-started', { method: 'ios-instructions', success: true });
-        return;
-      } else {
-        // Already installed as PWA
-        alert('Campus Ride is already installed on your device!');
+      // Verify HTTPS before proceeding (PWA requirement)
+      if (typeof window !== 'undefined' && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+        const error = 'HTTPS required for PWA installation';
+        console.warn('[PWA]', error);
+        this.emit('error', { message: error });
         return;
       }
-    }
 
-    // Android - Try different install methods
-    if (os === 'android') {
-      // Check if running in Chrome/Edge (supports PWA)
-      const isChrome = /chrome|chromium|crios/i.test(navigator.userAgent) && !/edg/i.test(navigator.userAgent);
-      const isEdge = /edg/i.test(navigator.userAgent);
-      const isSamsung = /samsungbrowser/i.test(navigator.userAgent);
-      
-      if (isChrome || isEdge || isSamsung) {
-        this.showInstallInstructions('android-chrome');
-      } else {
-        // Firefox or other browsers on Android
-        this.showInstallInstructions('android-other');
+      // Primary: Try PWA install (works on Chrome, Edge, Samsung Internet, Brave, Opera)
+      if (this.isPWAInstallable() && this.deferredPrompt) {
+        try {
+          const installed = await this.promptInstall();
+          if (installed) {
+            this.emit('download-started', { method: 'pwa', success: true });
+            return;
+          }
+        } catch (error) {
+          console.error('[PWA] PWA install failed:', error);
+          // Fall through to browser-specific flow
+        }
       }
-      this.emit('download-started', { method: 'android-instructions', success: true });
-      return;
-    }
 
-    // Desktop browsers (Windows, Mac, Linux)
-    if (deviceType === 'desktop') {
-      // Check browser support
-      const isChrome = /chrome/i.test(navigator.userAgent) && !/edg/i.test(navigator.userAgent);
-      const isEdge = /edg/i.test(navigator.userAgent);
-      const isOpera = /opr|opera/i.test(navigator.userAgent);
-      
-      if (isChrome || isEdge || isOpera) {
-        this.showInstallInstructions('desktop-chrome');
-      } else if (/firefox/i.test(navigator.userAgent)) {
-        this.showInstallInstructions('desktop-firefox');
-      } else if (/safari/i.test(navigator.userAgent)) {
-        this.showInstallInstructions('desktop-safari');
-      } else {
-        this.showInstallInstructions('desktop-other');
+      // Route based on OS
+      switch (os) {
+        case 'ios':
+          this.handleIOSInstall();
+          break;
+        case 'android':
+          this.handleAndroidInstall(browser);
+          break;
+        default:
+          // Desktop or unknown
+          if (deviceType === 'desktop') {
+            this.handleDesktopInstall(browser);
+          } else {
+            this.showInstallInstructions('fallback');
+            this.emit('download-started', { method: 'fallback', success: true });
+          }
       }
-      this.emit('download-started', { method: 'desktop-instructions', success: true });
-      return;
+    } catch (error) {
+      console.error('[PWA] Unexpected error in handleDownloadApp:', error);
+      this.emit('error', { message: 'An unexpected error occurred. Please try again.' });
     }
-
-    // Fallback for any other scenario
-    this.showInstallInstructions('fallback');
-    this.emit('download-started', { method: 'fallback', success: true });
   }
 
   /**
-   * Show platform-specific install instructions
+   * Handle iOS installation flow
+   * iOS does not support beforeinstallprompt, show manual instructions
+   */
+  private handleIOSInstall(): void {
+    console.log('[PWA] Handling iOS installation');
+    this.showInstallInstructions('ios');
+    this.emit('download-started', { method: 'ios-instructions', success: true });
+  }
+
+  /**
+   * Handle Android installation flow
+   * Try PWA first, then offer APK as fallback
+   */
+  private handleAndroidInstall(browser: string): void {
+    console.log('[PWA] Handling Android installation');
+
+    // Chromium-based browsers support PWA
+    if (/chrome|edge|samsung|brave|opera/i.test(browser)) {
+      this.showInstallInstructions('android-chrome');
+      this.emit('download-started', { method: 'android-pwa', success: true });
+    } else if (/firefox/i.test(browser)) {
+      // Firefox on Android doesn't support beforeinstallprompt yet
+      // Offer APK download or store link
+      this.showInstallInstructions('android-firefox');
+      this.emit('download-started', { method: 'android-firefox', success: true });
+    } else {
+      // Fallback to APK
+      this.showInstallInstructions('android-apk-available');
+      this.emit('download-started', { method: 'android-apk', success: true });
+    }
+  }
+
+  /**
+   * Handle desktop installation flow
+   * Desktop browsers have different PWA install mechanisms
+   */
+  private handleDesktopInstall(browser: string): void {
+    console.log('[PWA] Handling desktop installation');
+
+    if (/chrome|edge|opera|brave/i.test(browser)) {
+      // Chromium-based browsers show address bar install button
+      if (/edge/i.test(browser)) {
+        this.showInstallInstructions('desktop-edge');
+      } else if (/opera/i.test(browser)) {
+        this.showInstallInstructions('desktop-opera');
+      } else {
+        // Chrome/Brave
+        this.showInstallInstructions('desktop-chrome');
+      }
+    } else if (/firefox/i.test(browser)) {
+      this.showInstallInstructions('desktop-firefox');
+    } else if (/safari/i.test(browser)) {
+      this.showInstallInstructions('desktop-safari');
+    } else {
+      this.showInstallInstructions('desktop-other');
+    }
+
+    this.emit('download-started', { method: 'desktop-instructions', success: true });
+  }
+
+  /**
+   * Show platform-specific install instructions via alert or UI integration
    */
   private showInstallInstructions(platform: string): void {
     const instructions: { [key: string]: string } = {
-      'ios': '📱 Install Campus Ride on iPhone/iPad:\n\n' +
+      'ios': '📱 Install Campus Rides on iPhone/iPad:\n\n' +
              '1. Tap the Share button (⬆️) at the bottom\n' +
              '2. Scroll down and tap "Add to Home Screen"\n' +
-             '3. Tap "Add" to install\n\n' +
-             '✨ The app will appear on your home screen!',
+             '3. Enter a name and tap "Add"\n\n' +
+             '✨ The app will appear on your home screen!\n\n' +
+             'Open it like any other app - no browser interface!',
       
-      'android-chrome': '📱 Install Campus Ride on Android:\n\n' +
-                        '1. Tap the menu (⋮) in the top right corner\n' +
-                        '2. Tap "Install app" or "Add to Home screen"\n' +
+      'android-chrome': '📱 Install Campus Rides on Android:\n\n' +
+                        'Chrome, Edge, or Brave should show an install prompt.\n\n' +
+                        'If you don\'t see it:\n' +
+                        '1. Tap the menu icon (⋮) in the top right\n' +
+                        '2. Tap "Install app" or "Add to Home Screen"\n' +
                         '3. Tap "Install" to confirm\n\n' +
                         '✨ The app will appear on your home screen!',
       
-      'android-other': '📱 To use Campus Ride as an app:\n\n' +
-                       '• Open this site in Chrome or Samsung Internet\n' +
+      'android-firefox': '📱 Firefox on Android:\n\n' +
+                         'Full PWA installation isn\'t available yet in Firefox for Android.\n' +
+                         'However, you can bookmark this page for quick access:\n\n' +
+                         '1. Tap the menu (⋮)\n' +
+                         '2. Tap "Bookmark this page"\n' +
+                         '3. Long press the bookmark and select "Add to home screen"',
+      
+      'android-apk-available': '📱 Download Campus Rides APK:\n\n' +
+                               'Your browser doesn\'t support PWA installation.\n' +
+                               'You can download the APK file instead.\n\n' +
+                               '⚠️ Make sure "Install from unknown sources" is enabled in Settings:\n' +
+                               'Settings → Security → Unknown Sources',
+      
+      'android-other': '📱 To use Campus Rides as an app:\n\n' +
+                       '• Install Chrome or Brave from Google Play\n' +
+                       '• Open Campus Rides in Chrome\n' +
                        '• Tap the menu and select "Install app"\n\n' +
-                       '✨ Or continue using it in your browser!',
+                       '✨ Or continue using it in your current browser!',
       
-      'desktop-chrome': '💻 Install Campus Ride on your computer:\n\n' +
-                        '1. Look for the install icon (⊕) in the address bar\n' +
-                        '2. Click it and select "Install"\n\n' +
-                        '✨ Or use it directly in your browser!',
+      'desktop-chrome': '💻 Install Campus Rides on your computer:\n\n' +
+                        'Chrome should show an install icon (⊕) in the address bar.\n\n' +
+                        'If you don\'t see it:\n' +
+                        '1. Click the menu (⋮) in the top right\n' +
+                        '2. Click "Install Campus Rides"\n' +
+                        '3. Choose where to install\n\n' +
+                        '✨ Access from your desktop or Start Menu!\n\n' +
+                        'Works offline and launches in standalone mode.',
       
-      'desktop-firefox': '💻 Campus Ride is a web app!\n\n' +
-                         '• Bookmark this page (Ctrl+D / Cmd+D)\n' +
-                         '• Use it directly in your browser\n\n' +
-                         '💡 For PWA support, try Chrome or Edge',
+      'desktop-edge': '💻 Install Campus Rides on Windows:\n\n' +
+                      'Edge should show an install icon in the address bar.\n\n' +
+                      'If you don\'t see it:\n' +
+                      '1. Click the menu (⋮) in the top right\n' +
+                      '2. Select "Install this site as an app"\n' +
+                      '3. Review and click "Install"\n\n' +
+                      '✨ Campus Rides will appear in your Start Menu!',
       
-      'desktop-safari': '💻 Campus Ride on Mac:\n\n' +
-                        '• Bookmark this page for quick access\n' +
-                        '• Add to Dock: File → Add to Dock\n' +
+      'desktop-opera': '💻 Install Campus Rides with Opera:\n\n' +
+                       '1. Look for the install icon in the address bar\n' +
+                       '2. Click "Install" when prompted\n\n' +
+                       '✨ Access Campus Rides from your desktop!',
+      
+      'desktop-firefox': '💻 Campus Rides in Firefox:\n\n' +
+                         'Full PWA installation isn\'t available yet.\n\n' +
+                         'However, you can:\n' +
+                         '• Bookmark this page (Ctrl+D) for quick access\n' +
+                         '• Pin it to your taskbar (right-click bookmark)\n' +
+                         '• Use it directly in Firefox\n\n' +
+                         '💡 For full PWA features, try Chrome or Edge',
+      
+      'desktop-safari': '💻 Campus Rides on Mac:\n\n' +
+                        'Full PWA installation isn\'t available in Safari yet.\n\n' +
+                        'However, you can:\n' +
+                        '• Bookmark this page (Cmd+D) for quick access\n' +
+                        '• Add to Dock: Shift+Cmd+D or File → Add to Dock\n' +
                         '• Use directly in Safari\n\n' +
-                        '💡 For PWA support, try Chrome or Edge',
+                        '💡 For PWA support, try Chrome or Edge (Mac versions)',
       
-      'desktop-other': '💻 Campus Ride is a web app!\n\n' +
+      'desktop-other': '💻 Campus Rides is a web app!\n\n' +
                        '• Bookmark this page for easy access\n' +
                        '• Use it directly in your browser\n\n' +
-                       '✨ No download needed!',
+                       '✨ No download needed - it works right in your browser!',
       
-      'fallback': '✨ Welcome to Campus Ride!\n\n' +
+      'fallback': '✨ Welcome to Campus Rides!\n\n' +
                   'This is a web app that works right in your browser.\n\n' +
-                  '📌 Bookmark this page for quick access!'
+                  '📌 Bookmark this page for quick access!\n\n' +
+                  'Get a faster, app-like experience with offline support.'
     };
 
     const message = instructions[platform] || instructions['fallback'];
+    console.log(`[PWA] Showing ${platform} instructions`);
     alert(message);
   }
 
@@ -313,25 +605,34 @@ export class DownloadAppManager {
    */
   getStatus(): {
     isInstallable: boolean;
+    isInstalled: boolean;
     deviceType: 'mobile' | 'tablet' | 'desktop';
     os: 'android' | 'ios' | 'windows' | 'mac' | 'linux' | 'unknown';
-    recommendedMethod: 'pwa' | 'app-store' | 'web';
+    browser: string;
+    recommendedMethod: 'pwa' | 'apk' | 'app-store' | 'web';
   } {
     const deviceType = this.getDeviceType();
     const os = this.getOS();
+    const browser = this.getBrowserName();
 
-    let recommendedMethod: 'pwa' | 'app-store' | 'web' = 'web';
+    let recommendedMethod: 'pwa' | 'apk' | 'app-store' | 'web' = 'web';
 
-    if (this.isPWAInstallable()) {
+    if (this.isInstalled) {
+      recommendedMethod = 'web';
+    } else if (this.isPWAInstallable()) {
       recommendedMethod = 'pwa';
+    } else if (os === 'android') {
+      recommendedMethod = 'apk';
     } else if (deviceType === 'mobile' && (os === 'android' || os === 'ios')) {
       recommendedMethod = 'app-store';
     }
 
     return {
       isInstallable: this.isInstallable,
+      isInstalled: this.isInstalled,
       deviceType,
       os,
+      browser,
       recommendedMethod,
     };
   }

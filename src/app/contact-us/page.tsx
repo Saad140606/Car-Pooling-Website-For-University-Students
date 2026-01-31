@@ -56,7 +56,7 @@ export default function ContactUsPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
+    <div className="relative flex min-h-screen flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
       {!isDashboard && <SiteHeader />}
       <main className="flex-grow">
         <section className="relative overflow-hidden">

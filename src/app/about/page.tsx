@@ -92,7 +92,7 @@ export default function AboutPage() {
           <div className="absolute left-1/3 top-0 h-24 w-48 rotate-6 bg-gradient-to-r from-primary/30 via-white/5 to-accent/30 blur-2xl opacity-60" aria-hidden />
         </div>
 
-        <section className="page-shell grid min-h-[35vh] sm:min-h-[50vh] items-center gap-2 sm:gap-4 md:gap-8 pb-4 sm:pb-8 md:pb-12 pt-4 sm:pt-12 md:pt-16 lg:grid-cols-[1.05fr,0.95fr]">
+        <section className="page-shell grid min-h-[calc(50vh-4rem)] items-center gap-2 sm:gap-4 md:gap-8 pb-4 sm:pb-8 md:pb-12 pt-4 sm:pt-12 md:pt-16 lg:grid-cols-[1.05fr,0.95fr]">
           <Reveal className="space-y-4 sm:space-y-6">
             <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary animate-bounce-in">
               <Sparkles className="h-4 w-4 animate-subtle-bounce" />

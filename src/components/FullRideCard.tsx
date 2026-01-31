@@ -452,7 +452,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         onViewStops={() => setOpenStops(true)}
         onBook={() => {
           if (!user) {
-            router.push('/auth/select-university');
+            router.push('/auth/ned/login');
             return;
           }
           setOpenBook(true);
@@ -533,7 +533,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
               onRequestRide={() => {
                 setOpenStops(false);
                 if (!user) {
-                  router.push('/auth/select-university');
+                  router.push('/auth/ned/login');
                   return;
                 }
                 setOpenBook(true);
@@ -768,7 +768,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
           </div>
             <div className="mt-4 flex items-center justify-between gap-4">
             <div className="text-sm text-muted-foreground">{pickupPoint ? (
-              <span className="inline-block">Selected: <span className="font-medium text-slate-900 dark:text-slate-100">{pickupPlaceLoading ? 'Resolving place…' : (pickupPlaceName || `${pickupPoint.lat.toFixed(5)}, ${pickupPoint.lng.toFixed(5)}`)}</span></span>
+              <span className="inline-block">Selected: <span className="font-medium text-slate-900 dark:text-slate-100">{pickupPlaceLoading ? 'Resolving place…' : (pickupPlaceName || 'Selected point')}</span></span>
             ) : (isFromUniversity ? 'Click on the route or search to select a drop point.' : 'Click on the route or search to select a pickup point.')}</div>
 
             <div className="flex gap-3 items-center">

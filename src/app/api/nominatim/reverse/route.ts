@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
       return errorResponse('Coordinates out of range', 400);
     }
 
-    const nomUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(latNum.toString())}&lon=${encodeURIComponent(lonNum.toString())}`;
+    const nomUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(latNum.toString())}&lon=${encodeURIComponent(lonNum.toString())}&addressdetails=1&zoom=18`;
 
     const res = await fetch(nomUrl, {
       method: 'GET',

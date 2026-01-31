@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef } from 'react';
 import L, { LatLngExpression, LatLngBoundsExpression } from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 
 export type MapLeafletProps = {
   route?: LatLngExpression[];         // polyline positions

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 
 type OtpInputProps = {
@@ -14,6 +14,7 @@ type OtpInputProps = {
 
 /**
  * Professional OTP input component with auto-focus, error shake, and smooth transitions
+ * CRITICAL: Prevents multiple auto-submissions by tracking completion state
  */
 export function OtpInput({
   value,
@@ -24,12 +25,36 @@ export function OtpInput({
   onComplete,
 }: OtpInputProps) {
   const inputsRef = useRef<HTMLInputElement[]>([]);
+  // CRITICAL: Track if onComplete was already called for this OTP value to prevent duplicate triggers
+  const hasCompletedRef = useRef(false);
+  const lastCompletedValueRef = useRef<string>('');
+
+  // Reset completion tracking when value is cleared or changed significantly
+  useEffect(() => {
+    if (value.length < length) {
+      // Value is incomplete, reset completion tracking
+      hasCompletedRef.current = false;
+    }
+  }, [value, length]);
 
   useEffect(() => {
-    if (value.length === length && onComplete) {
+    // Only trigger onComplete if:
+    // 1. Value is complete (length digits)
+    // 2. onComplete callback exists
+    // 3. We haven't already called onComplete for this exact value
+    // 4. Not disabled (prevents calling during verification)
+    if (
+      value.length === length && 
+      onComplete && 
+      !hasCompletedRef.current && 
+      !disabled &&
+      value !== lastCompletedValueRef.current
+    ) {
+      hasCompletedRef.current = true;
+      lastCompletedValueRef.current = value;
       onComplete();
     }
-  }, [value, length, onComplete]);
+  }, [value, length, onComplete, disabled]);
 
   const handleChange = (index: number, val: string) => {
     const newVal = val.replace(/\D/g, '').slice(0, 1);

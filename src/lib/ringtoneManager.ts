@@ -74,6 +74,11 @@ export class RingtoneManager {
     const sound = this.sounds.get('ringtone');
     if (sound) {
       sound.audio.src = url;
+      // Handle 404 errors gracefully
+      sound.audio.onerror = () => {
+        console.warn('[Ringtone] Failed to load ringtone, using fallback');
+        sound.audio.src = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==';
+      };
       console.log('[Ringtone] Ringtone URL updated:', url);
     }
   }
@@ -86,6 +91,11 @@ export class RingtoneManager {
     const sound = this.sounds.get('notification');
     if (sound) {
       sound.audio.src = url;
+      // Handle 404 errors gracefully
+      sound.audio.onerror = () => {
+        console.warn('[Ringtone] Failed to load notification sound, using fallback');
+        sound.audio.src = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==';
+      };
       console.log('[Ringtone] Notification sound URL updated:', url);
     }
   }
@@ -267,11 +277,14 @@ export class RingtoneManager {
 export const ringtoneManager = RingtoneManager.getInstance();
 
 // Initialize with default ringtones (can be from CDN or public folder)
+// NOTE: Sound files are optional - manager uses silent placeholder if files don't exist
 export function initializeRingtones() {
   if (typeof window === 'undefined') return;
 
-  // Use public ringtone assets
-  // Replace these with your actual ringtone files
-  ringtoneManager.setRingtoneUrl('/sounds/incoming-call.mp3');
-  ringtoneManager.setNotificationSoundUrl('/sounds/notification.mp3');
+  // Don't try to load external files - use built-in silent placeholders
+  // This prevents 404 errors in console
+  // To enable custom sounds, add files to /public/sounds/ and uncomment:
+  // ringtoneManager.setRingtoneUrl('/sounds/incoming-call.mp3');
+  // ringtoneManager.setNotificationSoundUrl('/sounds/notification.mp3');
+  console.log('[Ringtone] Using silent placeholder sounds (no audio files configured)');
 }

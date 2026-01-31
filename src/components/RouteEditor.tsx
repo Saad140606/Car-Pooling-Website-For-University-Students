@@ -113,8 +113,8 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
             setQuery(v);
             // Debounce requests to avoid firing for every keystroke
             if (debounceRef.current) window.clearTimeout(debounceRef.current);
-            // Fast debounce for responsive suggestions
-            const delay = 200;
+            // Very fast debounce for instant suggestions - only 50ms
+            const delay = 50;
             debounceRef.current = window.setTimeout(() => {
               searchPlaces(v, suggestLimit);
             }, delay) as unknown as number;
@@ -148,7 +148,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
       <div className="space-y-2">
         {waypoints.map((w, i) => (
           <div key={`${w.lat}-${w.lng}-${i}`} className="flex items-center gap-2">
-            <div className="flex-1 text-sm truncate">{w.name || `${w.lat.toFixed(4)}, ${w.lng.toFixed(4)}`}</div>
+            <div className="flex-1 text-sm truncate">{w.name || `Waypoint ${i + 1}`}</div>
             <div className="flex gap-1">
               <Button size="sm" onClick={() => moveWaypoint(i, -1)} disabled={i === 0}>↑</Button>
               <Button size="sm" onClick={() => moveWaypoint(i, 1)} disabled={i === waypoints.length - 1}>↓</Button>

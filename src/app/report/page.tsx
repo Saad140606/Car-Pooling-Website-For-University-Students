@@ -40,7 +40,7 @@ export default function ReportPage() {
         title: 'Authentication Required', 
         description: 'Please log in to submit a report.' 
       });
-      router.push('/auth/select-university');
+      router.push('/auth/ned/login');
     }
   }, [user, initialized, router, toast]);
 

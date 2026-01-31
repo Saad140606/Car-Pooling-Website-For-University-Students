@@ -21,7 +21,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     const timer = setTimeout(() => {
       if (!user && !loading) {
         console.debug('[AuthGuard] User not authenticated, redirecting to login');
-        router.replace('/auth/select-university');
+        router.replace('/auth/ned/login');
       }
     }, 400);
 

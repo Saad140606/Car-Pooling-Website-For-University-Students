@@ -83,9 +83,9 @@ const team = [
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 overflow-x-hidden">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50">
       <SiteHeader />
-      <div className="relative overflow-hidden">
+      <div className="relative">
         <div className="pointer-events-none absolute inset-0 -z-10">
           <div className="absolute left-0 top-10 h-80 w-80 rounded-full bg-primary/20 blur-3xl animate-float" aria-hidden />
           <div className="absolute right-0 top-32 h-72 w-72 rounded-full bg-accent/20 blur-3xl animate-float" style={{ animationDelay: "0.6s" }} aria-hidden />

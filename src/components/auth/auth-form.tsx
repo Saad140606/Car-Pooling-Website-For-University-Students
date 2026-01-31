@@ -308,7 +308,8 @@ export function AuthForm({ university, action }: AuthFormProps) {
                 const profile = userProfileSnap.exists() ? (userProfileSnap.data() as any) : null;
                 const complete = profile && profile.fullName && profile.gender && profile.contactNumber && profile.university;
                 if (!complete) {
-                  toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile before continuing. You can finish it from the dashboard.' });
+                  // Profile incomplete but still redirect to dashboard - user can complete later
+                  toast({ title: 'Signed In', description: 'Welcome! You can complete your profile from the dashboard.' });
                   router.push('/dashboard/rides');
                   return;
                 }
@@ -401,8 +402,8 @@ export function AuthForm({ university, action }: AuthFormProps) {
                 return;
               }
             } catch (e) {}
-            // After creating a minimal profile, prompt the user to finish their profile
-            toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile to enable booking and rides. You can finish it from the dashboard.' });
+            // Profile created - go straight to dashboard
+            toast({ title: 'Signed In', description: 'Welcome! You can complete your profile from the dashboard.' });
             router.push('/dashboard/rides');
             return;
           } catch (e) {

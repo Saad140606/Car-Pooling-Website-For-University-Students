@@ -55,7 +55,7 @@ export default function AdminPanel() {
     if (!initialized || adminLoading) return;
 
     if (!user) {
-      router.push('/auth/select-university');
+      router.push('/auth/ned/login');
       return;
     }
 

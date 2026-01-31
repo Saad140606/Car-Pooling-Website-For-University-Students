@@ -11,7 +11,6 @@ import * as firestoreNamespace from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 
 import { Button } from '@/components/ui/button';
 import RouteEditor from '@/components/RouteEditor';
@@ -82,6 +81,8 @@ const MapComponent = forwardRef<MapComponentRef, {
   lockedPin?: boolean;
   // If present, this position will be rendered as a permanent locked marker on the map
   lockedPosition?: { lat: number; lng: number; name?: string } | null;
+  // Function to get auth token for API calls
+  getAuthToken?: () => Promise<string>;
 }>((props, ref) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   
@@ -239,11 +240,60 @@ const MapComponent = forwardRef<MapComponentRef, {
       if (!props.activeMapSelect) return; // Only handle clicks in selection mode
       const { lat, lng } = e.latlng;
         try {
+          // Get auth token for API call
+          let headers: HeadersInit = {};
+          if (props.getAuthToken) {
+            try {
+              const token = await props.getAuthToken();
+              if (token) headers = { 'Authorization': `Bearer ${token}` };
+            } catch (e) {
+              console.warn('Could not get auth token for reverse geocode', e);
+            }
+          }
+          
           // Use server-side proxy to avoid CORS and ensure a valid User-Agent
-          const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`);
+          const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`, { headers });
           if (res.ok) {
             const data = await res.json();
-            let name = data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+            let name = 'Selected Location'; // Default fallback - never show coordinates
+            
+            // Extract a readable place name from the response
+            if (data.address) {
+              // Build a clean, readable place name
+              const addr = data.address;
+              const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.leisure;
+              const area = addr.neighbourhood || addr.suburb || addr.quarter || addr.city_district;
+              const road = addr.road || addr.residential || addr.pedestrian || addr.street;
+              const city = addr.city || addr.town || addr.village;
+              
+              // Priority: specific place > road + area > area > road > city
+              if (placeName && area) {
+                name = `${placeName}, ${area}`;
+              } else if (placeName) {
+                name = placeName;
+              } else if (road && area) {
+                name = `${road}, ${area}`;
+              } else if (area && city) {
+                name = `${area}, ${city}`;
+              } else if (area) {
+                name = area;
+              } else if (road && city) {
+                name = `${road}, ${city}`;
+              } else if (road) {
+                name = road;
+              } else if (city) {
+                name = city;
+              } else if (data.display_name) {
+                // Use display_name but clean it up - take first 2-3 meaningful parts
+                const parts = data.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+                name = parts.slice(0, 3).join(', ') || 'Selected Location';
+              }
+            } else if (data.display_name) {
+              // Clean up display_name - take first 2-3 meaningful parts
+              const parts = data.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+              name = parts.slice(0, 3).join(', ') || 'Selected Location';
+            }
+            
             // If a lockedPosition is provided and the clicked coordinates are very close to it,
             // prefer the locked position's canonical name to avoid reverse-geocode mismatches.
             try {
@@ -264,8 +314,8 @@ const MapComponent = forwardRef<MapComponentRef, {
           console.error('Nominatim reverse failed', err);
         }
 
-        // Fallback: use coordinates as the name if proxy fails. Also prefer lockedPosition when nearby.
-        let fallbackName = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        // Fallback: use a generic name if proxy fails - NEVER show coordinates
+        let fallbackName = 'Selected Location';
         try {
           const lp = props.lockedPosition;
           if (lp) {
@@ -745,11 +795,56 @@ export default function CreateRidePage() {
 
     const finalizeSelection = async (chosenLatLng: { lat: number; lng: number }) => {
       try {
-        const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(chosenLatLng.lat)}&lon=${encodeURIComponent(chosenLatLng.lng)}`);
-        let name = `${chosenLatLng.lat.toFixed(4)}, ${chosenLatLng.lng.toFixed(4)}`;
+        // Get auth token for API call
+        let headers: HeadersInit = {};
+        if (user) {
+          try {
+            const token = await user.getIdToken();
+            if (token) headers = { 'Authorization': `Bearer ${token}` };
+          } catch (e) {
+            console.warn('Could not get auth token for reverse geocode', e);
+          }
+        }
+        
+        const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(chosenLatLng.lat)}&lon=${encodeURIComponent(chosenLatLng.lng)}`, { headers });
+        let name = 'Selected Location'; // Default fallback - never show coordinates
         if (res.ok) {
           const data = await res.json();
-          if (data && data.display_name) name = data.display_name;
+          if (data && data.address) {
+            // Build a clean, readable place name
+            const addr = data.address;
+            const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.leisure;
+            const area = addr.neighbourhood || addr.suburb || addr.quarter || addr.city_district;
+            const road = addr.road || addr.residential || addr.pedestrian || addr.street;
+            const city = addr.city || addr.town || addr.village;
+            
+            // Priority: specific place > road + area > area > road > city
+            if (placeName && area) {
+              name = `${placeName}, ${area}`;
+            } else if (placeName) {
+              name = placeName;
+            } else if (road && area) {
+              name = `${road}, ${area}`;
+            } else if (area && city) {
+              name = `${area}, ${city}`;
+            } else if (area) {
+              name = area;
+            } else if (road && city) {
+              name = `${road}, ${city}`;
+            } else if (road) {
+              name = road;
+            } else if (city) {
+              name = city;
+            } else if (data.display_name) {
+              // Clean up display_name - take first 2-3 meaningful parts
+              const parts = data.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+              name = parts.slice(0, 3).join(', ') || 'Selected Location';
+            }
+          } else if (data && data.display_name) {
+            // Clean up display_name - take first 2-3 meaningful parts
+            const parts = data.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+            name = parts.slice(0, 3).join(', ') || 'Selected Location';
+          }
         } else {
           try {
             const errJson = await res.json();
@@ -767,7 +862,14 @@ export default function CreateRidePage() {
         }
       } catch (e) {
         console.error("Reverse geocoding failed", e);
-        toast({ variant: 'destructive', title: "Could not fetch location name."});
+        // Use generic fallback - NEVER show coordinates
+        const fallbackName = 'Selected Location';
+        form.setValue(activeMapSelect!, fallbackName, { shouldValidate: true, shouldDirty: true });
+        if (activeMapSelect === 'from') {
+          setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
+        } else {
+          setToCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
+        }
       } finally {
         mapRef.current?.exitSelectionMode();
         setActiveMapSelect(null);
@@ -948,24 +1050,39 @@ export default function CreateRidePage() {
                   // Add staggered delay to avoid rate limiting
                   await new Promise(resolve => setTimeout(resolve, idx * 150));
                   
-                  const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`);
-                  if (res.ok) {
-                    const data = await res.json();
-                    console.log(`Stop ${idx + 1} API response:`, data.display_name);
-                    if (data.display_name) {
-                      const displayName = extractMeaningfulStopName(data.display_name);
-                      console.log(`Stop ${idx + 1} extracted name:`, displayName);
-                      return { idx, name: displayName };
+                  try {
+                    const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`);
+                    if (res.ok) {
+                      const data = await res.json();
+                      console.log(`Stop ${idx + 1} API response:`, data.display_name);
+                      if (data.display_name) {
+                        const displayName = extractMeaningfulStopName(data.display_name);
+                        console.log(`Stop ${idx + 1} extracted name:`, displayName);
+                        // Ensure we have a valid name, not empty or just coordinates
+                        if (displayName && displayName.length > 3 && !displayName.match(/^\d+\.\d+,\s*\d+\.\d+$/)) {
+                          return { idx, name: displayName };
+                        } else {
+                          // Fallback to a readable format from coordinates
+                          const area = data.address?.neighbourhood || data.address?.suburb || data.address?.city_district || data.address?.city || data.address?.town;
+                          if (area) {
+                            return { idx, name: area };
+                          }
+                          return { idx, name: `Stop ${idx + 1}` };
+                        }
+                      } else {
+                        return { idx, name: `Stop ${idx + 1}` };
+                      }
                     } else {
-                      return { idx, name: `Location ${idx + 1}` };
+                      console.warn(`Failed to fetch name for stop ${idx + 1}, status: ${res.status}`);
+                      return { idx, name: `Stop ${idx + 1}` };
                     }
-                  } else {
-                    console.warn(`Failed to fetch name for stop ${idx + 1}, status: ${res.status}`);
-                    return { idx, name: `Location ${idx + 1}` };
+                  } catch (fetchErr) {
+                    console.error('Fetch error for stop', idx + 1, fetchErr);
+                    return { idx, name: `Stop ${idx + 1}` };
                   }
                 } catch (e) {
                   console.error('Failed to fetch name for stop', idx + 1, e);
-                  return { idx, name: `Location ${idx + 1}` };
+                  return { idx, name: `Stop ${idx + 1}` };
                 }
               });
               
@@ -1042,35 +1159,52 @@ export default function CreateRidePage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const searchTimeoutRef = useRef<number | null>(null);
   
+  // Cache the Firebase auth token for search suggestions to avoid repeated async calls and speed up suggestions
+  const searchTokenRef = useRef<string | null>(null);
+  const searchTokenTimeRef = useRef<number>(0);
   const searchNominatim = async (q: string, limit: number) => {
-    // Show suggestions for even a single character; special-case 'all' to broaden results
     if (q.length < 1) return [];
+    if (!user) return [];
     const queryText = q.trim().toLowerCase() === 'all' ? 'karachi' : q;
     try {
-        // Karachi-wide bounding box to include large and small places
-        const KARACHI_VIEWBOX = { minLon: 66.5, minLat: 24.6, maxLon: 67.5, maxLat: 25.5 };
-        const viewbox = `${KARACHI_VIEWBOX.minLon},${KARACHI_VIEWBOX.maxLat},${KARACHI_VIEWBOX.maxLon},${KARACHI_VIEWBOX.minLat}`; // lon,lat ordering per Nominatim
-        const params = new URLSearchParams({
-            q: queryText,
-            format: 'jsonv2',
-        limit: String(Math.max(1, Math.min(500, limit || 100))),
-            countrycodes: 'pk',
-        addressdetails: '1',
-            viewbox: viewbox,
-            bounded: '1'
-        });
-        // Use server-side proxy for search to avoid client-side CORS/UA restrictions
-        const res = await fetch(`/api/nominatim/search?${params.toString()}`);
-        if (!res.ok) {
-            console.warn('Nominatim search proxy returned non-OK', { status: res.status });
-            return [];
+      // Cache the token for 4 minutes (Firebase tokens are valid for 1 hour)
+      const now = Date.now();
+      if (!searchTokenRef.current || now - searchTokenTimeRef.current > 4 * 60 * 1000) {
+        try {
+          searchTokenRef.current = await user.getIdToken();
+          searchTokenTimeRef.current = now;
+        } catch (e) {
+          console.warn('Could not get auth token for search', e);
+          return [];
         }
-        const results = await res.json();
-        // Return as-is; the server viewbox already bounds to Karachi, so include all small places
-        return Array.isArray(results) ? results : [];
-    } catch (e) {
-        console.error('Nominatim search failed', e);
+      }
+      const token = searchTokenRef.current;
+      // Karachi-wide bounding box to include large and small places
+      const KARACHI_VIEWBOX = { minLon: 66.5, minLat: 24.6, maxLon: 67.5, maxLat: 25.5 };
+      const viewbox = `${KARACHI_VIEWBOX.minLon},${KARACHI_VIEWBOX.maxLat},${KARACHI_VIEWBOX.maxLon},${KARACHI_VIEWBOX.minLat}`;
+      const params = new URLSearchParams({
+        q: queryText,
+        format: 'jsonv2',
+        limit: String(Math.max(1, Math.min(50, limit || 20))),
+        countrycodes: 'pk',
+        addressdetails: '1',
+        viewbox: viewbox,
+        bounded: '1'
+      });
+      const res = await fetch(`/api/nominatim/search?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        console.warn('Nominatim search proxy returned non-OK', { status: res.status });
         return [];
+      }
+      const results = await res.json();
+      return Array.isArray(results) ? results : [];
+    } catch (e) {
+      console.error('Nominatim search failed', e);
+      return [];
     }
   };
 
@@ -1085,8 +1219,8 @@ export default function CreateRidePage() {
     
     setSearchLoading(true);
     if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
-    // Fast debounce for responsive suggestions without overwhelming the API
-    const delay = 200;
+    // Very fast debounce for instant suggestions - only 50ms to group rapid keystrokes
+    const delay = 50;
     searchTimeoutRef.current = window.setTimeout(async () => {
       const results = await searchNominatim(query.text, suggestLimit);
       setSuggestions(results);
@@ -1131,7 +1265,38 @@ export default function CreateRidePage() {
   }, [transportMode, distanceKm, durationMin, departureTimeValue]);
   
   const handleSelectSuggestion = (field: 'from' | 'to', place: any) => {
-    const name = place.display_name;
+    // Build a clean, readable place name from address parts
+    const a = place.address || {};
+    const placeName = a.amenity || a.building || a.shop || a.office || a.tourism || a.leisure;
+    const road = a.road || a.residential || a.pedestrian;
+    const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+    const city = a.city || a.town || a.village;
+    
+    let name = '';
+    if (placeName && hood) {
+      name = `${placeName}, ${hood}`;
+    } else if (placeName) {
+      name = placeName;
+    } else if (road && hood) {
+      name = `${road}, ${hood}`;
+    } else if (hood && city) {
+      name = `${hood}, ${city}`;
+    } else if (hood) {
+      name = hood;
+    } else if (road && city) {
+      name = `${road}, ${city}`;
+    } else if (road) {
+      name = road;
+    } else if (city) {
+      name = city;
+    } else if (place.display_name) {
+      // Clean up display_name - take first 2-3 meaningful parts
+      const parts = place.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+      name = parts.slice(0, 3).join(', ') || 'Selected Location';
+    } else {
+      name = 'Selected Location';
+    }
+    
     const lat = parseFloat(place.lat);
     const lng = parseFloat(place.lon);
     
@@ -1516,7 +1681,37 @@ export default function CreateRidePage() {
     return (
       <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-slate-800/80 backdrop-blur-md rounded-md mt-1 z-[10050] max-h-60 overflow-auto shadow-lg">
         <div className="px-3 py-2 text-xs text-slate-400">Suggestions</div>
-            {suggestions.map((s, idx) => (
+            {suggestions.map((s, idx) => {
+                // Build a clean display name from address parts
+                const a = s.address || {};
+                const placeName = a.amenity || a.building || a.shop || a.office || a.tourism || a.leisure;
+                const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
+                const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+                const city = a.city || a.town || a.village;
+                
+                // Build primary name (what user sees first)
+                let primaryName = '';
+                if (placeName) {
+                  primaryName = placeName;
+                } else if (road && hood) {
+                  primaryName = `${road}, ${hood}`;
+                } else if (hood) {
+                  primaryName = hood;
+                } else if (road) {
+                  primaryName = road;
+                } else if (s.display_name) {
+                  // Clean up display_name - take first 2 parts
+                  const parts = s.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+                  primaryName = parts.slice(0, 2).join(', ') || s.display_name;
+                }
+                
+                // Build secondary info
+                const secondaryParts = [];
+                if (placeName && road) secondaryParts.push(road);
+                if (hood && !primaryName.includes(hood)) secondaryParts.push(hood);
+                if (city && !primaryName.includes(city)) secondaryParts.push(city);
+                
+                return (
                 <button
                   key={s.place_id || `${s.lat}-${s.lon}-${idx}`}
                   role="option"
@@ -1524,17 +1719,13 @@ export default function CreateRidePage() {
                   className="w-full text-left flex flex-col p-3 hover:bg-muted cursor-pointer"
                   onMouseDown={() => handleSelectSuggestion(field, s)}
                 >
-                    <div className="text-sm font-medium truncate">{s.display_name}</div>
-                    {(() => {
-                      const a = s.address || {};
-                      const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
-                      const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
-                      const city = a.city || a.town || a.village || a.county;
-                      const parts = [road, hood, city].filter(Boolean);
-                      return parts.length ? <div className="text-xs text-muted-foreground truncate">{parts.join(', ')}</div> : null;
-                    })()}
+                    <div className="text-sm font-medium truncate">{primaryName || 'Unknown Location'}</div>
+                    {secondaryParts.length > 0 && (
+                      <div className="text-xs text-muted-foreground truncate">{secondaryParts.join(', ')}</div>
+                    )}
                 </button>
-            ))}
+                );
+            })}
         {suggestions.length >= suggestLimit && (
           <div className="p-2 bg-slate-800/50 sticky bottom-0">
             <button type="button" className="text-xs text-accent hover:underline" onMouseDown={() => setSuggestLimit((v) => Math.min(200, v + 30))}>Show more results</button>
@@ -1639,6 +1830,7 @@ export default function CreateRidePage() {
                     lockedPin={(uniAuto === 'toUni' || uniAuto === 'fromUni')}
                     lockedPosition={(uniAuto === 'toUni' || uniAuto === 'fromUni') ? getCurrentUniversity() : null}
                     onAnyMapClick={() => { /* noop - map clicks handled in MapComponent */ }}
+                    getAuthToken={user ? () => user.getIdToken() : undefined}
                   />
                   
                   {activeMapSelect && (

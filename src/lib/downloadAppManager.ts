@@ -157,7 +157,7 @@ export class DownloadAppManager {
       return (('ontouchstart' in window) ||
               ('onmsgesturechange' in window) ||
               (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
-              (navigator.msMaxTouchPoints && navigator.msMaxTouchPoints > 0));
+              ((navigator as any).msMaxTouchPoints && (navigator as any).msMaxTouchPoints > 0));
     };
 
     // Screen size detection
@@ -728,7 +728,7 @@ export class DownloadAppManager {
       recommendedMethod = 'pwa';
     } else if (os === 'android') {
       recommendedMethod = 'apk';
-    } else if (deviceType === 'mobile' && (os === 'android' || os === 'ios')) {
+    } else if (deviceType === 'mobile' && os === 'ios') {
       recommendedMethod = 'app-store';
     }
 

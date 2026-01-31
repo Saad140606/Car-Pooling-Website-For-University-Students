@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield, AlertTriangle, BarChart3 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import 'leaflet/dist/leaflet.css';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import Logo from '@/components/logo';
@@ -16,6 +15,7 @@ import { VerificationBadge } from '@/components/VerificationBadge';
 import { useNotifications } from '@/contexts/NotificationContext';
 import NotificationBadge from '@/components/NotificationBadge';
 import { ErrorState } from '@/components/StateComponents';
+import { useToast } from '@/hooks/use-toast';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -34,12 +34,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { unreadCount } = useNotifications();
   const auth = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
   const [layoutError, setLayoutError] = useState<string | null>(null);
 
   // Check if current route is an admin route
   const isAdminRoute = pathname?.startsWith('/dashboard/admin');
 
-  // CRITICAL: Unified auth redirect logic with admin bypass
+  // Auth redirect logic - only redirect unauthenticated users to login
   useEffect(() => {
     // Don't redirect until everything is initialized
     if (!initialized) return;
@@ -52,35 +53,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       return;
     }
     
-    // For admin routes: if not admin and check is complete, redirect to login
+    // For admin routes: if not admin and check is complete, redirect to unauthorized
     if (isAdminRoute && !adminLoading && !isAdmin) {
-      router.replace('/auth/select-university');
+      router.replace('/unauthorized');
       return;
     }
     
-    // For non-admin routes: check if user is logged in
+    // For non-admin routes: if no user at all, redirect to login page
     if (!isAdminRoute && !user && !userLoading && initialized) {
-      router.replace('/auth/select-university');
+      router.replace('/auth/ned/login');
       return;
     }
   }, [initialized, user, userLoading, isAdmin, adminLoading, isAdminRoute, router]);
 
-  // CRITICAL: University requirement bypass for admins (only for non-admin routes)
-  useEffect(() => {
-    if (!user || !initialized) return;
-    
-    // Admin users bypass ALL requirements
-    if (isAdmin) return;
-    
-    // If still checking admin status, don't redirect yet
-    if (adminLoading) return;
-    
-    // Non-admin users must have university selected (except admin routes)
-    if (!isAdminRoute && !userData?.university && !userLoading) {
-      router.replace('/auth/select-university');
-      return;
-    }
-  }, [user, initialized, isAdmin, adminLoading, userData?.university, userLoading, isAdminRoute, router]);
+  // ALL CONDITIONAL REDIRECTS REMOVED
+  // Users always stay on dashboard after login - no redirects to select-university or complete-profile
 
   const handleSignOut = async () => {
     try {

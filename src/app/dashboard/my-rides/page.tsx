@@ -528,7 +528,8 @@ export default function MyRidesPage() {
   const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
 
-  const ridesQuery = (user && firestore && userData) ? query(
+  // Only create query if we have ALL required data (user, firestore, AND userData with university)
+  const ridesQuery = (user && firestore && userData && userData.university) ? query(
     collection(firestore, 'universities', userData.university, 'rides'),
     where('createdBy', '==', user.uid)
   ) : null;
@@ -577,6 +578,26 @@ export default function MyRidesPage() {
           <div className="text-center">
             <h2 className="text-2xl font-bold text-slate-50">No Rides Offered</h2>
             <p className="text-slate-300">You have not offered any rides yet.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Guard against missing university - show loading or empty state
+  if (!userData?.university) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-64 w-full" />
           </div>
         </div>
       </div>

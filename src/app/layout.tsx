@@ -1,4 +1,4 @@
-import type {Metadata} from 'next';
+import type {Metadata, Viewport} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseClientProvider } from '@/firebase/client-provider';
@@ -15,6 +15,18 @@ import SafeConsolePatch from '@/components/SafeConsolePatch';
 import { PWAServiceWorkerRegistration } from '@/components/pwa/PWAServiceWorkerRegistration';
 import { PWAInstallPromptHandler } from '@/components/pwa/PWAInstallPromptHandler';
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f3f4f6' },
+    { media: '(prefers-color-scheme: dark)', color: '#1f2937' },
+  ],
+};
+
 export const metadata: Metadata = {
   title: 'Campus Rides',
   description: 'University carpooling, simplified.',
@@ -27,17 +39,6 @@ export const metadata: Metadata = {
   formatDetection: {
     telephone: false,
   },
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-    viewportFit: 'cover',
-  },
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f3f4f6' },
-    { media: '(prefers-color-scheme: dark)', color: '#1f2937' },
-  ],
   icons: {
     icon: [
       { url: '/icons/favicon-32x32.png', sizes: '32x32', type: 'image/png' },

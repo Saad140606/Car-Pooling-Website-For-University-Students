@@ -1,8 +1,12 @@
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, connectStorageEmulator } from 'firebase/storage';
-import { getApp } from 'firebase/app';
+import { getApps } from 'firebase/app';
 
 export function uploadFile(file: File, path: string, onProgress?: (p: number) => void) {
-  const storage = getStorage(getApp());
+  const apps = getApps();
+  if (!apps.length) {
+    throw new Error('Firebase app not initialized');
+  }
+  const storage = getStorage(apps[0]);
   
   // Increase max operational timeout to 120 seconds (default is 60)
   // This helps with slower connections or larger files

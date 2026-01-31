@@ -36,7 +36,7 @@ export function useSafeNavigation() {
     
     // For admin routes: if not admin, deny access
     if (isAdminRoute && !adminLoading && !isAdmin) {
-      router.replace('/auth/select-university');
+      router.replace('/unauthorized');
       return;
     }
     
@@ -55,7 +55,7 @@ export function useSafeNavigation() {
         );
 
         if (isProtectedRoute) {
-          router.replace('/auth/select-university');
+          router.replace('/auth/ned/login');
         }
       }
     }, 400);
@@ -63,38 +63,8 @@ export function useSafeNavigation() {
     return () => clearTimeout(timeout);
   }, [initialized, user, loading, pathname, router, isAdmin, adminLoading, isAdminRoute]);
 
-  /**
-   * University requirement check
-   * SKIP for admin routes - admins don't need university data
-   */
-  useEffect(() => {
-    if (!user || !initialized || !pathname.startsWith('/dashboard')) {
-      return;
-    }
-    
-    // Admin users bypass university requirement completely
-    if (isAdmin) {
-      return;
-    }
-    
-    // If still checking admin status, wait before redirecting
-    if (adminLoading) {
-      return;
-    }
-    
-    // Admin routes bypass university requirement
-    if (isAdminRoute) {
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      if (!userData?.university) {
-        router.replace('/auth/select-university');
-      }
-    }, 300);
-
-    return () => clearTimeout(timeout);
-  }, [user, initialized, userData?.university, pathname, router, isAdminRoute, isAdmin, adminLoading]);
+  // University requirement check REMOVED
+  // Users stay on dashboard regardless of university selection
 
   /**
    * Safe redirect function
@@ -106,14 +76,11 @@ export function useSafeNavigation() {
       const targetIsAdmin = path.startsWith('/dashboard/admin') || path.startsWith('/admin');
       
       if (!targetIsAdmin && options?.requireAuth && !user) {
-        router.replace('/auth/select-university');
+        router.replace('/auth/ned/login');
         return;
       }
 
-      if (!targetIsAdmin && options?.requireUniversity && !userData?.university) {
-        router.replace('/auth/select-university');
-        return;
-      }
+      // University check removed - users go directly to their destination
 
       router.push(path);
     } catch (error) {
@@ -146,7 +113,6 @@ export function useSafeNavigation() {
    */
   const getSafeHref = (path: string): string | null => {
     if (!initialized || !user) return null;
-    if (pathname.startsWith('/dashboard') && !userData?.university) return null;
     return path;
   };
 

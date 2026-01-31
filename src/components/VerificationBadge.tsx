@@ -1,4 +1,5 @@
 // src/components/VerificationBadge.tsx
+// Updated: Force cache invalidation for Turbopack HMR
 'use client';
 
 import { Badge } from '@/components/ui/badge';

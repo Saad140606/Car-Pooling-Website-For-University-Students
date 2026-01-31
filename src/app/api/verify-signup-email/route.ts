@@ -5,7 +5,8 @@ import { adminDb } from '@/firebase/firebaseAdmin';
 import { isValidUniversityEmail } from '@/lib/university-verification';
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
-const MAX_ATTEMPTS = 5;
+// NOTE: Removed MAX_ATTEMPTS - users can retry unlimited times without lockout
+// Only OTP expiry (10 minutes) limits attempts
 
 function hashOtp(otp: string): string {
   return crypto.createHash('sha256').update(otp).digest('hex');
@@ -43,10 +44,11 @@ export async function POST(request: NextRequest) {
 
     const now = Date.now();
 
-    if (otpData.lockedUntil && now < otpData.lockedUntil) {
-      console.warn('Account locked for uid:', uid);
-      return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
-    }
+    // NOTE: Removed lockout mechanism - users can retry unlimited times
+    // if (otpData.lockedUntil && now < otpData.lockedUntil) {
+    //   console.warn('Account locked for uid:', uid);
+    //   return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
+    // }
 
     if (otpData.expiresAt < now) {
       console.warn('OTP expired for uid:', uid, 'expiresAt:', otpData.expiresAt, 'now:', now);
@@ -58,10 +60,11 @@ export async function POST(request: NextRequest) {
 
     if (attemptedHash !== otpData.otpHash) {
       const attempts = (otpData.attempts || 0) + 1;
-      const lockedUntil = attempts >= MAX_ATTEMPTS ? now + OTP_EXPIRY_MS : null;
+      // NOTE: Removed lockout - just track attempts for logging/analytics
       console.warn('Invalid OTP attempt', attempts, 'for uid:', uid);
-      await signupOtpRef.update({ attempts, lockedUntil, updatedAt: FieldValue.serverTimestamp() });
-      return NextResponse.json({ error: 'Invalid code. Please try again.' }, { status: 401 });
+      await signupOtpRef.update({ attempts, updatedAt: FieldValue.serverTimestamp() });
+      // Return simple "Invalid OTP" error without rate limiting
+      return NextResponse.json({ error: 'Invalid OTP' }, { status: 401 });
     }
 
     // SECURITY: OTP verification successful - proceeding with registration

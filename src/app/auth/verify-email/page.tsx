@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
@@ -57,7 +57,16 @@ function VerifyEmailContent() {
     return `${m}:${s}`;
   };
 
+  // CRITICAL: Ref to prevent multiple simultaneous submissions
+  const isSubmittingRef = useRef(false);
+
   const handleVerifyOtp = async () => {
+    // CRITICAL: Prevent multiple submissions
+    if (isSubmittingRef.current || verifying) {
+      console.log('[OTP] Blocked duplicate submission attempt');
+      return;
+    }
+    
     if (!otp || otp.length !== 6 || !uid) {
       setOtpError(true);
       setTimeout(() => setOtpError(false), 600);
@@ -65,6 +74,8 @@ function VerifyEmailContent() {
       return;
     }
 
+    // Lock submission
+    isSubmittingRef.current = true;
     setVerifying(true);
     try {
       const response = await fetch('/api/verify-signup-email', {
@@ -74,8 +85,6 @@ function VerifyEmailContent() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        setOtpError(true);
-        setTimeout(() => setOtpError(false), 600);
         const msg = String(payload?.error || 'Verification failed');
         
         // ===== CRITICAL: Handle email conflict (409) and cleanup account =====
@@ -101,9 +110,22 @@ function VerifyEmailContent() {
         }
         // ===== END CRITICAL CLEANUP =====
         
-        if (/invalid code/i.test(msg)) {
-          toast({ variant: 'destructive', title: 'Invalid code', description: 'Please try again.' });
+        // For 401 (Invalid OTP): show simple error and clear input
+        if (response.status === 401) {
+          setOtpError(true);
+          setTimeout(() => setOtpError(false), 600);
+          setOtp(''); // Clear input for next attempt
+          toast({ variant: 'destructive', title: 'Invalid OTP', description: 'Please try again.' });
+        } else if (response.status === 410) {
+          // 410 = Code expired
+          setOtpError(true);
+          setTimeout(() => setOtpError(false), 600);
+          setOtp(''); // Clear input
+          toast({ variant: 'destructive', title: 'Code Expired', description: msg });
         } else {
+          // Other errors
+          setOtpError(true);
+          setTimeout(() => setOtpError(false), 600);
           toast({ variant: 'destructive', title: 'Verification failed', description: msg });
         }
         setVerifying(false);
@@ -119,9 +141,14 @@ function VerifyEmailContent() {
       console.error('Error verifying OTP:', e);
       setOtpError(true);
       setTimeout(() => setOtpError(false), 600);
+      setOtp(''); // Clear input on network error
       toast({ variant: 'destructive', title: 'Verification failed', description: e?.message || 'Please try again.' });
     } finally {
       setVerifying(false);
+      // CRITICAL: Unlock submission after a small delay to prevent rapid re-triggers
+      setTimeout(() => {
+        isSubmittingRef.current = false;
+      }, 500);
     }
   };
 

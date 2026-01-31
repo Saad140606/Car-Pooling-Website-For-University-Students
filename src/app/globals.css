@@ -89,14 +89,18 @@
   /* Global fix for sticky header gap on all pages */
   html {
     scroll-padding-top: 64px; /* Accounts for sticky header height */
-    @apply overflow-x-hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     max-width: 100vw;
   }
   
   body {
-    @apply bg-background text-foreground overflow-x-hidden;
+    @apply bg-background text-foreground;
+    overflow-x: hidden;
+    overflow-y: visible; /* Let body content flow naturally */
     max-width: 100vw;
     position: relative;
+    min-height: 100vh;
   }
   
   /* Custom scrollbar styling with smooth animations */

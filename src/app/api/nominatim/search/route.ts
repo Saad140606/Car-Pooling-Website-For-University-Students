@@ -45,21 +45,22 @@ export async function GET(req: NextRequest) {
 
     // ===== INPUT VALIDATION =====
     const sanitizedQuery = sanitizeString(q).slice(0, 200); // Limit query length
-    if (!sanitizedQuery || sanitizedQuery.length < 2) {
+    if (!sanitizedQuery || sanitizedQuery.length < 1) {
       return errorResponse('Query too short', 400);
     }
 
-    // Validate limit parameter
+    // Validate limit parameter - allow up to 50 results for better suggestions
     const parsedLimit = parseInt(limit, 10);
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 10) {
-      return errorResponse('Invalid limit parameter (1-10)', 400);
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 50) {
+      return errorResponse('Invalid limit parameter (1-50)', 400);
     }
 
     const params = new URLSearchParams({ 
       q: sanitizedQuery, 
       format: 'json', 
-      limit: Math.min(parsedLimit, 10).toString(), 
-      countrycodes: 'pk' 
+      limit: Math.min(parsedLimit, 50).toString(), 
+      countrycodes: 'pk',
+      addressdetails: '1'
     });
 
     if (viewbox) {

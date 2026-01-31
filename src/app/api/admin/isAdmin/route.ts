@@ -23,9 +23,25 @@ export async function POST(req: NextRequest) {
     }
 
     const uid = payload.uid;
+    const email = payload.email;
     if (!uid) {
       console.warn('[api/admin/isAdmin] No UID in token');
       return NextResponse.json({ isAdmin: false }, { status: 401 });
+    }
+
+    // First check NEXT_PUBLIC_ADMIN_EMAILS (client-side admin list)
+    try {
+      const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+      
+      if (email && adminEmails.includes(email.toLowerCase())) {
+        console.log(`[api/admin/isAdmin] User ${uid} (${email}) confirmed as admin via NEXT_PUBLIC_ADMIN_EMAILS`);
+        return NextResponse.json({ isAdmin: true }, { status: 200 });
+      }
+    } catch (err) {
+      console.warn('[api/admin/isAdmin] Failed to check NEXT_PUBLIC_ADMIN_EMAILS:', err);
     }
 
     // Check if user document exists in admins collection
@@ -34,7 +50,7 @@ export async function POST(req: NextRequest) {
       const isAdmin = snap.exists;
       
       if (isAdmin) {
-        console.log(`[api/admin/isAdmin] User ${uid} confirmed as admin`);
+        console.log(`[api/admin/isAdmin] User ${uid} confirmed as admin via Firestore`);
       }
       
       return NextResponse.json({ isAdmin }, { status: 200 });

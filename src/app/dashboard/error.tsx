@@ -31,7 +31,7 @@ export default function DashboardErrorPage({
     title = 'Authentication Required';
     description = 'Your session may have expired. Please log in again.';
     primaryAction = 'Log In';
-    primaryActionFn = () => router.push('/auth/select-university');
+    primaryActionFn = () => router.push('/auth/ned/login');
   } else if (isNotFoundError) {
     title = 'Page Not Found';
     description = 'The page you\'re looking for doesn\'t exist or has been removed.';

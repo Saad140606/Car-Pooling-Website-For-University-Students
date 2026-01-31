@@ -377,12 +377,24 @@ export default function AccountPage() {
     }
   }; 
 
+  // CRITICAL: Ref to prevent multiple simultaneous submissions
+  const isSubmittingOtpRef = useRef(false);
+
   const handleVerifyOtp = async () => {
+    // CRITICAL: Prevent multiple submissions
+    if (isSubmittingOtpRef.current || verifying) {
+      console.log('[OTP] Blocked duplicate submission attempt');
+      return;
+    }
+    
     if (!user) return;
     if (!otp || otp.length !== 6) {
       toast({ variant: 'destructive', title: 'Invalid code', description: 'Enter the 6-digit code sent to your email.' });
       return;
     }
+    
+    // Lock submission
+    isSubmittingOtpRef.current = true;
     setVerifying(true);
     try {
       const response = await fetch('/api/verify-university-email', {
@@ -393,9 +405,16 @@ export default function AccountPage() {
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const msg = String(payload?.error || 'Verification failed');
-        if (/invalid code/i.test(msg)) {
-          toast({ variant: 'destructive', title: 'Invalid code', description: 'Please try again.' });
+        // Handle 401 (Invalid OTP): show error and clear input
+        if (response.status === 401) {
+          setOtp(''); // Clear input for next attempt
+          toast({ variant: 'destructive', title: 'Invalid OTP', description: 'Please try again.' });
+        } else if (response.status === 410) {
+          // 410 = Code expired
+          setOtp(''); // Clear input
+          toast({ variant: 'destructive', title: 'Code Expired', description: msg });
         } else {
+          // Other errors
           toast({ variant: 'destructive', title: 'Verification failed', description: msg });
         }
         setVerifying(false);
@@ -409,9 +428,14 @@ export default function AccountPage() {
       router.refresh();
     } catch (e: any) {
       console.error('Error verifying OTP:', e);
+      setOtp(''); // Clear input on network error
       toast({ variant: 'destructive', title: 'Verification failed', description: e?.message || 'Please try again.' });
     } finally {
       setVerifying(false);
+      // CRITICAL: Unlock submission after a small delay to prevent rapid re-triggers
+      setTimeout(() => {
+        isSubmittingOtpRef.current = false;
+      }, 500);
     }
   };
 

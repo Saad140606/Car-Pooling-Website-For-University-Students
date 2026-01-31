@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, useFirestore, useIsAdmin } from '@/firebase';
 import { query, orderBy, onSnapshot, doc, updateDoc } from 'firebase/firestore';
@@ -14,7 +14,16 @@ export default function AdminDashboardPage() {
   const db = useFirestore();
   const { user, initialized } = useUser();
   const { isAdmin, loading: adminLoading } = useIsAdmin();
+  
+  // ALL useState hooks MUST be declared at the top, before any conditional returns
+  // This is required by React's Rules of Hooks
   const [accessDenied, setAccessDenied] = useState(false);
+  const [reports, setReports] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loadingReports, setLoadingReports] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [reportsError, setReportsError] = useState<string | null>(null);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
 
   // CRITICAL: Admin-only access control
   useEffect(() => {
@@ -31,6 +40,58 @@ export default function AdminDashboardPage() {
       return () => clearTimeout(t);
     }
   }, [initialized, isAdmin, adminLoading, router]);
+
+  // ALL useEffect hooks must be before conditional returns - load data
+  useEffect(() => {
+    if (!db || !isAdmin || !initialized || adminLoading) return;
+    
+    const reportsCol = safeCollection(db, 'reports');
+    const q = query(reportsCol, orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      const rows: any[] = [];
+      snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+      setReports(rows);
+      setLoadingReports(false);
+      setReportsError(null);
+    }, (err) => { console.warn('reports snapshot error', err); setLoadingReports(false); });
+
+    const msgsCol = safeCollection(db, 'contact_messages');
+    const q2 = query(msgsCol, orderBy('createdAt', 'desc'));
+    const unsub2 = onSnapshot(q2, (snap) => {
+      const rows: any[] = [];
+      snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+      setMessages(rows);
+      setLoadingMessages(false);
+      setMessagesError(null);
+    }, (err) => { console.warn('contact_messages snapshot error', err); setLoadingMessages(false); });
+
+    return () => { unsub(); unsub2(); };
+  }, [db, isAdmin, initialized, adminLoading]);
+
+  // Helper functions defined with useMemo to maintain stable references
+  const formatPerson = useMemo(() => (obj: any) => {
+    if (!obj) return null;
+    const name = obj.name || obj.displayName || obj.fullName || obj.username || obj.userName || obj.subject || null;
+    const email = obj.email || obj.userEmail || obj.contactEmail || null;
+    const uid = obj.uid || obj.userId || obj.id || null;
+    const university = obj.university || obj.univ || null;
+    if (name || email || uid || university) return { name, email, uid, university, raw: obj };
+    return null;
+  }, []);
+
+  const personFromReport = useMemo(() => (r: any) => {
+    return formatPerson(r.submittedBy) || formatPerson(r.submittedUser) || formatPerson(r.reportedBy) || formatPerson(r.createdBy) || null;
+  }, [formatPerson]);
+
+  const personFromMessage = useMemo(() => (m: any) => {
+    if (!m) return null;
+    if (m.name || m.email || m.uid) return { name: m.name || null, email: m.email || null, uid: m.uid || null, raw: m };
+    if (m.from) return formatPerson(m.from) || { name: String(m.from) };
+    if (m.sender) return formatPerson(m.sender) || { name: String(m.sender) };
+    return null;
+  }, [formatPerson]);
+
+  // ============ ALL CONDITIONAL RETURNS MUST BE AFTER ALL HOOKS ============
 
   // If access denied, show error
   if (accessDenied) {
@@ -57,66 +118,7 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const [reports, setReports] = useState<any[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [loadingReports, setLoadingReports] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(true);
-  const [reportsError, setReportsError] = useState<string | null>(null);
-  const [messagesError, setMessagesError] = useState<string | null>(null);
-
-  const formatPerson = (obj: any) => {
-    if (!obj) return null;
-    // common shapes: { uid, name, email, university }, or { userId, displayName }, or flat strings
-    const name = obj.name || obj.displayName || obj.fullName || obj.username || obj.userName || obj.subject || null;
-    const email = obj.email || obj.userEmail || obj.contactEmail || null;
-    const uid = obj.uid || obj.userId || obj.id || null;
-    const university = obj.university || obj.univ || null;
-    if (name || email || uid || university) return { name, email, uid, university, raw: obj };
-    return null;
-  };
-
-  const personFromReport = (r: any) => {
-    return formatPerson(r.submittedBy) || formatPerson(r.submittedUser) || formatPerson(r.reportedBy) || formatPerson(r.createdBy) || null;
-  };
-
-  const personFromMessage = (m: any) => {
-    // message may be flat or nested
-    if (!m) return null;
-    if (m.name || m.email || m.uid) return { name: m.name || null, email: m.email || null, uid: m.uid || null, raw: m };
-    if (m.from) return formatPerson(m.from) || { name: String(m.from) };
-    if (m.sender) return formatPerson(m.sender) || { name: String(m.sender) };
-    return null;
-  };
-
-  useEffect(() => {
-    if (!db || !isAdmin) return;
-    const reportsCol = safeCollection(db, 'reports');
-    const q = query(reportsCol, orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const rows: any[] = [];
-      snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
-      setReports(rows);
-      setLoadingReports(false);
-      setReportsError(null);
-    }, (err) => { console.warn('reports snapshot error', err); setLoadingReports(false); });
-
-    const msgsCol = safeCollection(db, 'contact_messages');
-    const q2 = query(msgsCol, orderBy('createdAt', 'desc'));
-    const unsub2 = onSnapshot(q2, (snap) => {
-      const rows: any[] = [];
-      snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
-      setMessages(rows);
-      setLoadingMessages(false);
-      setMessagesError(null);
-    }, (err) => { console.warn('contact_messages snapshot error', err); setLoadingMessages(false); });
-
-    return () => { unsub(); unsub2(); };
-  }, [db, isAdmin]);
-
-  // Do not expose admin UI until admin check finishes
-  if (adminLoading || !initialized) return null;
-
-  // If not admin, show safe denied message; suppress debug info in production
+  // If not admin, show safe denied message
   if (!user || !isAdmin) {
     const isProd = process.env.NODE_ENV === 'production';
     return (

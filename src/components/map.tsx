@@ -63,7 +63,10 @@ if (typeof window !== 'undefined') {
 
 export const MapContainer = dynamic(
   () => import('react-leaflet').then((mod) => mod.MapContainer),
-  { ssr: false }
+  { 
+    ssr: false,
+    loading: () => <div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>
+  }
 );
 
 export const TileLayer = dynamic(

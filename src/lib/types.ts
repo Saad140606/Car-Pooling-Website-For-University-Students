@@ -14,6 +14,9 @@ export interface UserProfile {
   universityEmail?: string; // @nu.edu.pk or @neduet.edu.pk
   universityEmailVerified?: boolean;
   universityEmailVerifiedAt?: Timestamp;
+  // Password rate limiting
+  passwordChangeCount?: number;
+  passwordChangeWindowStart?: number;
 }
 
 // Canonical user profile used for new hierarchical storage under

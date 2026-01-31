@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, Suspense } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -89,9 +89,12 @@ export default function StopsViewer({
   // Fetch names for stops that don't have meaningful names
   React.useEffect(() => {
     const fetchMissingNames = async () => {
-      // Check if any stops need names fetched (have generic names like "Stop 1", "Stop 2", etc.)
+      // Check if any stops need names fetched (have generic names like "Stop 1", "Stop 2", empty, or coordinates)
       const stopsNeedingNames = stops.filter(stop => 
-        !stop.name || /^(Stop|Location|Loading)\s*\d+$/i.test(stop.name.trim())
+        !stop.name || 
+        /^(Stop|Location|Loading)\s*\d+$/i.test(stop.name.trim()) ||
+        stop.name.trim().length === 0 ||
+        /^\d+\.\d+,\s*\d+\.\d+$/.test(stop.name.trim()) // Match coordinate patterns like "24.8607, 67.0011"
       );
 
       if (stopsNeedingNames.length === 0 || isFetchingNames) return;
@@ -119,18 +122,40 @@ export default function StopsViewer({
                 const parts = data.display_name.split(',').map((p: string) => p.trim());
                 let shortName = parts[0];
                 
-                if (parts.length > 1 && (/^\d+[a-z]?$/.test(shortName.trim()))) {
-                  shortName = `${parts[0]}, ${parts[1]}`;
-                } else if (shortName.length < 3 && parts[1]?.length > 2) {
-                  shortName = `${parts[0]}, ${parts[1]}`;
+                // Improve name extraction for better readability
+                if (data.address) {
+                  const area = data.address.neighbourhood || data.address.suburb || data.address.city_district;
+                  const road = data.address.road || data.address.residential || data.address.pedestrian;
+                  
+                  if (road && area) {
+                    shortName = `${road}, ${area}`;
+                  } else if (road) {
+                    shortName = road;
+                  } else if (area) {
+                    shortName = area;
+                  } else if (parts.length > 1 && (/^\d+[a-z]?$/.test(shortName.trim()))) {
+                    shortName = `${parts[0]}, ${parts[1]}`;
+                  } else if (shortName.length < 3 && parts[1]?.length > 2) {
+                    shortName = `${parts[0]}, ${parts[1]}`;
+                  }
                 }
                 
-                updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: shortName };
-                console.log(`Fetched name for stop ${stopIndex + 1}:`, shortName);
+                // Final validation - ensure name is not empty or coordinates
+                if (shortName && shortName.length > 2 && !/^\d+\.\d+/.test(shortName)) {
+                  updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: shortName };
+                  console.log(`Fetched name for stop ${stopIndex + 1}:`, shortName);
+                } else {
+                  // Fallback to a generic but informative name
+                  updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: `Stop ${stopIndex + 1}` };
+                }
               }
             }
           } catch (error) {
             console.error(`Failed to fetch name for stop at index ${stopIndex}:`, error);
+            // Ensure we at least have a generic name
+            if (!updatedStops[stopIndex].name || updatedStops[stopIndex].name.trim().length === 0) {
+              updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: `Stop ${stopIndex + 1}` };
+            }
           }
         }
         
@@ -375,7 +400,7 @@ export default function StopsViewer({
             setSelectedPlaceName(shortName);
           } catch (error) {
             console.error('Failed to fetch place name:', error);
-            setSelectedPlaceName(`${clickedPoint.lat.toFixed(6)}, ${clickedPoint.lng.toFixed(6)}`);
+            setSelectedPlaceName('Selected Location');
           }
         } else {
           setGeocodingError('Please click on or near the route line.');
@@ -642,12 +667,13 @@ export default function StopsViewer({
           {/* Map Preview */}
           {stops.length > 0 && routePolyline && (
             <div className="border rounded-lg overflow-hidden flex-shrink-0" style={{ height: '250px' }}>
-              <MapContainer
-                bounds={L.latLngBounds(
-                  stops.map((s) => [s.lat, s.lng])
-                )}
-                style={{ height: '100%', width: '100%', cursor: mapSelectionMode ? 'crosshair' : 'grab' }}
-              >
+              <Suspense fallback={<div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>}>
+                <MapContainer
+                  bounds={L.latLngBounds(
+                    stops.map((s) => [s.lat, s.lng])
+                  )}
+                  style={{ height: '100%', width: '100%', cursor: mapSelectionMode ? 'crosshair' : 'grab' }}
+                >
                 <TileLayer
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                   attribution='&copy; OpenStreetMap contributors'
@@ -717,10 +743,15 @@ export default function StopsViewer({
                       tooltipAnchor: [0, -48],
                     })}
                   >
-                    <Popup><strong>${stop.name}</strong><br/>${stop.isAutoGenerated ? 'Auto' : 'Custom'}</Popup>
+                    <Popup>
+                      <strong>{stop.name}</strong>
+                      <br/>
+                      {stop.isAutoGenerated ? 'Auto' : 'Custom'}
+                    </Popup>
                   </Marker>
                 ))}
               </MapContainer>
+              </Suspense>
             </div>
           )}
 
@@ -1008,6 +1039,7 @@ export default function StopsViewer({
           {/* Map Display */}
           {routePolyline && routeCoordinates && routeCoordinates.length > 0 && (
             <div className="border rounded-lg overflow-hidden h-64">
+              <Suspense fallback={<div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>}>
               <MapContainer
                 bounds={L.latLngBounds(routeCoordinates as L.LatLngExpression[])}
                 style={{ height: '100%', width: '100%' }}
@@ -1034,6 +1066,7 @@ export default function StopsViewer({
                   </Marker>
                 ))}
               </MapContainer>
+              </Suspense>
             </div>
           )}
 

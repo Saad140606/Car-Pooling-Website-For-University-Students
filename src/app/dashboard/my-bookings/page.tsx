@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import MapLeaflet from '@/components/MapLeaflet';
 import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
+import { InlineVerifiedBadge } from '@/components/VerificationBadge';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -346,7 +347,8 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
     return () => clearInterval(interval);
   }, [booking?.status, ride?.departureTime]);
 
-  const driverName = safeGet(driver, 'fullName', 'Driver');
+  const driverName = safeGet(driver, 'fullName', 'Ride Provider');
+  const driverVerified = safeGet(driver, 'universityEmailVerified') || safeGet(driver, 'verified') || false;
   const driverInitials = driverName.split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase();
   const rideFrom = safeGet(ride, 'from', 'Unknown');
   const rideTo = safeGet(ride, 'to', 'Unknown');
@@ -372,7 +374,10 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <CardTitle className="text-sm font-bold text-white truncate">{driverName}</CardTitle>
+              <div className="flex items-center gap-1.5">
+                <CardTitle className="text-sm font-bold text-white truncate">{driverName}</CardTitle>
+                <InlineVerifiedBadge verified={driverVerified} />
+              </div>
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {booking.status === 'CONFIRMED' && (
                   <Badge className="gap-1 bg-green-600/80 text-white text-[10px] py-0 px-1.5">
@@ -840,7 +845,10 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <CardTitle className="text-sm font-bold text-white truncate">{driver.fullName || 'Driver'}</CardTitle>
+              <div className="flex items-center gap-1.5">
+                <CardTitle className="text-sm font-bold text-white truncate">{driver.fullName || 'Driver'}</CardTitle>
+                <InlineVerifiedBadge verified={driver.universityEmailVerified || driver.verified} />
+              </div>
               <div className="flex items-center gap-1.5 mt-1">
                 {booking.status === 'CONFIRMED' && (
                   <Badge className="gap-1 bg-green-600/80 text-white text-[10px] py-0 px-1.5">

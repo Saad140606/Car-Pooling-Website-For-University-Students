@@ -172,6 +172,20 @@ export class RingtoneManager {
   }
 
   /**
+   * Stop vibration
+   */
+  stopVibration(): void {
+    if (typeof window === 'undefined' || !navigator.vibrate) return;
+
+    try {
+      navigator.vibrate(0); // 0 stops vibration
+      console.log('[Ringtone] Vibration stopped');
+    } catch (error) {
+      console.error('[Ringtone] Stop vibration failed:', error);
+    }
+  }
+
+  /**
    * Trigger haptic feedback (iOS)
    */
   triggerHaptic(style: 'light' | 'medium' | 'heavy' = 'medium') {

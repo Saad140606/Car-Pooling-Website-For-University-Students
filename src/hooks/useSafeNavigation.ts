@@ -2,28 +2,47 @@
 
 import { useRouter, usePathname } from 'next/navigation';
 import React, { useEffect } from 'react';
-import { useUser } from '@/firebase';
+import { useUser, useIsAdmin } from '@/firebase';
 
 /**
  * Safe Navigation Hook
  * Prevents navigation to pages without required data/auth
  * Provides graceful redirects and error handling
+ * 
+ * CRITICAL: Admin users bypass all university/onboarding checks
  */
 export function useSafeNavigation() {
   const router = useRouter();
   const pathname = usePathname();
   const { user, loading, initialized, data: userData } = useUser();
+  const { isAdmin, loading: adminLoading } = useIsAdmin();
+  
+  // Check if current path is an admin route
+  const isAdminRoute = pathname?.startsWith('/dashboard/admin');
 
   /**
-   * Redirect to auth if not authenticated
+   * CRITICAL: Unified auth and admin redirect logic
    */
   useEffect(() => {
-    if (!initialized) return; // Wait for auth to initialize
+    if (!initialized) return;
 
-    // Add small delay to avoid false positives during hydration
+    // For admin routes: wait for admin check to complete
+    if (isAdminRoute && adminLoading) return;
+    
+    // For admin routes: if confirmed admin, allow access
+    if (isAdminRoute && isAdmin && user) {
+      return;
+    }
+    
+    // For admin routes: if not admin, deny access
+    if (isAdminRoute && !adminLoading && !isAdmin) {
+      router.replace('/auth/select-university');
+      return;
+    }
+    
+    // For non-admin routes: check if user is authenticated
     const timeout = setTimeout(() => {
       if (!user && !loading) {
-        // Only redirect if we're in a protected route
         const protectedRoutes = [
           '/dashboard',
           '/bookings',
@@ -42,13 +61,29 @@ export function useSafeNavigation() {
     }, 400);
 
     return () => clearTimeout(timeout);
-  }, [initialized, user, loading, pathname, router]);
+  }, [initialized, user, loading, pathname, router, isAdmin, adminLoading, isAdminRoute]);
 
   /**
-   * Redirect if university data is missing
+   * University requirement check
+   * SKIP for admin routes - admins don't need university data
    */
   useEffect(() => {
     if (!user || !initialized || !pathname.startsWith('/dashboard')) {
+      return;
+    }
+    
+    // Admin users bypass university requirement completely
+    if (isAdmin) {
+      return;
+    }
+    
+    // If still checking admin status, wait before redirecting
+    if (adminLoading) {
+      return;
+    }
+    
+    // Admin routes bypass university requirement
+    if (isAdminRoute) {
       return;
     }
 
@@ -59,19 +94,23 @@ export function useSafeNavigation() {
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [user, initialized, userData?.university, pathname, router]);
+  }, [user, initialized, userData?.university, pathname, router, isAdminRoute, isAdmin, adminLoading]);
 
   /**
    * Safe redirect function
+   * Admin routes bypass auth/university requirements
    */
   const safeRedirect = (path: string, options?: { requireAuth?: boolean; requireUniversity?: boolean }) => {
     try {
-      if (options?.requireAuth && !user) {
+      // Admin routes bypass all requirements
+      const targetIsAdmin = path.startsWith('/dashboard/admin') || path.startsWith('/admin');
+      
+      if (!targetIsAdmin && options?.requireAuth && !user) {
         router.replace('/auth/select-university');
         return;
       }
 
-      if (options?.requireUniversity && !userData?.university) {
+      if (!targetIsAdmin && options?.requireUniversity && !userData?.university) {
         router.replace('/auth/select-university');
         return;
       }

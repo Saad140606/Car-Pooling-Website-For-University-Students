@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    console.log('Verifying university email OTP for uid:', uid, 'OTP length:', otp.length);
+    // SECURITY: Removed verbose logging to prevent information leakage
 
     const db = adminDb ?? getFirestore();
     const verificationRef = db.collection('email_verification_otps').doc(uid);
@@ -58,10 +58,7 @@ export async function POST(request: NextRequest) {
     }
 
     const attemptedHash = hashOtp(otp);
-    console.log('University email OTP verification attempt:');
-    console.log('  Stored hash:', verificationData.otpHash);
-    console.log('  Attempted hash:', attemptedHash);
-    console.log('  OTP input:', otp);
+    // SECURITY: OTP hash comparison - no logging of sensitive data
 
     if (attemptedHash !== verificationData.otpHash) {
       const attempts = (verificationData.attempts || 0) + 1;

@@ -20,6 +20,7 @@ import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { InlineVerifiedBadge } from '@/components/VerificationBadge';
 import React from 'react';
 
 // Fix for default icon not showing in Leaflet
@@ -174,7 +175,10 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       {shownBookings.map((booking: any) => (
         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-800/40 backdrop-blur-sm rounded-lg">
           <div>
-            <p className="font-medium text-slate-100">{booking.passengerDetails?.fullName}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="font-medium text-slate-100">{booking.passengerDetails?.fullName}</p>
+              <InlineVerifiedBadge verified={booking.passengerDetails?.universityEmailVerified || booking.passengerDetails?.verified} />
+            </div>
             {booking.passengerDetails?.phone ? (
               <p className="text-sm text-slate-300">{booking.passengerDetails.phone}</p>
             ) : null}
@@ -391,6 +395,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                           <div className="flex items-center gap-2 mb-2">
                             <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
                             <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
+                            <InlineVerifiedBadge verified={b.passengerDetails?.universityEmailVerified || (b.passengerDetails as any)?.verified} />
                             <Badge className="bg-green-600/80 text-white text-[10px] py-0 px-1.5">Confirmed</Badge>
                           </div>
                           <div className="space-y-2 text-xs text-slate-400">
@@ -447,6 +452,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                           <div className="flex items-center gap-2 mb-2">
                             <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
                             <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
+                            <InlineVerifiedBadge verified={b.passengerDetails?.universityEmailVerified || (b.passengerDetails as any)?.verified} />
                             <Badge className="bg-amber-600/80 text-white text-[10px] py-0 px-1.5">Awaiting Confirmation</Badge>
                           </div>
                           <div className="space-y-2 text-xs text-slate-400">

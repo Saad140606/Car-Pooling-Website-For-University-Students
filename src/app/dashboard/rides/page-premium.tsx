@@ -300,7 +300,7 @@ export default function FindARidePage() {
 
         toast({
           title: 'Request sent!',
-          description: 'Your booking request has been sent to the driver.',
+          description: 'Your booking request has been sent to the ride provider.',
         });
 
         setBookingRide(null);

@@ -145,14 +145,53 @@
     overflow-wrap: anywhere;
   }
 
-  /* Profile completion banner styling to match app theme (light blue with yellow border) */
+  /* Profile completion banner - Premium god-level styling */
   .profile-banner {
-    background-color: hsl(227, 32%, 28%); /* pale blue */
-    border: 1px solid hsl(0, 0%, 100%); /* pale yellow border */
-    color: hsl(232 29% 18%);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+    border: 1.5px solid rgba(59, 130, 246, 0.4);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
   }
-  .profile-banner .profile-banner-dismiss {
-    color: hsla(0, 0%, 100%, 0.7);
+  
+  /* Animated gradient background */
+  .profile-banner::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 200%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.1), transparent);
+    animation: shimmer 3s infinite;
+    z-index: 0;
+  }
+  
+  .profile-banner > * {
+    position: relative;
+    z-index: 1;
+  }
+  
+  @keyframes shimmer {
+    0% {
+      left: -100%;
+    }
+    50% {
+      left: 100%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+  
+  .profile-banner-dismiss {
+    color: rgba(255, 255, 255, 0.6);
+    transition: all 0.3s ease;
+  }
+  
+  .profile-banner-dismiss:hover {
+    color: rgba(255, 255, 255, 0.9);
   }
 }
 

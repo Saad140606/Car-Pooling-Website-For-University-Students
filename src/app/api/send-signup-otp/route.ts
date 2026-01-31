@@ -108,47 +108,47 @@ export async function POST(request: NextRequest) {
 
     if (process.env.FIREBASE_EMAIL_USER && process.env.FIREBASE_EMAIL_PASSWORD) {
       try {
-        console.log('Attempting to send email from:', process.env.FIREBASE_EMAIL_USER);
         await transporter.sendMail({
           from: process.env.FIREBASE_EMAIL_USER,
           to: email,
           subject: 'Verify Your Campus Ride Email',
           html,
         });
-        console.log('Signup OTP sent successfully to:', email);
-      } catch (emailError: any) {
-        console.error('Failed to send email. Error details:', {
-          code: emailError.code,
-          message: emailError.message,
-          response: emailError.response,
-        });
-        console.error('Full error:', emailError);
+        // SECURITY: Never log OTPs or sensitive data in production
         if (process.env.NODE_ENV === 'development') {
-          console.log('Development mode: Returning OTP in response for testing');
-          return NextResponse.json({
-            success: true,
-            message: 'Verification code (dev mode)',
-            otp,
-          });
+          console.log('Signup OTP sent to:', email);
         }
+      } catch (emailError: any) {
+        // SECURITY: Log minimal error info, never expose to client
+        console.error('Email send failed:', emailError.code || 'UNKNOWN');
         return NextResponse.json(
-          { error: `Failed to send email: ${emailError.message}` },
+          { error: 'Failed to send verification email. Please try again.' },
           { status: 500 }
         );
       }
     } else {
-      console.log('Email credentials not configured. Development mode - OTP:', otp);
+      // SECURITY: In production, this should fail if email is not configured
+      if (process.env.NODE_ENV === 'production') {
+        console.error('CRITICAL: Email credentials not configured in production');
+        return NextResponse.json(
+          { error: 'Email service unavailable' },
+          { status: 503 }
+        );
+      }
+      // Development only: log that email would be sent
+      console.log('DEV MODE: Email would be sent to:', email);
     }
 
+    // SECURITY: NEVER return OTP in response - even in dev mode
     return NextResponse.json({
       success: true,
-      message: 'Verification code sent',
-      otp: !process.env.FIREBASE_EMAIL_USER || !process.env.FIREBASE_EMAIL_PASSWORD ? otp : undefined,
+      message: 'Verification code sent to your email',
     });
   } catch (error: any) {
-    console.error('Error sending signup OTP:', error);
+    // SECURITY: Generic error message, no internal details
+    console.error('OTP send error:', error.code || 'UNKNOWN');
     return NextResponse.json(
-      { error: error.message || 'Failed to send verification code' },
+      { error: 'Failed to send verification code. Please try again.' },
       { status: 500 }
     );
   }

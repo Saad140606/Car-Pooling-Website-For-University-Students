@@ -226,12 +226,12 @@ export default function AccountPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700 flex items-center justify-between">
+            <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <div className="font-semibold text-white mb-1">Password</div>
                 <div className="text-sm text-slate-400">Last changed never</div>
               </div>
-              <Button onClick={() => setShowPasswordDialog(true)} variant="outline" size="sm">
+              <Button onClick={() => setShowPasswordDialog(true)} variant="outline" size="sm" className="w-full sm:w-auto">
                 Change Password
               </Button>
             </div>

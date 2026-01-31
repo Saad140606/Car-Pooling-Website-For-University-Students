@@ -11,6 +11,48 @@ interface DownloadButtonProps {
   showText?: boolean;
   size?: 'sm' | 'default' | 'lg';
   className?: string;
+  /** Hide button completely when app is installed (default: true) */
+  hideWhenInstalled?: boolean;
+}
+
+/**
+ * Helper function to check if app is running in standalone/installed mode
+ * This uses multiple detection methods for maximum reliability
+ */
+function isRunningAsInstalledApp(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  // Method 1: iOS standalone mode
+  if ('standalone' in navigator && (navigator as any).standalone === true) {
+    return true;
+  }
+
+  // Method 2: Display mode standalone (most reliable for Android PWA)
+  if (typeof window.matchMedia === 'function') {
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      return true;
+    }
+    if (window.matchMedia('(display-mode: fullscreen)').matches) {
+      return true;
+    }
+    // Some browsers use minimal-ui for installed PWAs
+    if (window.matchMedia('(display-mode: minimal-ui)').matches) {
+      return true;
+    }
+  }
+
+  // Method 3: Check if window has specific PWA characteristics
+  // When installed, outer dimensions often equal inner dimensions (no browser chrome)
+  if (window.outerWidth === window.innerWidth && 
+      window.outerHeight === window.innerHeight &&
+      window.screenTop === 0 && window.screenLeft === 0) {
+    // Additional check: if URL bar is hidden, likely installed
+    if (document.documentElement.scrollHeight === window.innerHeight) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
@@ -18,11 +60,13 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
   showText = true,
   size = 'default',
   className = '',
+  hideWhenInstalled = true,
 }) => {
   const pathname = usePathname();
   const [isInstallable, setIsInstallable] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [justInstalled, setJustInstalled] = useState(false); // Track recent installation
   const [error, setError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [deviceType, setDeviceType] = useState<'mobile' | 'tablet' | 'desktop'>('desktop');
@@ -31,6 +75,32 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
   useEffect(() => {
     setIsMounted(true);
     setDeviceType(downloadAppManager.getDeviceType());
+    
+    // Check if app is already running as installed app
+    const alreadyInstalled = isRunningAsInstalledApp() || downloadAppManager.isAppInstalled();
+    setIsInstalled(alreadyInstalled);
+    
+    // Listen for display mode changes (user might install while on page)
+    const handleDisplayModeChange = () => {
+      if (isRunningAsInstalledApp()) {
+        setIsInstalled(true);
+        setIsInstallable(false);
+      }
+    };
+    
+    // Set up media query listeners for display mode changes
+    if (typeof window.matchMedia === 'function') {
+      const standaloneMQ = window.matchMedia('(display-mode: standalone)');
+      const fullscreenMQ = window.matchMedia('(display-mode: fullscreen)');
+      
+      standaloneMQ.addEventListener?.('change', handleDisplayModeChange);
+      fullscreenMQ.addEventListener?.('change', handleDisplayModeChange);
+      
+      return () => {
+        standaloneMQ.removeEventListener?.('change', handleDisplayModeChange);
+        fullscreenMQ.removeEventListener?.('change', handleDisplayModeChange);
+      };
+    }
   }, []);
 
   useEffect(() => {
@@ -41,7 +111,13 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
 
     // Check initial state
     setIsInstallable(downloadAppManager.isPWAInstallable());
-    setIsInstalled(downloadAppManager.isAppInstalled());
+    
+    // Re-check installed state
+    const alreadyInstalled = isRunningAsInstalledApp() || downloadAppManager.isAppInstalled();
+    if (alreadyInstalled) {
+      setIsInstalled(true);
+      return; // Don't set up other listeners if already installed
+    }
 
     // Subscribe to installable event
     const unsubscribeInstallable = downloadAppManager.subscribe('installable', ({ isInstallable }: any) => {
@@ -56,10 +132,11 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
         setIsInstalled(true);
         setIsInstallable(false);
         setError(null);
+        setJustInstalled(true);
         
-        // Show installed state for 3 seconds
+        // Show "Installed!" state for 3 seconds, then hide button
         setTimeout(() => {
-          setIsInstalled(false);
+          setJustInstalled(false);
         }, 3000);
       }
     });
@@ -87,18 +164,39 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
     return null;
   }
 
+  // CRITICAL: Hide button completely when app is installed (not just recently)
+  // Only show "Installed!" briefly after a successful install
+  if (hideWhenInstalled && isInstalled && !justInstalled) {
+    return null;
+  }
+
   const handleClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
     // Ensure click is only on the button
+    e.preventDefault();
     e.stopPropagation();
     
     setIsLoading(true);
     setError(null);
     
     try {
+      // CRITICAL: This must either install the app or download APK
       await downloadAppManager.handleDownloadApp();
     } catch (error) {
       console.error('[Download Button] Download error:', error);
-      setError('Failed to start installation. Please try again.');
+      
+      // If main handler fails, try APK download as last resort on Android
+      const os = downloadAppManager.getOS();
+      if (os === 'android') {
+        try {
+          console.log('[Download Button] Main handler failed, trying APK fallback');
+          downloadAppManager.downloadAPK();
+        } catch (apkError) {
+          console.error('[Download Button] APK fallback also failed:', apkError);
+          setError('Failed to start installation. Please try again.');
+        }
+      } else {
+        setError('Failed to start installation. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -124,14 +222,14 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
         type="button"
         onClick={handleClick}
         onKeyDown={handleKeyDown}
-        disabled={isLoading || isInstalled}
-        variant={isInstalled ? 'default' : variant}
-        aria-label={isInstalled ? 'App installed' : 'Install app'}
+        disabled={isLoading || justInstalled}
+        variant={justInstalled ? 'default' : variant}
+        aria-label={justInstalled ? 'App installed' : 'Install app'}
         aria-busy={isLoading}
         className={`
           relative group
           ${sizeClasses[size]}
-          ${isInstalled ? 'bg-green-500 hover:bg-green-600' : ''}
+          ${justInstalled ? 'bg-green-500 hover:bg-green-600' : ''}
           ${error ? 'bg-red-500 hover:bg-red-600' : ''}
           transition-all duration-300 hover:scale-102 active:scale-98
           cursor-pointer
@@ -143,7 +241,7 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
             {showText && <span>Installing...</span>}
           </>
-        ) : isInstalled ? (
+        ) : justInstalled ? (
           <>
             <Check className="w-4 h-4 mr-2" />
             {showText && <span>Installed!</span>}
@@ -155,8 +253,8 @@ export const DownloadAppButton: React.FC<DownloadButtonProps> = ({
           </>
         ) : (
           <>
-            {/* Always render Download icon on server, update to device-specific on client */}
-            {isMounted && (isInstallable || deviceType !== 'desktop') ? (
+            {/* Show appropriate icon based on device/installability */}
+            {isInstallable || deviceType !== 'desktop' ? (
               <>
                 <Smartphone className="w-4 h-4 mr-2" />
                 {showText && <span>Get App</span>}

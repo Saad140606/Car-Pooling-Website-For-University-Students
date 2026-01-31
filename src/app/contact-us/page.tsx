@@ -94,7 +94,7 @@ export default function ContactUsPage() {
                       <CardTitle className="text-lg text-slate-50">In-app calls</CardTitle>
                     </CardHeader>
                     <CardContent className="pt-0 text-sm text-slate-300">
-                      Call safely inside the app after a driver accepts your request.
+                      Call safely inside the app after a ride provider accepts your request.
                     </CardContent>
                   </Card>
                 </div>

@@ -19,6 +19,11 @@ class VoiceMessageService {
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
   private recordingStartTime: number = 0;
+  private lastRecordingDuration: number = 0;
+  private stopPromise: Promise<Blob> | null = null;
+  private stopResolver: ((blob: Blob) => void) | null = null;
+  private stopRejecter: ((error: Error) => void) | null = null;
+  private readonly MAX_VOICE_MESSAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
   /**
    * Start recording voice message
@@ -29,6 +34,8 @@ class VoiceMessageService {
     }
 
     try {
+      await this.ensureMicrophonePermission();
+
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -37,12 +44,20 @@ class VoiceMessageService {
         }
       });
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: this.getOptimalMimeType(),
-      });
+      const optimalMimeType = this.getOptimalMimeType();
+      let mediaRecorder: MediaRecorder;
+      try {
+        mediaRecorder = optimalMimeType
+          ? new MediaRecorder(stream, { mimeType: optimalMimeType })
+          : new MediaRecorder(stream);
+      } catch (error) {
+        // Fallback to default recorder if mime type is rejected by the browser
+        mediaRecorder = new MediaRecorder(stream);
+      }
 
       this.audioChunks = [];
       this.recordingStartTime = Date.now();
+      this.lastRecordingDuration = 0;
       this.mediaRecorder = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event: BlobEvent) => {
@@ -51,7 +66,12 @@ class VoiceMessageService {
         }
       };
 
-      mediaRecorder.start();
+      mediaRecorder.onerror = (event: Event) => {
+        console.error('[VoiceMessageService] Recorder error:', event);
+      };
+
+      // Collect data in small chunks for better compatibility on mobile browsers
+      mediaRecorder.start(250);
       console.debug('[VoiceMessageService] Recording started');
     } catch (error) {
       console.error('[VoiceMessageService] Failed to start recording:', error);
@@ -62,20 +82,77 @@ class VoiceMessageService {
   /**
    * Stop recording and return blob
    */
-  stopRecording(): Blob {
+  stopRecording(): Promise<Blob> {
     if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
       throw new Error('No active recording');
     }
 
-    this.mediaRecorder.stop();
-    const mimeType = this.mediaRecorder.mimeType;
-    const blob = new Blob(this.audioChunks, { type: mimeType });
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
 
-    // Stop all audio tracks
-    this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    this.stopPromise = new Promise<Blob>((resolve, reject) => {
+      this.stopResolver = resolve;
+      this.stopRejecter = reject;
 
-    console.debug('[VoiceMessageService] Recording stopped', { size: blob.size, type: mimeType });
-    return blob;
+      const recorder = this.mediaRecorder!;
+      const mimeType = recorder.mimeType || this.getOptimalMimeType() || 'audio/webm';
+
+      recorder.onstop = () => {
+        try {
+          this.lastRecordingDuration = Math.max(
+            1,
+            Math.ceil((Date.now() - this.recordingStartTime) / 1000)
+          );
+          const blob = new Blob(this.audioChunks, { type: mimeType });
+
+          // Stop all audio tracks
+          recorder.stream.getTracks().forEach(track => track.stop());
+
+          console.debug('[VoiceMessageService] Recording stopped', { size: blob.size, type: mimeType });
+          this.cleanupRecorder();
+          resolve(blob);
+        } catch (error) {
+          this.cleanupRecorder();
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
+      recorder.onerror = () => {
+        const err = new Error('Audio recorder failed');
+        this.cleanupRecorder();
+        reject(err);
+      };
+
+      try {
+        if (typeof recorder.requestData === 'function') {
+          recorder.requestData();
+        }
+        recorder.stop();
+      } catch (error) {
+        this.cleanupRecorder();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+    return this.stopPromise;
+  }
+
+  /**
+   * Abort recording without saving
+   */
+  abortRecording(): void {
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      try {
+        this.mediaRecorder.stop();
+      } catch (_) {
+        // ignore
+      }
+    }
+    if (this.mediaRecorder?.stream) {
+      this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    }
+    this.cleanupRecorder();
   }
 
   /**
@@ -87,11 +164,17 @@ class VoiceMessageService {
     onProgress?: (progress: number) => void
   ): Promise<VoiceMessageData> {
     try {
-      const duration = Math.ceil((Date.now() - this.recordingStartTime) / 1000);
+      if (audioBlob.size > this.MAX_VOICE_MESSAGE_SIZE_BYTES) {
+        throw new Error('Voice message is too large. Please keep it under 10MB.');
+      }
+
+      const duration = this.lastRecordingDuration || Math.ceil((Date.now() - this.recordingStartTime) / 1000);
+      const mimeType = audioBlob.type || this.getOptimalMimeType() || 'audio/webm';
+      const extension = this.getFileExtension(mimeType);
       const file = new File(
         [audioBlob],
-        `voice_${Date.now()}.webm`,
-        { type: audioBlob.type }
+        `voice_${Date.now()}.${extension}`,
+        { type: mimeType }
       );
 
       const fullPath = path || `uploads/voice_messages/${Date.now()}_${file.name}`;
@@ -101,7 +184,7 @@ class VoiceMessageService {
         url,
         duration,
         size: audioBlob.size,
-        mimeType: audioBlob.type,
+        mimeType,
         uploadedAt: Date.now(),
       };
 
@@ -182,21 +265,64 @@ class VoiceMessageService {
   /**
    * Get optimal MIME type for recording
    */
-  private getOptimalMimeType(): string {
+  private getOptimalMimeType(): string | undefined {
     const mimeTypes = [
+      'audio/webm;codecs=opus',
       'audio/webm',
       'audio/mp4',
-      'audio/mpeg',
+      'audio/m4a',
+      'audio/ogg;codecs=opus',
       'audio/ogg',
+      'audio/mpeg',
     ];
 
     for (const mimeType of mimeTypes) {
-      if (MediaRecorder.isTypeSupported(mimeType)) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
         return mimeType;
       }
     }
 
-    return 'audio/webm'; // Fallback
+    return undefined;
+  }
+
+  /**
+   * Resolve file extension based on MIME type
+   */
+  private getFileExtension(mimeType: string): string {
+    if (mimeType.includes('mp4') || mimeType.includes('m4a')) return 'm4a';
+    if (mimeType.includes('mpeg')) return 'mp3';
+    if (mimeType.includes('ogg')) return 'ogg';
+    return 'webm';
+  }
+
+  /**
+   * Ensure microphone permission is available (best-effort)
+   */
+  private async ensureMicrophonePermission(): Promise<void> {
+    if (typeof navigator === 'undefined') return;
+    try {
+      if ('permissions' in navigator && (navigator as any).permissions?.query) {
+        const status = await (navigator as any).permissions.query({ name: 'microphone' });
+        if (status?.state === 'denied') {
+          const err = new Error('Microphone permission denied');
+          (err as any).name = 'NotAllowedError';
+          throw err;
+        }
+      }
+    } catch (_) {
+      // Permission API not supported or blocked; proceed to getUserMedia
+    }
+  }
+
+  /**
+   * Cleanup recorder state
+   */
+  private cleanupRecorder(): void {
+    this.mediaRecorder = null;
+    this.audioChunks = [];
+    this.stopPromise = null;
+    this.stopResolver = null;
+    this.stopRejecter = null;
   }
 
   /**

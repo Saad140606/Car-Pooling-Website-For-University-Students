@@ -201,7 +201,7 @@ export default function RidesSection({ universityType }: { universityType: strin
                 <div className="border-t border-slate-700/30 pt-4 space-y-3 animate-in slide-in-from-top-2">
                   <div className="bg-slate-800/30 rounded-lg p-3 space-y-2 text-sm">
                     <p><span className="text-slate-400">Ride ID:</span> <span className="text-slate-300 font-mono text-xs">{ride.id}</span></p>
-                    <p><span className="text-slate-400">Driver Email:</span> <span className="text-slate-300">{ride.driverEmail}</span></p>
+                    <p><span className="text-slate-400">Ride Provider Email:</span> <span className="text-slate-300">{ride.driverEmail}</span></p>
                     <p><span className="text-slate-400">Created:</span> <span className="text-slate-300">{ride.createdAt?.toDate?.()?.toLocaleDateString?.() || 'N/A'}</span></p>
                   </div>
 

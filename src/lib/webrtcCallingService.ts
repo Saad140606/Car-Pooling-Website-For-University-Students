@@ -14,6 +14,7 @@ export interface CallData {
   callerId: string;
   callerName: string;
   callerPhoto?: string;
+  callerVerified?: boolean;
   receiverId: string;
   callType: CallType;
   status: CallStatus;
@@ -24,6 +25,7 @@ export interface CallData {
   answer?: any;
   candidates: any[];
   createdAt: Date;
+  rideId?: string;
 }
 
 export interface CallListener {
@@ -44,6 +46,10 @@ class WebRTCCallingService {
   private currentUserId: string | null = null;
   private listeners: CallListener = {};
   private callTimeout: number | null = null;
+  private hasNotifiedConnected = false;
+  private callDocUnsub: (() => void) | null = null;
+  private remoteCandidatesUnsub: (() => void) | null = null;
+  private iceRole: 'caller' | 'callee' | null = null;
   private iceServers: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -82,11 +88,15 @@ class WebRTCCallingService {
     pc.ontrack = (event) => {
       console.debug('[WebRTCCalling] Remote track received:', event.track.kind);
       this.remoteStream = event.streams[0];
+      if (!this.hasNotifiedConnected && this.currentCall) {
+        this.hasNotifiedConnected = true;
+        this.listeners.onCallAccepted?.(this.currentCall);
+      }
     };
 
     pc.onicecandidate = (event) => {
       if (event.candidate && this.currentCall) {
-        this.saveICECandidate(this.currentCall.id, event.candidate);
+        this.saveICECandidate(this.currentCall.id, event.candidate, this.iceRole || 'caller');
       }
     };
 
@@ -143,7 +153,11 @@ class WebRTCCallingService {
     receiverId: string,
     receiverName: string,
     callType: CallType,
-    receiverPhoto?: string
+    receiverPhoto?: string,
+    callerName?: string,
+    callerPhoto?: string,
+    callerVerified?: boolean,
+    rideId?: string
   ): Promise<CallData> {
     if (!this.firestore || !this.currentUserId) {
       throw new Error('Service not initialized');
@@ -170,18 +184,25 @@ class WebRTCCallingService {
       // Create call document in Firestore
       const callData: Omit<CallData, 'id'> = {
         callerId: this.currentUserId,
-        callerName: this.currentUserId, // Should be replaced with actual name
-        callerPhoto: receiverPhoto,
+        callerName: callerName || this.currentUserId,
+        callerPhoto: callerPhoto,
+        callerVerified: callerVerified || false,
         receiverId,
         callType,
         status: 'ringing',
         offer: this.serializeOffer(offer),
         candidates: [],
         createdAt: serverTimestamp() as any,
+        rideId: rideId,
       };
 
       const callRef = await addDoc(collection(this.firestore, 'calls'), callData);
       this.currentCall = { id: callRef.id, ...callData, createdAt: new Date() };
+      this.hasNotifiedConnected = false;
+      this.iceRole = 'caller';
+
+      // Listen for answer + remote candidates
+      this.listenForCallUpdates(this.currentCall.id, 'caller');
 
       // Set call timeout (30 seconds)
       this.callTimeout = window.setTimeout(() => {
@@ -272,6 +293,8 @@ class WebRTCCallingService {
     }
 
     try {
+      this.iceRole = 'callee';
+      this.hasNotifiedConnected = false;
       // Get local stream
       const stream = await this.getLocalStream(callType);
       stream.getTracks().forEach(track => {
@@ -296,6 +319,13 @@ class WebRTCCallingService {
           answer: this.serializeOffer(answer),
           status: 'connected',
         });
+
+        // Listen for caller candidates and remote hangup
+        this.listenForCallUpdates(callId, 'callee');
+
+        if (this.currentCall) {
+          this.listeners.onCallAccepted?.(this.currentCall);
+        }
       }
 
       console.debug('[WebRTCCalling] Call accepted:', callId);
@@ -361,10 +391,13 @@ class WebRTCCallingService {
       }
     }
 
+    this.cleanupSignaling();
+
     this.listeners.onCallEnded?.(this.currentCall!);
     this.currentCall = null;
     this.localStream = null;
     this.remoteStream = null;
+    this.hasNotifiedConnected = false;
 
     console.debug('[WebRTCCalling] Call ended');
   }
@@ -372,17 +405,91 @@ class WebRTCCallingService {
   /**
    * Save ICE candidate
    */
-  private async saveICECandidate(callId: string, candidate: RTCIceCandidate): Promise<void> {
+  private async saveICECandidate(callId: string, candidate: RTCIceCandidate, role: 'caller' | 'callee'): Promise<void> {
     if (!this.firestore) return;
 
     try {
       const callDoc = doc(this.firestore, 'calls', callId);
-      await updateDoc(callDoc, {
-        candidates: arrayUnion(this.serializeCandidate(candidate)),
-      });
+      const target = role === 'callee' ? 'calleeCandidates' : 'callerCandidates';
+      await addDoc(collection(callDoc, target), this.serializeCandidate(candidate));
     } catch (error) {
       console.debug('[WebRTCCalling] Failed to save ICE candidate:', error);
     }
+  }
+
+  /**
+   * Listen for call updates and remote ICE candidates
+   */
+  private listenForCallUpdates(callId: string, role: 'caller' | 'callee'): void {
+    if (!this.firestore || !this.peerConnection) return;
+
+    this.cleanupSignaling();
+
+    const callDoc = doc(this.firestore, 'calls', callId);
+    this.callDocUnsub = onSnapshot(callDoc, async (snap) => {
+      if (!snap.exists()) {
+        this.handleRemoteHangup();
+        return;
+      }
+      const data = snap.data() as any;
+      if (role === 'caller' && data?.answer && !this.peerConnection?.currentRemoteDescription) {
+        try {
+          await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(this.deserializeOffer(data.answer)));
+          if (this.currentCall) this.listeners.onCallAccepted?.(this.currentCall);
+        } catch (error) {
+          console.warn('[WebRTCCalling] Failed to set remote answer:', error);
+        }
+      }
+
+      if (data?.status === 'ended' || data?.status === 'rejected') {
+        this.handleRemoteHangup();
+      }
+    });
+
+    const remoteCollection = collection(callDoc, role === 'caller' ? 'calleeCandidates' : 'callerCandidates');
+    this.remoteCandidatesUnsub = onSnapshot(remoteCollection, (snapshot) => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          try {
+            this.peerConnection?.addIceCandidate(new RTCIceCandidate(data));
+          } catch (error) {
+            console.warn('[WebRTCCalling] Failed to add ICE candidate:', error);
+          }
+        }
+      });
+    });
+  }
+
+  private cleanupSignaling(): void {
+    try { this.callDocUnsub?.(); } catch (_) {}
+    try { this.remoteCandidatesUnsub?.(); } catch (_) {}
+    this.callDocUnsub = null;
+    this.remoteCandidatesUnsub = null;
+  }
+
+  private handleRemoteHangup(): void {
+    this.cleanupSignaling();
+
+    if (this.callTimeout) {
+      clearTimeout(this.callTimeout);
+      this.callTimeout = null;
+    }
+
+    // Stop all tracks
+    this.localStream?.getTracks().forEach(track => track.stop());
+    this.remoteStream?.getTracks().forEach(track => track.stop());
+
+    if (this.peerConnection) {
+      try { this.peerConnection.close(); } catch (_) {}
+      this.peerConnection = null;
+    }
+
+    this.listeners.onCallEnded?.(this.currentCall!);
+    this.currentCall = null;
+    this.localStream = null;
+    this.remoteStream = null;
+    this.hasNotifiedConnected = false;
   }
 
   /**

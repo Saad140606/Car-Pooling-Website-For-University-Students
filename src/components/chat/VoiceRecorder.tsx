@@ -8,10 +8,20 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
   const [duration, setDuration] = useState(0);
   const [uploading, setUploading] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const recordingRef = useRef(false);
+
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
 
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (recordingRef.current) {
+        try {
+          voiceMessageService.abortRecording();
+        } catch (_) {}
+      }
     };
   }, []);
 
@@ -41,9 +51,9 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     try {
-      const blob = voiceMessageService.stopRecording();
+      const blob = await voiceMessageService.stopRecording();
       setAudioBlob(blob);
       setRecording(false);
       if (timerRef.current) {
@@ -52,6 +62,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
       }
     } catch (err) {
       console.error('[VoiceRecorder] Failed to stop recording:', err);
+      alert('Failed to stop recording. Please try again.');
     }
   };
 
@@ -65,8 +76,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
     if (!audioBlob) return;
     setUploading(true);
     try {
-      const path = `uploads/voice_messages/${Date.now()}_${Date.now()}.webm`;
-      const voiceData = await voiceMessageService.uploadVoiceMessage(audioBlob, path);
+      const voiceData = await voiceMessageService.uploadVoiceMessage(audioBlob, '');
       onSend(voiceData.url);
       setAudioBlob(null);
       setDuration(0);

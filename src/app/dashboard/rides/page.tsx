@@ -23,6 +23,7 @@ import { Ride as RideType } from '@/lib/types';
 import { getUniversityShortLabel } from '@/lib/universities';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { notifyNewRideRequest } from '@/lib/rideNotificationService';
 
 
 // Fix for default icon not showing in Leaflet
@@ -545,6 +546,21 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
         transaction.set(requestRef, requestPayload);
       });
 
+      // Send client-side notification to driver (redundant with Cloud Function, but ensures immediate notification)
+      try {
+        await notifyNewRideRequest(
+          firestore,
+          userData.university,
+          ride.driverId,
+          ride.id,
+          { uid: user.uid, fullName: userData?.fullName || 'A student' },
+          { from: ride.from || 'Unknown', to: ride.to || 'Unknown' }
+        );
+      } catch (notifError) {
+        // Don't fail the request if notification fails
+        console.debug('[RideRequest] Notification error (non-critical):', notifError);
+      }
+
       toast({ title: 'Request Sent!', description: 'The ride provider has been notified of your request.' });
       return true;
     } catch (error: any) {
@@ -1026,20 +1042,53 @@ export default function RidesPage() {
           <h1 className="text-3xl font-headline font-bold text-slate-50">Available Rides</h1>
         </div>
 
-      {/* Prompt users with incomplete profiles to complete their profile before booking/creating rides */}
+      {/* Premium profile completion banner */}
       {user && userData && !hideProfileBanner && !userLoading && !(userData.fullName && userData.gender && userData.university) && (
-        <div className="mb-6 w-full">
-          <div className="w-full profile-banner rounded-2xl shadow-sm overflow-hidden">
-            <div className="p-4 md:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-lg font-semibold text-slate-200">Please complete your profile</div>
-                <div className="mt-1 text-sm text-slate-400">You need to complete your profile before booking or creating rides.</div>
+        <div className="mb-8 w-full animate-fade-slide-up">
+          <div className="w-full profile-banner rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-primary/20">
+            <div className="p-5 md:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              {/* Left content */}
+              <div className="flex-1 min-w-0 flex items-start gap-4">
+                {/* Icon */}
+                <div className="flex-shrink-0 mt-1">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary/30 to-accent/20 border border-primary/40">
+                    <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                </div>
+                
+                {/* Text content */}
+                <div className="flex-1">
+                  <h3 className="text-base md:text-lg font-semibold text-white font-headline">Complete Your Profile</h3>
+                  <p className="mt-1 text-sm text-slate-300">Finish your profile to unlock booking and creating rides. It only takes a minute!</p>
+                  
+                  {/* Progress indicator */}
+                  <div className="mt-3 text-xs text-slate-400">
+                    {!userData.fullName || !userData.gender ? '↳ Missing personal details' : ''}
+                    {!userData.university ? (!userData.fullName ? ' & ' : '↳ ') + 'University' : ''}
+                  </div>
+                </div>
               </div>
 
-              <div className="flex-shrink-0 flex items-center gap-3">
-                <Button onClick={() => router.push('/dashboard/complete-profile')} className="rounded-full px-4 py-2">Complete Profile</Button>
-                <button onClick={() => setHideProfileBanner(true)} className="profile-banner-dismiss text-sm text-slate-200">
-                  Dismiss
+              {/* Right actions */}
+              <div className="flex-shrink-0 flex items-center gap-3 w-full md:w-auto">
+                <Button 
+                  onClick={() => router.push('/dashboard/complete-profile')} 
+                  className="flex-1 md:flex-none rounded-full px-6 py-2.5 font-medium shadow-lg shadow-primary/40 hover:shadow-xl hover:shadow-primary/60 transition-all duration-300 hover:scale-105 active:scale-95 bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
+                >
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Complete Now
+                  </span>
+                </Button>
+                <button 
+                  onClick={() => setHideProfileBanner(true)} 
+                  className="profile-banner-dismiss text-sm font-medium px-3 py-2 rounded-lg hover:bg-white/5 transition-all duration-200"
+                >
+                  ✕
                 </button>
               </div>
             </div>
@@ -1088,7 +1137,7 @@ export default function RidesPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-1">Driver Gender</label>
+                  <label className="block text-sm mb-1">Ride Provider Gender</label>
                   <Select value={filters.gender} onValueChange={(v) => setFilters(f => ({ ...f, gender: v as any }))}>
                     <SelectTrigger className="w-full"><SelectValue>{filters.gender === 'any' ? 'Any' : filters.gender}</SelectValue></SelectTrigger>
                     <SelectContent>

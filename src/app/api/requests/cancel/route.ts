@@ -1,50 +1,105 @@
+/**
+ * Cancel Ride Request API
+ * 
+ * SECURITY: This endpoint requires authentication and verifies
+ * that the authenticated user is either the passenger or the driver.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/firebase/firebaseAdmin';
 import admin from 'firebase-admin';
+import {
+  requireAuth,
+  applyRateLimit,
+  validateUniversity,
+  isValidDocId,
+  sanitizeString,
+  errorResponse,
+  successResponse,
+  RATE_LIMITS,
+} from '@/lib/api-security';
 
 export async function POST(req: NextRequest) {
-  if (!adminDb) return NextResponse.json({ error: 'Admin not initialized' }, { status: 500 });
+  // Check if Firebase Admin is initialized
+  if (!adminDb) {
+    return errorResponse('Server configuration error', 500);
+  }
+
+  // ===== AUTHENTICATION =====
+  const authResult = await requireAuth(req);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+  const authenticatedUserId = authResult.uid;
+
+  // ===== RATE LIMITING =====
+  const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);
+  if (rateLimitResult instanceof NextResponse) {
+    return rateLimitResult;
+  }
+
   try {
-    const { university, rideId, requestId, cancelledBy, reason } = await req.json();
-    if (!university || !rideId || !requestId || !cancelledBy) {
-      return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
+    // ===== INPUT VALIDATION =====
+    const body = await req.json();
+    const { university, rideId, requestId, reason } = body;
+
+    // Validate university
+    const validUniversity = validateUniversity(university);
+    if (!validUniversity) {
+      return errorResponse('Invalid university parameter', 400);
     }
 
+    // Validate document IDs
+    if (!isValidDocId(rideId)) {
+      return errorResponse('Invalid ride ID', 400);
+    }
+    if (!isValidDocId(requestId)) {
+      return errorResponse('Invalid request ID', 400);
+    }
+
+    // Sanitize reason
+    const sanitizedReason = reason ? sanitizeString(reason) : 'No reason provided';
+
     const db = adminDb;
-    const rideRef = db.doc(`universities/${university}/rides/${rideId}`);
-    const requestRef = db.doc(`universities/${university}/rides/${rideId}/requests/${requestId}`);
+    const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
+    const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
 
     const result = await db.runTransaction(async (tx) => {
       const reqSnap = await tx.get(requestRef);
-      if (!reqSnap.exists) throw new Error('Request not found');
+      if (!reqSnap.exists) {
+        throw new Error('Request not found');
+      }
       const request = reqSnap.data() as any;
 
-      // Check authorization
-      if (cancelledBy !== request.passengerId && cancelledBy !== request.driverId) {
-        throw new Error('Only passenger or driver can cancel this request');
+      // ===== AUTHORIZATION: Verify authenticated user is passenger or driver =====
+      const isPassenger = request.passengerId === authenticatedUserId;
+      const isDriver = request.driverId === authenticatedUserId;
+      
+      if (!isPassenger && !isDriver) {
+        throw new Error('FORBIDDEN: Only passenger or driver can cancel this request');
       }
 
       const status = request.status;
       if (!['PENDING', 'ACCEPTED', 'CONFIRMED'].includes(status)) {
-        throw new Error('Cannot cancel request with status: ' + status);
+        throw new Error('Cannot cancel request with current status');
       }
 
       const now = admin.firestore.Timestamp.now();
       const isLateCancellation = status === 'CONFIRMED';
-      const cancellerRole = cancelledBy === request.passengerId ? 'passenger' : 'driver';
+      const cancellerRole = isPassenger ? 'passenger' : 'driver';
 
       // Update request
       tx.update(requestRef, {
         status: 'CANCELLED',
         cancelledAt: now,
-        cancelledBy,
-        cancellationReason: reason || 'No reason provided',
+        cancelledBy: authenticatedUserId,
+        cancellationReason: sanitizedReason,
         isLateCancellation,
       });
 
       // Track late cancellations for penalties
       if (isLateCancellation) {
-        const userRef = db.doc(`universities/${university}/users/${cancelledBy}`);
+        const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
         const userSnap = await tx.get(userRef);
         if (userSnap.exists) {
           const userData = userSnap.data() as any;
@@ -82,11 +137,20 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      return { cancellerRole, isLateCancellation, passengerId: request.passengerId, driverId: request.driverId };
+      return { 
+        cancellerRole, 
+        isLateCancellation, 
+        passengerId: request.passengerId, 
+        driverId: request.driverId 
+      };
     });
 
-    return NextResponse.json({ ok: true, data: result });
+    return successResponse({ ok: true, data: result });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message || String(e) }, { status: 400 });
+    // Handle authorization errors with 403
+    if (e.message?.includes('FORBIDDEN')) {
+      return errorResponse('Access denied', 403);
+    }
+    return errorResponse(e.message || 'Request failed', 400);
   }
 }

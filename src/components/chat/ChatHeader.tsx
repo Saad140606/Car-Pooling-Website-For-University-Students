@@ -3,6 +3,7 @@ import { useFirestore, useUser } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { Phone, Video, PhoneOff, X, MoreVertical, Info } from 'lucide-react';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogClose } from '@/components/ui/dialog';
+import { InlineVerifiedBadge } from '@/components/VerificationBadge';
 
 export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { meta: any, onStartCall?: (mode: 'audio'|'video') => void, onHangup?: () => void, calling?: boolean }) {
   const firestore = useFirestore();
@@ -13,10 +14,18 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
   const [showInfo, setShowInfo] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Get other user's name and initials
-  const otherUserName = meta?.passengerId === user?.uid 
-    ? (meta?.providerDetails?.fullName || meta?.driverDetails?.fullName || 'Ride Provider')
-    : (meta?.passengerDetails?.fullName || meta?.passengerDetails?.name || 'Student');
+  // Get other user's name - always show REAL name, never generic labels
+  const isCurrentUserPassenger = meta?.passengerId === user?.uid;
+  
+  // If current user is the passenger, show provider/driver details
+  // If current user is the provider/driver, show passenger details
+  const otherUserDetails = isCurrentUserPassenger 
+    ? (meta?.providerDetails || meta?.driverDetails) 
+    : meta?.passengerDetails;
+  
+  const otherUserName = otherUserDetails?.fullName || otherUserDetails?.name || 'Chat Partner';
+  const otherUserVerified = otherUserDetails?.universityEmailVerified || otherUserDetails?.verified || otherUserDetails?.isVerified || false;
+  
   const initials = otherUserName.split(' ').map((n: string) => n[0]).slice(0, 2).join('');
 
   useEffect(() => {
@@ -93,7 +102,10 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
         
         {/* Name and status */}
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-white truncate text-sm sm:text-base">{otherUserName}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-white truncate text-sm sm:text-base">{otherUserName}</span>
+            <InlineVerifiedBadge verified={otherUserVerified} />
+          </div>
           {calling ? (
             <div className="flex items-center gap-1.5 text-xs text-green-400 animate-pulse">
               <span className="h-2 w-2 bg-green-400 rounded-full"></span>

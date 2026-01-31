@@ -252,6 +252,7 @@ export class DownloadAppManager {
    */
   isPWAInstallable(): boolean {
     if (typeof window === 'undefined') return false;
+    this.syncDeferredPrompt();
     return this.isInstallable;
   }
 
@@ -290,24 +291,70 @@ export class DownloadAppManager {
 
   /**
    * Download APK file (Android fallback)
+   * CRITICAL: This MUST trigger a download. No silent failures allowed.
    */
   downloadAPK(): void {
     try {
       console.log('[DownloadApp] Downloading APK:', this.APK_DOWNLOAD_URL);
       
-      // Create a temporary link and click it
+      // Show user what's happening
+      const proceed = confirm(
+        '📱 Download Campus Rides APK\n\n' +
+        'The APK file will be downloaded to your device.\n\n' +
+        '⚠️ After download, you may need to:\n' +
+        '1. Open your Downloads folder\n' +
+        '2. Tap the APK file to install\n' +
+        '3. If prompted, enable "Install from unknown sources"\n\n' +
+        'Tap OK to start download.'
+      );
+      
+      if (!proceed) {
+        console.log('[DownloadApp] User cancelled APK download');
+        return;
+      }
+      
+      // Method 1: Try creating a download link
       const link = document.createElement('a');
       link.href = this.APK_DOWNLOAD_URL;
       link.download = 'campus-rides.apk';
+      link.style.display = 'none';
       document.body.appendChild(link);
+      
+      // Trigger download
       link.click();
-      document.body.removeChild(link);
+      
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(link);
+      }, 100);
 
       this.emit('download-started', { method: 'apk', success: true });
+      
+      // Show success message after a short delay
+      setTimeout(() => {
+        alert('✅ Download started!\n\nCheck your Downloads folder or notification bar for the APK file.');
+      }, 500);
+      
     } catch (error) {
       console.error('[DownloadApp] APK download error:', error);
-      // Fallback: Open download URL in new tab
-      window.open(this.APK_DOWNLOAD_URL, '_blank');
+      
+      // Method 2: Fallback - Open download URL directly
+      try {
+        console.log('[DownloadApp] Trying fallback: window.open');
+        window.open(this.APK_DOWNLOAD_URL, '_blank');
+        this.emit('download-started', { method: 'apk-fallback', success: true });
+      } catch (e2) {
+        console.error('[DownloadApp] Fallback also failed:', e2);
+        
+        // Method 3: Last resort - navigate to download URL
+        try {
+          window.location.href = this.APK_DOWNLOAD_URL;
+        } catch (e3) {
+          console.error('[DownloadApp] All download methods failed');
+          alert('❌ Download failed\n\nPlease try again or visit:\n' + this.APK_DOWNLOAD_URL);
+        }
+      }
+      
       this.emit('download-started', { method: 'apk', success: false });
     }
   }
@@ -334,18 +381,22 @@ export class DownloadAppManager {
   /**
    * Handle download app action - main entry point
    * Routes to appropriate installation method based on platform and browser
+   * 
+   * CRITICAL: This MUST either install the PWA or download the APK. No silent failures.
    */
   async handleDownloadApp(): Promise<void> {
     try {
+      this.syncDeferredPrompt();
       const deviceType = this.getDeviceType();
       const os = this.getOS();
       const browser = this.getBrowserName();
 
-      console.log('[PWA] Download requested:', { deviceType, os, browser });
+      console.log('[PWA] Download requested:', { deviceType, os, browser, isInstallable: this.isInstallable, hasPrompt: !!this.deferredPrompt });
 
       // Check if app is already installed
       if (this.isInstalled) {
         console.log('[PWA] App already installed');
+        alert('✅ Campus Rides is already installed!\n\nLook for the app icon on your home screen or in your apps list.');
         this.emit('download-started', { method: 'already-installed', success: true });
         return;
       }
@@ -354,6 +405,12 @@ export class DownloadAppManager {
       if (typeof window !== 'undefined' && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
         const error = 'HTTPS required for PWA installation';
         console.warn('[PWA]', error);
+        // On Android, fallback to APK download instead of just showing error
+        if (os === 'android') {
+          console.log('[PWA] HTTP detected on Android, falling back to APK download');
+          this.downloadAPK();
+          return;
+        }
         this.emit('error', { message: error });
         return;
       }
@@ -361,24 +418,50 @@ export class DownloadAppManager {
       // Primary: Try PWA install (works on Chrome, Edge, Samsung Internet, Brave, Opera)
       if (this.isPWAInstallable() && this.deferredPrompt) {
         try {
+          console.log('[PWA] Attempting PWA install via beforeinstallprompt');
           const installed = await this.promptInstall();
           if (installed) {
+            console.log('[PWA] PWA install successful');
             this.emit('download-started', { method: 'pwa', success: true });
             return;
+          } else {
+            console.log('[PWA] User dismissed PWA install prompt');
+            // User dismissed - on Android offer APK as alternative
+            if (os === 'android') {
+              const downloadAPK = confirm(
+                '📱 Would you like to download the APK instead?\n\n' +
+                'The APK file can be installed manually on your device.'
+              );
+              if (downloadAPK) {
+                this.downloadAPK();
+                return;
+              }
+            }
           }
         } catch (error) {
           console.error('[PWA] PWA install failed:', error);
-          // Fall through to browser-specific flow
+          // On Android, automatically fallback to APK
+          if (os === 'android') {
+            console.log('[PWA] PWA install failed on Android, falling back to APK');
+            this.downloadAPK();
+            return;
+          }
         }
+      } else if (os === 'android') {
+        // No install prompt available on Android - immediately download APK
+        console.log('[PWA] No install prompt on Android, downloading APK directly');
+        this.downloadAPK();
+        return;
       }
 
-      // Route based on OS
+      // Route based on OS for non-Android devices
       switch (os) {
         case 'ios':
           this.handleIOSInstall();
           break;
         case 'android':
-          this.handleAndroidInstall(browser);
+          // Should have been handled above, but just in case
+          this.downloadAPK();
           break;
         default:
           // Desktop or unknown
@@ -391,7 +474,29 @@ export class DownloadAppManager {
       }
     } catch (error) {
       console.error('[PWA] Unexpected error in handleDownloadApp:', error);
+      // Last resort fallback - try APK download on Android
+      if (this.getOS() === 'android') {
+        console.log('[PWA] Error occurred, attempting APK fallback');
+        try {
+          this.downloadAPK();
+        } catch (e) {
+          console.error('[PWA] APK fallback also failed:', e);
+        }
+      }
       this.emit('error', { message: 'An unexpected error occurred. Please try again.' });
+    }
+  }
+
+  /**
+   * Sync install prompt from global handler if present
+   */
+  private syncDeferredPrompt(): void {
+    if (typeof window === 'undefined') return;
+    const globalPrompt = (window as any).deferredInstallPrompt as InstallPromptEvent | undefined;
+    if (globalPrompt && !this.deferredPrompt) {
+      this.deferredPrompt = globalPrompt;
+      this.isInstallable = true;
+      this.emit('installable', { isInstallable: true });
     }
   }
 

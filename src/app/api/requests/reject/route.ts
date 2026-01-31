@@ -1,25 +1,78 @@
+/**
+ * Reject Ride Request API
+ * 
+ * SECURITY: This endpoint requires authentication and verifies
+ * that the authenticated user is the driver/owner of the ride.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/firebase/firebaseAdmin';
 import admin from 'firebase-admin';
+import {
+  requireAuth,
+  applyRateLimit,
+  validateUniversity,
+  isValidDocId,
+  sanitizeString,
+  errorResponse,
+  successResponse,
+  RATE_LIMITS,
+} from '@/lib/api-security';
 
 export async function POST(req: NextRequest) {
-  if (!adminDb) return NextResponse.json({ error: 'Admin not initialized' }, { status: 500 });
+  // Check if Firebase Admin is initialized
+  if (!adminDb) {
+    return errorResponse('Server configuration error', 500);
+  }
+
+  // ===== AUTHENTICATION =====
+  const authResult = await requireAuth(req);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+  const authenticatedUserId = authResult.uid;
+
+  // ===== RATE LIMITING =====
+  const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);
+  if (rateLimitResult instanceof NextResponse) {
+    return rateLimitResult;
+  }
+
   try {
-    const { university, rideId, requestId, driverId, reason } = await req.json();
-    if (!university || !rideId || !requestId) {
-      return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
+    // ===== INPUT VALIDATION =====
+    const body = await req.json();
+    const { university, rideId, requestId, reason } = body;
+
+    // Validate university
+    const validUniversity = validateUniversity(university);
+    if (!validUniversity) {
+      return errorResponse('Invalid university parameter', 400);
     }
 
+    // Validate document IDs
+    if (!isValidDocId(rideId)) {
+      return errorResponse('Invalid ride ID', 400);
+    }
+    if (!isValidDocId(requestId)) {
+      return errorResponse('Invalid request ID', 400);
+    }
+
+    // Sanitize reason
+    const sanitizedReason = reason ? sanitizeString(reason) : 'No reason provided';
+
     const db = adminDb;
-    const requestRef = db.doc(`universities/${university}/rides/${rideId}/requests/${requestId}`);
+    const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
 
     await db.runTransaction(async (tx) => {
       const reqSnap = await tx.get(requestRef);
-      if (!reqSnap.exists) throw new Error('Request not found');
+      if (!reqSnap.exists) {
+        throw new Error('Request not found');
+      }
       const request = reqSnap.data() as any;
 
-      if (driverId && request.driverId && request.driverId !== driverId) {
-        throw new Error('Only the ride owner can reject requests');
+      // ===== AUTHORIZATION: Verify authenticated user is the driver =====
+      if (request.driverId !== authenticatedUserId) {
+        throw new Error('FORBIDDEN: Only the ride owner can reject requests');
       }
 
       if (request.status !== 'PENDING') {
@@ -30,12 +83,16 @@ export async function POST(req: NextRequest) {
       tx.update(requestRef, {
         status: 'REJECTED',
         rejectedAt: now,
-        rejectionReason: reason || 'No reason provided',
+        rejectionReason: sanitizedReason,
       });
     });
 
-    return NextResponse.json({ ok: true });
+    return successResponse({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message || String(e) }, { status: 400 });
+    // Handle authorization errors with 403
+    if (e.message?.includes('FORBIDDEN')) {
+      return errorResponse('Access denied', 403);
+    }
+    return errorResponse(e.message || 'Request failed', 400);
   }
 }

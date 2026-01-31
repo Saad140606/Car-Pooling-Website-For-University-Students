@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield, AlertTriangle } from 'lucide-react';
+import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield, AlertTriangle, BarChart3 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,7 @@ const navItems = [
   { href: '/dashboard/create-ride', icon: PlusCircle, label: 'Offer a Ride' },
   { href: '/dashboard/my-rides', icon: Car, label: 'My Rides' },
   { href: '/dashboard/my-bookings', icon: User, label: 'My Bookings' },
+  { href: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
   { href: '/dashboard/contact', icon: Mail, label: 'Contact' },
   { href: '/dashboard/report', icon: Flag, label: 'Report' },
 ];
@@ -35,31 +36,51 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const [layoutError, setLayoutError] = useState<string | null>(null);
 
+  // Check if current route is an admin route
+  const isAdminRoute = pathname?.startsWith('/dashboard/admin');
+
+  // CRITICAL: Unified auth redirect logic with admin bypass
   useEffect(() => {
-    // Only redirect after auth has been initialized
+    // Don't redirect until everything is initialized
     if (!initialized) return;
+    
+    // For admin routes: wait for admin check to complete
+    if (isAdminRoute && adminLoading) return;
+    
+    // For admin routes: if user is confirmed admin, allow access
+    if (isAdminRoute && isAdmin && user) {
+      return;
+    }
+    
+    // For admin routes: if not admin and check is complete, redirect to login
+    if (isAdminRoute && !adminLoading && !isAdmin) {
+      router.replace('/auth/select-university');
+      return;
+    }
+    
+    // For non-admin routes: check if user is logged in
+    if (!isAdminRoute && !user && !userLoading && initialized) {
+      router.replace('/auth/select-university');
+      return;
+    }
+  }, [initialized, user, userLoading, isAdmin, adminLoading, isAdminRoute, router]);
 
-    const t = setTimeout(() => {
-      if (!user && !userLoading) {
-        router.replace('/auth/select-university');
-      }
-    }, 400);
-
-    return () => clearTimeout(t);
-  }, [initialized, user, userLoading, router]);
-
-  // Redirect if university data is missing
+  // CRITICAL: University requirement bypass for admins (only for non-admin routes)
   useEffect(() => {
     if (!user || !initialized) return;
-
-    const t = setTimeout(() => {
-      if (!userData?.university) {
-        router.replace('/auth/select-university');
-      }
-    }, 300);
-
-    return () => clearTimeout(t);
-  }, [user, initialized, userData?.university, router]);
+    
+    // Admin users bypass ALL requirements
+    if (isAdmin) return;
+    
+    // If still checking admin status, don't redirect yet
+    if (adminLoading) return;
+    
+    // Non-admin users must have university selected (except admin routes)
+    if (!isAdminRoute && !userData?.university && !userLoading) {
+      router.replace('/auth/select-university');
+      return;
+    }
+  }, [user, initialized, isAdmin, adminLoading, userData?.university, userLoading, isAdminRoute, router]);
 
   const handleSignOut = async () => {
     try {
@@ -122,7 +143,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Logo />
         </div>
         
-        <nav className="flex-grow p-4 space-y-2 overflow-y-auto">
+        <nav className="flex-grow p-4 space-y-2 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
           <p className="text-xs uppercase tracking-[0.1em] text-slate-500 px-3 py-2 font-semibold">Navigation</p>
           <ul className="space-y-2">
             {navItems.map((item, idx) => {
@@ -156,14 +177,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <li className="animate-slide-in-left" style={{ animationDelay: `${navItems.length * 50}ms` }}>
                 <Button
                   asChild
-                  variant={pathname === '/dashboard/admin/support' ? 'secondary' : 'ghost'}
+                  variant={pathname?.startsWith('/dashboard/admin') ? 'secondary' : 'ghost'}
                   className={cn(
                     'w-full justify-start gap-3 rounded-lg transition-all duration-200 group',
-                    pathname === '/dashboard/admin/support' && 'bg-gradient-to-r from-primary/25 to-accent/10 shadow-lg shadow-primary/15 text-primary',
-                    pathname !== '/dashboard/admin/support' && 'text-slate-300 hover:text-slate-100 hover:bg-slate-800/40'
+                    pathname?.startsWith('/dashboard/admin') && 'bg-gradient-to-r from-primary/25 to-accent/10 shadow-lg shadow-primary/15 text-primary',
+                    !pathname?.startsWith('/dashboard/admin') && 'text-slate-300 hover:text-slate-100 hover:bg-slate-800/40'
                   )}
                 >
-                  <Link href="/dashboard/admin/support" className="flex items-center gap-3 w-full">
+                  <Link href="/dashboard/admin" className="flex items-center gap-3 w-full">
                     <Shield className="h-5 w-5 text-slate-400 group-hover:text-primary transition-all duration-300" />
                     <span className="font-medium">Admin Panel</span>
                   </Link>
@@ -251,7 +272,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               ))}
               {isAdmin && (
                 <DropdownMenuItem asChild className="rounded-lg">
-                  <Link href="/dashboard/admin/support" className={cn("cursor-pointer", pathname === '/dashboard/admin/support' && "bg-muted")}>
+                  <Link href="/dashboard/admin" className={cn("cursor-pointer", pathname?.startsWith('/dashboard/admin') && "bg-muted")}>
                     <Shield className="mr-2 h-4 w-4" />
                     Admin
                   </Link>

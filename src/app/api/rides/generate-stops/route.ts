@@ -1,38 +1,77 @@
+/**
+ * Generate Stops API
+ * 
+ * SECURITY: Requires authentication to prevent abuse of external geocoding services.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
+import {
+  requireAuth,
+  applyRateLimit,
+  errorResponse,
+  successResponse,
+} from '@/lib/api-security';
+
+// Rate limit for stop generation (uses external APIs)
+const STOP_GEN_RATE_LIMIT = {
+  maxRequests: 10,
+  windowMs: 60 * 1000, // 10 requests per minute
+  keyPrefix: 'stop-gen',
+};
 
 /**
  * POST /api/rides/generate-stops
  * Generates major stops along a route using OpenStreetMap Nominatim API
  */
 export async function POST(req: NextRequest) {
-  try {
-    const { routePolyline, routeDistance, from, to } = await req.json();
+  // ===== AUTHENTICATION =====
+  const authResult = await requireAuth(req);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
 
-    if (!routePolyline || !routeDistance) {
-      return NextResponse.json(
-        { error: 'Missing routePolyline or routeDistance' },
-        { status: 400 }
-      );
+  // ===== RATE LIMITING =====
+  const rateLimitResult = await applyRateLimit(req, STOP_GEN_RATE_LIMIT);
+  if (rateLimitResult instanceof NextResponse) {
+    return rateLimitResult;
+  }
+
+  try {
+    const body = await req.json();
+    const { routePolyline, routeDistance, from, to } = body;
+
+    // ===== INPUT VALIDATION =====
+    if (!routePolyline || typeof routePolyline !== 'string') {
+      return errorResponse('Missing or invalid routePolyline', 400);
+    }
+
+    if (!routeDistance || typeof routeDistance !== 'number' || routeDistance <= 0) {
+      return errorResponse('Missing or invalid routeDistance', 400);
+    }
+
+    // Limit polyline length to prevent DoS
+    if (routePolyline.length > 100000) {
+      return errorResponse('Route polyline too long', 400);
     }
 
     // Decode polyline to get coordinates
     const coordinates = decodePolyline(routePolyline);
     
+    if (coordinates.length < 2) {
+      return errorResponse('Invalid route: too few coordinates', 400);
+    }
+
     // Generate stops
     const stops = await generateStops(coordinates, routeDistance);
 
-    return NextResponse.json({
+    return successResponse({
       success: true,
       stops,
       count: stops.length,
     });
   } catch (error: any) {
-    console.error('Stop generation error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to generate stops' },
-      { status: 500 }
-    );
+    console.error('Stop generation error:', error.code || 'UNKNOWN');
+    return errorResponse('Failed to generate stops', 500);
   }
 }
 

@@ -115,7 +115,7 @@ export default function Home() {
                     <p className="mt-1 text-sm text-muted-foreground">See accepts fast, confirm the best match.</p>
                   </div>
                   <div className="rounded-2xl border border-secondary/20 bg-secondary/10 p-4 hover-lift-sm hover-glow transition-all duration-300 cursor-pointer animate-flip-in" style={{ animationDelay: '700ms' }}>
-                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Driver view</p>
+                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Ride Provider view</p>
                     <p className="mt-2 font-semibold text-foreground">Seat hold</p>
                     <p className="mt-1 text-sm text-muted-foreground">No overbooking while riders decide.</p>
                   </div>
@@ -130,7 +130,7 @@ export default function Home() {
           <Reveal className="text-center space-y-4 relative z-10">
             <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Why Campus Ride</p>
             <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Built for students who want safe rides</h2>
-            <p className="text-slate-300 max-w-2xl mx-auto">Request multiple rides for safety, chat inside the app, and confirm the driver you trust most.</p>
+            <p className="text-slate-300 max-w-2xl mx-auto">Request multiple rides for safety, chat inside the app, and confirm the ride provider you trust most.</p>
           </Reveal>
           <div className="mt-8 sm:mt-12 grid grid-cols-1 gap-6 md:gap-8 md:grid-cols-3 relative z-10">
             {features.map((feature, index) => (

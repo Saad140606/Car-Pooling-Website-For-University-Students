@@ -1,49 +1,101 @@
+/**
+ * Confirm Ride Request API
+ * 
+ * SECURITY: This endpoint requires authentication and verifies
+ * that the authenticated user is the passenger who owns the request.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/firebase/firebaseAdmin';
 import admin from 'firebase-admin';
+import {
+  requireAuth,
+  applyRateLimit,
+  validateUniversity,
+  isValidDocId,
+  errorResponse,
+  successResponse,
+  RATE_LIMITS,
+} from '@/lib/api-security';
 
 export async function POST(req: NextRequest) {
-  if (!adminDb) return NextResponse.json({ error: 'Admin not initialized' }, { status: 500 });
+  // Check if Firebase Admin is initialized
+  if (!adminDb) {
+    return errorResponse('Server configuration error', 500);
+  }
+
+  // ===== AUTHENTICATION =====
+  const authResult = await requireAuth(req);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+  const authenticatedUserId = authResult.uid;
+
+  // ===== RATE LIMITING =====
+  const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);
+  if (rateLimitResult instanceof NextResponse) {
+    return rateLimitResult;
+  }
+
   try {
-    const { university, rideId, requestId, passengerId } = await req.json();
-    if (!university || !rideId || !requestId) {
-      return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
+    // ===== INPUT VALIDATION =====
+    const body = await req.json();
+    const { university, rideId, requestId } = body;
+
+    // Validate university
+    const validUniversity = validateUniversity(university);
+    if (!validUniversity) {
+      return errorResponse('Invalid university parameter', 400);
+    }
+
+    // Validate document IDs
+    if (!isValidDocId(rideId)) {
+      return errorResponse('Invalid ride ID', 400);
+    }
+    if (!isValidDocId(requestId)) {
+      return errorResponse('Invalid request ID', 400);
     }
 
     const db = adminDb;
-    const rideRef = db.doc(`universities/${university}/rides/${rideId}`);
-    const requestRef = db.doc(`universities/${university}/rides/${rideId}/requests/${requestId}`);
+    const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
+    const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
 
     const result = await db.runTransaction(async (tx) => {
       const rideSnap = await tx.get(rideRef);
-      if (!rideSnap.exists) throw new Error('Ride not found');
+      if (!rideSnap.exists) {
+        throw new Error('Ride not found');
+      }
       const ride = rideSnap.data() as any;
 
       const reqSnap = await tx.get(requestRef);
-      if (!reqSnap.exists) throw new Error('Request not found');
+      if (!reqSnap.exists) {
+        throw new Error('Request not found');
+      }
       const request = reqSnap.data() as any;
 
-      if (passengerId && request.passengerId && request.passengerId !== passengerId) {
-        throw new Error('Only the passenger can confirm this request');
+      // ===== AUTHORIZATION: Verify authenticated user is the passenger =====
+      if (request.passengerId !== authenticatedUserId) {
+        throw new Error('FORBIDDEN: Only the passenger can confirm this request');
       }
 
-      const passenger = request.passengerId;
-      if (!passenger) throw new Error('Invalid request: missing passengerId');
-
-      if (request.status !== 'ACCEPTED') throw new Error('Only ACCEPTED requests can be confirmed');
+      if (request.status !== 'ACCEPTED') {
+        throw new Error('Only ACCEPTED requests can be confirmed');
+      }
       
       // Check expiry with proper timestamp handling
       const now = admin.firestore.Timestamp.now();
       if (request.expiresAt) {
-        const expiryTs = request.expiresAt.toMillis ? request.expiresAt : admin.firestore.Timestamp.fromDate(new Date(request.expiresAt));
+        const expiryTs = request.expiresAt.toMillis 
+          ? request.expiresAt 
+          : admin.firestore.Timestamp.fromDate(new Date(request.expiresAt));
         if (expiryTs.toMillis() < now.toMillis()) {
           throw new Error('Request expired');
         }
       }
 
-      // Ensure rider has no other CONFIRMED rides
+      // Ensure passenger has no other CONFIRMED rides
       const confirmedSnap = await db.collectionGroup('requests')
-        .where('passengerId', '==', passenger)
+        .where('passengerId', '==', authenticatedUserId)
         .where('status', '==', 'CONFIRMED')
         .limit(1)
         .get();
@@ -54,7 +106,10 @@ export async function POST(req: NextRequest) {
 
       const reservedSeats = (ride.reservedSeats ?? 0) as number;
       const availableSeats = (ride.availableSeats ?? 0) as number;
-      if (availableSeats <= 0) throw new Error('Ride is full');
+      
+      if (availableSeats <= 0) {
+        throw new Error('Ride is full');
+      }
 
       tx.update(rideRef, { 
         availableSeats: availableSeats - 1, 
@@ -65,15 +120,14 @@ export async function POST(req: NextRequest) {
         confirmedAt: now 
       });
 
-      return { passenger, tripKey: request.tripKey };
+      return { passenger: authenticatedUserId, tripKey: request.tripKey };
     });
 
     // After confirm, auto-cancel other requests for same passenger and tripKey
-    const passenger = result.passenger;
     const tripKey = result.tripKey;
-    if (passenger && tripKey) {
+    if (tripKey) {
       const cg = await adminDb.collectionGroup('requests')
-        .where('passengerId', '==', passenger)
+        .where('passengerId', '==', authenticatedUserId)
         .where('tripKey', '==', tripKey)
         .get();
       const batch = adminDb.batch();
@@ -107,8 +161,12 @@ export async function POST(req: NextRequest) {
       await batch.commit();
     }
 
-    return NextResponse.json({ ok: true });
+    return successResponse({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message || String(e) }, { status: 400 });
+    // Handle authorization errors with 403
+    if (e.message?.includes('FORBIDDEN')) {
+      return errorResponse('Access denied', 403);
+    }
+    return errorResponse(e.message || 'Request failed', 400);
   }
 }

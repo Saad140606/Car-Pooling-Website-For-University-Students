@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useUser, useFirestore, useIsAdmin } from '@/firebase';
 import { query, orderBy, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
@@ -9,9 +10,52 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 
 export default function AdminDashboardPage() {
+  const router = useRouter();
   const db = useFirestore();
   const { user, initialized } = useUser();
   const { isAdmin, loading: adminLoading } = useIsAdmin();
+  const [accessDenied, setAccessDenied] = useState(false);
+
+  // CRITICAL: Admin-only access control
+  useEffect(() => {
+    // Wait for all checks to complete
+    if (!initialized || adminLoading) return;
+    
+    // If check is complete and user is NOT admin, deny access
+    if (!isAdmin) {
+      setAccessDenied(true);
+      // Redirect after a brief moment to show the message
+      const t = setTimeout(() => {
+        router.replace('/dashboard/rides');
+      }, 1000);
+      return () => clearTimeout(t);
+    }
+  }, [initialized, isAdmin, adminLoading, router]);
+
+  // If access denied, show error
+  if (accessDenied) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-white mb-2">Access Denied</h1>
+          <p className="text-slate-400 mb-4">You do not have permission to access the admin panel.</p>
+          <p className="text-sm text-slate-500">Redirecting...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading state while checking admin status
+  if (!initialized || adminLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950">
+        <div className="text-center">
+          <div className="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-primary mx-auto"></div>
+          <p className="text-slate-400">Verifying admin access...</p>
+        </div>
+      </div>
+    );
+  }
 
   const [reports, setReports] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);

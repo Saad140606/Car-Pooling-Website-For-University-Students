@@ -44,12 +44,12 @@ const coreSteps: Step[] = [
   },
   {
     label: 'Step 2',
-    title: 'Driver accepts',
+    title: 'Ride Provider accepts',
     icon: <CheckCircle2 className="h-6 w-6" />,
     points: [
-      'Drivers see your request and can accept.',
+      'Ride providers see your request and can accept.',
       'A seat is held for you, but nothing is final yet.',
-      'You get notified instantly when a driver responds.',
+      'You get notified instantly when a ride provider responds.',
     ],
   },
   {
@@ -67,7 +67,7 @@ const coreSteps: Step[] = [
     title: 'Confirm one ride',
     icon: <ShieldCheck className="h-6 w-6" />,
     points: [
-      'Pick the driver you like best and confirm.',
+      'Pick the ride provider you like best and confirm.',
       'Other pending requests auto-cancel to stay fair.',
       'Your seat becomes permanent and everyone is notified.',
     ],
@@ -91,7 +91,7 @@ const safetySteps: Step[] = [
     icon: <MessageCircle className="h-6 w-6" />,
     points: [
       'Chat and calls stay inside Campus Ride, no phone numbers shared.',
-      'Opens right after a driver accepts your request.',
+      'Opens right after a ride provider accepts your request.',
       'Agree on pickup spot or quick updates without leaving the app.',
     ],
   },
@@ -100,8 +100,8 @@ const safetySteps: Step[] = [
     title: 'Built for trust',
     icon: <ShieldCheck className="h-6 w-6" />,
     points: [
-      'See driver profile, route, and planned stops before confirming.',
-      'Clear cancellation options for both riders and drivers.',
+      'See ride provider profile, route, and planned stops before confirming.',
+      'Clear cancellation options for both riders and ride providers.',
       'Rules keep things fair for everyone, no surprises.',
     ],
   },
@@ -227,7 +227,7 @@ export default function HowItWorks() {
                     <p className="mt-1">You see who accepts and pick one.</p>
                   </div>
                   <div className="rounded-2xl border border-primary/15 bg-primary/5 p-3">
-                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Driver view</p>
+                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Ride Provider view</p>
                     <p className="mt-2 font-semibold text-foreground">Seat held</p>
                     <p className="mt-1">Seat is locked softly while you decide.</p>
                   </div>
@@ -270,7 +270,7 @@ export default function HowItWorks() {
                     <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Seat hold visual</p>
                     <h3 className="font-headline text-2xl">How the soft seat lock works</h3>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      When a driver accepts, we hold your seat for a short window. Others cannot take it while you confirm. It keeps everyone safe from double-booking.
+                      When a ride provider accepts, we hold your seat for a short window. Others cannot take it while you confirm. It keeps everyone safe from double-booking.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-primary/25 bg-background/60 p-4">
@@ -314,7 +314,7 @@ export default function HowItWorks() {
                     <div className="flex items-start gap-3 rounded-2xl border border-primary/20 bg-background/60 p-3">
                       <BellRing className="mt-0.5 h-5 w-5 text-primary" />
                       <div>
-                        <p className="font-semibold text-foreground">Driver accepted</p>
+                        <p className="font-semibold text-foreground">Ride Provider accepted</p>
                         <p>We mark the seat as held and let you know instantly.</p>
                       </div>
                     </div>
@@ -394,15 +394,15 @@ export default function HowItWorks() {
                   <ul className="space-y-2 text-sm text-muted-foreground">
                     <li className="flex items-start gap-2">
                       <span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />
-                      Driver profile, route, and stops are visible before you confirm.
+                      Ride provider profile, route, and stops are visible before you confirm.
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />
-                      You can cancel easily if plans change, and drivers can release a seat when needed.
+                      You can cancel easily if plans change, and ride providers can release a seat when needed.
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />
-                      Confirmation locks one ride and frees the rest, fair for riders and drivers.
+                      Confirmation locks one ride and frees the rest, fair for riders and ride providers.
                     </li>
                   </ul>
                 </div>

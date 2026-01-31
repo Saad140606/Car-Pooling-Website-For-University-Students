@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Mic, MicOff, PhoneOff, Video, VideoOff } from 'lucide-react';
 import { useChat } from './useChat';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
@@ -16,10 +17,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [inCall, setInCall] = useState(false);
+  const [callMode, setCallMode] = useState<'audio' | 'video' | null>(null);
+  const [callError, setCallError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
   const callDocRef = useRef<any>(null);
   const ringtoneRef = useRef<{ stop: () => void } | null>(null);
   const vibrateIntervalRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const getIceServers = () => {
     const servers: any[] = [ { urls: 'stun:stun.l.google.com:19302' } ];
@@ -83,6 +93,24 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   };
 
   useEffect(() => {
+    if (audioRef.current && remoteStream) {
+      try { (audioRef.current as any).srcObject = remoteStream; } catch (_) {}
+    }
+  }, [remoteStream]);
+
+  useEffect(() => {
+    if (localVideoRef.current) {
+      try { (localVideoRef.current as any).srcObject = localStream; } catch (_) {}
+    }
+  }, [localStream]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      try { (remoteVideoRef.current as any).srcObject = remoteStream; } catch (_) {}
+    }
+  }, [remoteStream]);
+
+  useEffect(() => {
     if (!firestore) return;
     const cref = doc(firestore, `universities/${university}/chats`, chatId);
     getDoc(cref).then(s => { if (s.exists()) setMeta(s.data()); }).catch((err) => {
@@ -102,6 +130,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     const unsub = onSnapshot(cdoc, async (snap) => {
       if (!snap.exists()) {
         setIncomingCall(null);
+        stopRingtone();
         return;
       }
       const data = snap.data();
@@ -117,6 +146,35 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firestore, university, chatId, inCall]);
+
+  const handleMediaError = (error: any) => {
+    const name = error?.name || '';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      setCallError('Microphone or camera permission denied. Please allow access in your browser settings.');
+    } else if (name === 'NotFoundError') {
+      setCallError('No microphone or camera found. Please connect a device and try again.');
+    } else if (name === 'NotReadableError') {
+      setCallError('Your microphone or camera is currently in use by another app.');
+    } else {
+      setCallError('Unable to access microphone/camera. Please try again.');
+    }
+  };
+
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    localStreamRef.current.getAudioTracks().forEach(track => {
+      track.enabled = !track.enabled;
+    });
+    setIsMuted(prev => !prev);
+  };
+
+  const toggleVideo = () => {
+    if (!localStreamRef.current) return;
+    localStreamRef.current.getVideoTracks().forEach(track => {
+      track.enabled = !track.enabled;
+    });
+    setIsVideoOff(prev => !prev);
+  };
 
   // Helper: cleanup call resources
   const cleanupCall = async () => {
@@ -137,11 +195,18 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         localStreamRef.current = null;
       }
     } catch (_) {}
+    setLocalStream(null);
     setRemoteStream(null);
     setInCall(false);
+    setCallMode(null);
+    setIsConnecting(false);
+    setIsMuted(false);
+    setIsVideoOff(false);
+    setCallError(null);
     stopRingtone();
     try {
       if (callDocRef.current) {
+        try { await setDoc(callDocRef.current, { status: 'ended', endedAt: Date.now() }, { merge: true }); } catch (_) {}
         // remove call doc to signal hangup
         await deleteDoc(callDocRef.current);
       }
@@ -152,6 +217,9 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     if (!firestore || !user) return;
     if (inCall) return;
     setInCall(true);
+    setCallMode(mode);
+    setIsConnecting(true);
+    setCallError(null);
     const cdoc = doc(firestore, `universities/${university}/calls`, chatId);
     callDocRef.current = cdoc;
 
@@ -161,9 +229,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     // local stream
     let stream: MediaStream | null = null;
     try {
-      const constraints: any = { audio: true }; if (mode === 'video') constraints.video = true;
+      const constraints: any = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      };
+      if (mode === 'video') {
+        constraints.video = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' };
+      }
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
+      setLocalStream(stream);
       // Ensure pc is not closed before adding tracks
       if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') {
         console.warn('PC closed before adding local tracks');
@@ -181,7 +259,9 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       });
     } catch (e) {
       console.error('getUserMedia failed', e);
+      handleMediaError(e);
       setInCall(false);
+      setIsConnecting(false);
       await cleanupCall();
       return;
     }
@@ -189,6 +269,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     // remote stream
     pc.ontrack = (event) => {
       setRemoteStream(event.streams[0]);
+      setIsConnecting(false);
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+        cleanupCall().catch(() => {});
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        cleanupCall().catch(() => {});
+      }
     };
 
     // ICE candidates
@@ -221,11 +314,12 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             calleeId = meta.passengerId === user.uid ? meta.providerId : meta.passengerId;
           }
         } catch (_) {}
-        await setDoc(cdoc, { offer: { type: offer.type, sdp: offer.sdp }, caller: user.uid, callee: calleeId, mode, createdAt: Date.now() });
+        await setDoc(cdoc, { offer: { type: offer.type, sdp: offer.sdp }, caller: user.uid, callee: calleeId, mode, status: 'ringing', createdAt: Date.now() });
       } catch (e) { console.warn('failed to set call doc', e); }
     } catch (e) {
       console.warn('offer creation failed', e);
       setInCall(false);
+      setIsConnecting(false);
       await cleanupCall();
       return;
     }
@@ -233,11 +327,18 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     // Listen for answer
     const unsubAnswer = onSnapshot(cdoc, async (snap) => {
+      if (!snap.exists()) {
+        cleanupCall().catch(() => {});
+        return;
+      }
       const data = snap.data();
       if (!data) return;
       if (data.answer && pc && !pc.currentRemoteDescription) {
         const answer = new RTCSessionDescription(data.answer);
-        try { await pc.setRemoteDescription(answer); } catch (e) { console.warn(e); }
+        try { await pc.setRemoteDescription(answer); setIsConnecting(false); } catch (e) { console.warn(e); }
+      }
+      if (data.status === 'ended' || data.status === 'rejected') {
+        cleanupCall().catch(() => {});
       }
     }, (err) => {
       console.warn('Call answer snapshot error', err);
@@ -269,15 +370,29 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     const data: any = snap.data();
     if (!data.offer) return;
     setInCall(true);
+    setCallMode(data.mode === 'video' ? 'video' : 'audio');
+    setIsConnecting(true);
+    setCallError(null);
+    stopRingtone();
     const pc = new RTCPeerConnection({ iceServers: getIceServers() });
     pcRef.current = pc;
 
     // get local stream (audio/video as preferred by caller mode)
     let stream: MediaStream | null = null;
     try {
-      const constraints: any = { audio: true }; if (data.mode === 'video') constraints.video = true;
+      const constraints: any = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      };
+      if (data.mode === 'video') {
+        constraints.video = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' };
+      }
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
+      setLocalStream(stream);
       if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting' && pc.connectionState !== 'connected') {
         console.warn('PC closed before adding local tracks (answer)');
         setInCall(false);
@@ -294,12 +409,29 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       });
     } catch (e) {
       console.error('getUserMedia failed', e);
+      handleMediaError(e);
       setInCall(false);
+      setIsConnecting(false);
       await cleanupCall();
       return;
     }
 
-    pc.ontrack = (event) => setRemoteStream(event.streams[0]);
+    pc.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+      setIsConnecting(false);
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+        cleanupCall().catch(() => {});
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        cleanupCall().catch(() => {});
+      }
+    };
 
     const calleeCandidatesCollection = collection(cdoc, 'calleeCandidates');
     pc.onicecandidate = (event) => {
@@ -313,7 +445,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     // write answer
-    try { await setDoc(cdoc, { answer: { type: answer.type, sdp: answer.sdp }, callee: user.uid }, { merge: true }); } catch (e) { console.warn(e); }
+    try { await setDoc(cdoc, { answer: { type: answer.type, sdp: answer.sdp }, callee: user.uid, status: 'connected', updatedAt: Date.now() }, { merge: true }); } catch (e) { console.warn(e); }
 
     // listen for caller candidates
     const callerCandidatesCol = collection(cdoc, 'callerCandidates');
@@ -359,12 +491,96 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   return (
     <div className="flex flex-col h-[70vh] sm:h-[75vh] md:h-[70vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-700/50">
       <ChatHeader meta={meta} onStartCall={(mode) => startCall(mode)} onHangup={() => hangup()} calling={inCall} />
+
+      {callError && (
+        <div className="px-3 sm:px-4 py-2 bg-red-500/10 text-red-200 border-b border-red-500/30 text-xs sm:text-sm">
+          {callError}
+        </div>
+      )}
       
       {/* Hidden audio element for local/remote streams */}
-      <audio autoPlay ref={(el) => { if (el && remoteStream) { try { el.srcObject = remoteStream; } catch (_) {} } }} />
+      <audio ref={audioRef} autoPlay playsInline className="hidden" />
       
       {/* Messages area with gradient background */}
       <div className="relative flex-1 overflow-hidden">
+        {inCall && callMode === 'video' && (
+          <div className="absolute inset-0 z-40 bg-black/90 flex flex-col">
+            <div className="relative flex-1">
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute top-4 left-4 bg-slate-900/80 text-slate-100 text-xs sm:text-sm px-3 py-1 rounded-full border border-slate-700">
+                {isConnecting ? 'Connecting...' : 'Video call'}
+              </div>
+              <div className="absolute bottom-24 right-4 w-28 h-40 sm:w-36 sm:h-52 rounded-xl overflow-hidden border-2 border-primary/60 shadow-xl">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-center gap-4 pb-6 pt-4 bg-gradient-to-t from-black/80 to-transparent">
+              <button
+                onClick={toggleMute}
+                className={`h-12 w-12 rounded-full flex items-center justify-center transition-all ${
+                  isMuted ? 'bg-red-600 text-white' : 'bg-slate-700 text-white'
+                }`}
+                aria-label="Toggle mute"
+              >
+                {isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </button>
+              <button
+                onClick={toggleVideo}
+                className={`h-12 w-12 rounded-full flex items-center justify-center transition-all ${
+                  isVideoOff ? 'bg-red-600 text-white' : 'bg-slate-700 text-white'
+                }`}
+                aria-label="Toggle camera"
+              >
+                {isVideoOff ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />}
+              </button>
+              <button
+                onClick={hangup}
+                className="h-12 w-12 rounded-full bg-red-600 text-white flex items-center justify-center"
+                aria-label="End call"
+              >
+                <PhoneOff className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {inCall && callMode === 'audio' && (
+          <div className="absolute inset-x-0 bottom-0 z-40 bg-slate-950/90 border-t border-slate-800 px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm text-slate-100 font-medium">Audio call</div>
+              <div className="text-xs text-slate-400">{isConnecting ? 'Connecting...' : 'Connected'}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMute}
+                className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
+                  isMuted ? 'bg-red-600 text-white' : 'bg-slate-700 text-white'
+                }`}
+                aria-label="Toggle mute"
+              >
+                {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={hangup}
+                className="h-10 w-10 rounded-full bg-red-600 text-white flex items-center justify-center"
+                aria-label="End call"
+              >
+                <PhoneOff className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
         {/* Animated background */}
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-900/95 to-slate-950">
           <div className="absolute inset-0 opacity-30">
@@ -391,8 +607,31 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             </div>
           ) : (
             messages.map((m) => {
-              const senderName = m.senderId !== user?.uid ? (meta?.passengerDetails?.fullName || meta?.providerDetails?.fullName || meta?.driverDetails?.fullName || 'Student') : null;
+              // Determine the sender's real name and verification status
+              const isCurrentUserPassenger = meta?.passengerId === user?.uid;
+              
+              // For received messages (not own), get the OTHER person's details
+              let senderDetails: any = null;
+              if (m.senderId !== user?.uid) {
+                // Sender is NOT current user - determine which details to show
+                if (m.senderId === meta?.passengerId) {
+                  // Sender is the passenger
+                  senderDetails = meta?.passengerDetails;
+                } else if (m.senderId === meta?.providerId || m.senderId === meta?.driverId) {
+                  // Sender is the provider/driver
+                  senderDetails = meta?.providerDetails || meta?.driverDetails;
+                } else {
+                  // Fallback: use opposite of current user
+                  senderDetails = isCurrentUserPassenger 
+                    ? (meta?.providerDetails || meta?.driverDetails)
+                    : meta?.passengerDetails;
+                }
+              }
+              
+              const senderName = senderDetails?.fullName || senderDetails?.name || null;
+              const senderVerified = senderDetails?.universityEmailVerified || senderDetails?.verified || senderDetails?.isVerified || false;
               const initials = senderName?.split(' ').map((n: string) => n[0]).slice(0, 2).join('') || '?';
+              
               return (
                 <MessageBubble 
                   key={m.id} 
@@ -400,6 +639,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
                   isOwn={m.senderId === user?.uid}
                   senderName={senderName}
                   senderInitials={initials}
+                  senderVerified={senderVerified}
                 />
               );
             })
@@ -421,13 +661,13 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             <div className="flex gap-3">
               <button 
                 className="px-6 py-3 bg-gradient-to-br from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg" 
-                onClick={async () => { setIncomingCall(null); await answerCall(); }}
+                onClick={async () => { stopRingtone(); setIncomingCall(null); await answerCall(); }}
               >
                 Accept
               </button>
               <button 
                 className="px-6 py-3 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg" 
-                onClick={async () => { setIncomingCall(null); try { if (callDocRef.current) await deleteDoc(callDocRef.current); } catch(_) {} }}
+                onClick={async () => { stopRingtone(); setIncomingCall(null); try { if (callDocRef.current) await deleteDoc(callDocRef.current); } catch(_) {} }}
               >
                 Reject
               </button>

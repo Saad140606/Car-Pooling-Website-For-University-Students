@@ -1,13 +1,56 @@
+/**
+ * Check Email Availability API
+ * 
+ * SECURITY: Implements rate limiting to prevent email enumeration attacks.
+ * Returns minimal information to avoid information disclosure.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirestore } from 'firebase-admin/firestore';
 import { adminDb } from '@/firebase/firebaseAdmin';
+import {
+  applyRateLimit,
+  isValidEmail,
+  getClientIP,
+  errorResponse,
+  successResponse,
+} from '@/lib/api-security';
+
+// Strict rate limiting for email checking to prevent enumeration
+const EMAIL_CHECK_RATE_LIMIT = {
+  maxRequests: 10,
+  windowMs: 60 * 1000, // 10 requests per minute
+  keyPrefix: 'email-check',
+};
 
 export async function POST(request: NextRequest) {
+  // ===== RATE LIMITING =====
+  // Use IP-based rate limiting since this is a pre-auth endpoint
+  const clientIP = getClientIP(request);
+  const rateLimitResult = await applyRateLimit(request, {
+    ...EMAIL_CHECK_RATE_LIMIT,
+    keyPrefix: `email-check:${clientIP}`,
+  });
+  if (rateLimitResult instanceof NextResponse) {
+    return rateLimitResult;
+  }
+
   try {
     const { email, university } = await request.json();
 
+    // ===== INPUT VALIDATION =====
     if (!email || !university) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+      return errorResponse('Missing required fields', 400);
+    }
+
+    if (!isValidEmail(email)) {
+      return errorResponse('Invalid email format', 400);
+    }
+
+    // Validate university
+    const normalizedUniversity = String(university).toLowerCase();
+    if (!['fast', 'ned'].includes(normalizedUniversity)) {
+      return errorResponse('Invalid university', 400);
     }
 
     const db = adminDb ?? getFirestore();
@@ -21,22 +64,21 @@ export async function POST(request: NextRequest) {
       const existingQuery = await usersRef.where('email', '==', normalizedEmail).limit(1).get();
       
       if (!existingQuery.empty) {
-        const existingUser = existingQuery.docs[0].data();
-        return NextResponse.json({
+        // SECURITY: Don't reveal which university the email is registered with
+        // This prevents information disclosure
+        return successResponse({
           available: false,
-          existsIn: uni,
-          message: `This email is already registered with ${uni === 'fast' ? 'FAST' : 'NED'} University.`
+          // Generic message that doesn't reveal specific university
+          message: 'This email is already registered. Please use a different email or sign in.'
         });
       }
     }
 
     // Email is available
-    return NextResponse.json({ available: true });
+    return successResponse({ available: true });
   } catch (error: any) {
-    console.error('Error checking email availability:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to check email availability' },
-      { status: 500 }
-    );
+    // SECURITY: Generic error message
+    console.error('Email check error:', error.code || 'UNKNOWN');
+    return errorResponse('Unable to verify email. Please try again.', 500);
   }
 }

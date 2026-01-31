@@ -33,7 +33,7 @@ export default function RideDetailModal({ ride, onClose }: Props) {
               <div><strong>Date:</strong> {ride.createdAt?.toDate ? ride.createdAt.toDate().toLocaleString() : (ride.createdAt?.seconds ? new Date(ride.createdAt.seconds*1000).toLocaleString() : '—')}</div>
               <div><strong>Fare:</strong> {ride.fare ? `PKR ${ride.fare}` : '—'}</div>
               <div><strong>Status:</strong> {ride.status || '—'}</div>
-              <div><strong>Driver:</strong> {ride.driverName || ride.riderId || '—'}</div>
+              <div><strong>Ride Provider:</strong> {ride.driverName || ride.riderId || '—'}</div>
             </div>
           </div>
 

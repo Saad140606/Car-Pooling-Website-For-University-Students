@@ -670,7 +670,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
                 <h3 className="font-semibold text-blue-900 dark:text-blue-100">Request Pending ⏳</h3>
               </div>
               <p className="text-sm text-blue-800 dark:text-blue-200 mb-3">
-                Your request is waiting for the driver to respond.
+                Your request is waiting for the ride provider to respond.
               </p>
               <button
                 onClick={handleCancelRequest}
@@ -686,7 +686,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
             <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-lg">
               <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Request Declined ❌</h3>
               <p className="text-sm text-gray-700 dark:text-gray-300">
-                The driver declined your request. You can request again if seats are still available.
+                The ride provider declined your request. You can request again if seats are still available.
               </p>
             </div>
           )}

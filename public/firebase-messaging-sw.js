@@ -15,7 +15,7 @@ self.addEventListener('push', function(event) {
   const title = (data.notification && data.notification.title) || data.title || 'Incoming Call';
   const body = (data.notification && data.notification.body) || data.body || 'Tap to open';
   const badge = data.notification?.badge || undefined;
-  const icon = data.notification?.icon || '/favicon.ico';
+  const icon = data.notification?.icon || '/icons/icon-192x192.png';
 
   const options = {
     body,

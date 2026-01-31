@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Check, CheckCheck, Play, Pause } from 'lucide-react';
+import { InlineVerifiedBadge } from '@/components/VerificationBadge';
 
-export default function MessageBubble({ message, isOwn, senderName, senderInitials }: { message: any, isOwn: boolean, senderName?: string, senderInitials?: string }) {
+export default function MessageBubble({ message, isOwn, senderName, senderInitials, senderVerified }: { message: any, isOwn: boolean, senderName?: string, senderInitials?: string, senderVerified?: boolean }) {
   const ts = message.timestamp && message.timestamp.toDate ? message.timestamp.toDate() : (message.timestamp ? new Date(message.timestamp) : null);
   const isSeen = message.seenBy && Array.isArray(message.seenBy) && message.seenBy.length > 1;
   const [playing, setPlaying] = useState(false);
@@ -32,9 +33,12 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
         )}
         
         <div className="flex flex-col gap-1">
-          {/* Sender name for received messages */}
+          {/* Sender name for received messages - with verified badge */}
           {!isOwn && senderName && (
-            <span className="text-xs text-slate-400 px-2">{senderName}</span>
+            <div className="flex items-center gap-1 px-2">
+              <span className="text-xs text-slate-400">{senderName}</span>
+              <InlineVerifiedBadge verified={senderVerified} className="ml-0.5" />
+            </div>
           )}
           
           {/* Message bubble */}

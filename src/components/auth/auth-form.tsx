@@ -219,30 +219,54 @@ export function AuthForm({ university, action }: AuthFormProps) {
         } catch (e) {
           // ignore
         }
+        
+        // ===== CRITICAL: Check university membership FIRST before any other checks =====
+        // This prevents sending OTP to users from wrong university
+        let serverResult: any = null;
         try {
-          // If not already flagged by client-side admin list, verify with server.
-          if (!isAdminAccount) {
-            const idToken = await u.getIdToken();
-            const admRes = await fetch('/api/admin/isMember', { method: 'POST', headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedUni }) });
-            if (admRes.ok) {
-              const jb = await admRes.json();
-              isAdminAccount = Boolean(jb?.isAdmin);
+          const idToken = await u.getIdToken();
+          const res = await fetch('/api/admin/isMember', { method: 'POST', headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedUni }) });
+          if (res.ok) {
+            serverResult = await res.json();
+            // Also update admin status from server result
+            if (!isAdminAccount && serverResult?.isAdmin) {
+              isAdminAccount = true;
             }
           }
         } catch (e) {
-          console.debug('Admin check failed during login:', e);
+          console.warn('Server membership check failed:', e);
+        }
+
+        // If user is registered under a DIFFERENT university, block immediately
+        // Do NOT proceed to email verification or OTP - just show error and stay on login page
+        if (serverResult && serverResult.isMember && serverResult.university !== selectedUni) {
+          try { await signOut(auth); } catch (e) { /* ignore */ }
+          const registeredUni = serverResult.registeredIn || serverResult.university || otherUni;
+          const uniName = registeredUni === 'fast' ? 'FAST University' : 'NED University';
+          toast({ 
+            variant: 'destructive', 
+            title: 'Wrong University Portal', 
+            description: `This email is registered with ${uniName}. Please sign in through the correct university portal.` 
+          });
+          setLoading(false);
+          return; // CRITICAL: Stop here, do NOT redirect to verify page
         }
 
         // Enforce signup email verification before allowing login (except admins)
+        // Only check this if user belongs to the SELECTED university or is new
         try {
           let emailVerifiedFlag = false;
+          let userExistsInSelectedUni = false;
           const uniUserSnap = await getDoc(doc(firestore, 'universities', selectedUni, 'users', u.uid));
           if (uniUserSnap.exists()) {
+            userExistsInSelectedUni = true;
             const profile = uniUserSnap.data() as any;
             emailVerifiedFlag = Boolean(profile?.emailVerified);
           }
 
-          if (!isAdminAccount && !emailVerifiedFlag) {
+          // Only require email verification if user EXISTS in selected university but is not verified
+          // If user doesn't exist at all, the membership check below will handle it
+          if (userExistsInSelectedUni && !isAdminAccount && !emailVerifiedFlag) {
             try {
               const otpResponse = await fetch('/api/send-signup-otp', {
                 method: 'POST',
@@ -263,30 +287,17 @@ export function AuthForm({ university, action }: AuthFormProps) {
             return;
           }
         } catch (e) {
-          // If we fail to read the profile, be safe and require verification
-          if (!isAdminAccount) {
-            try { await signOut(auth); } catch (_) {}
-            router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${selectedUni}&uid=${u.uid}`);
-            return;
-          }
+          // If we fail to read the profile, check if this is a wrong-university situation first
+          console.debug('Failed to check email verification status:', e);
         }
 
 
         // Check for an existing user document under the university-specific path
         // `users/{university}/{uid}`. This enforces university scoping and prevents
         // cross-university sign-ins.
+        // NOTE: We already have serverResult from above, reuse it
         try {
-          // Use a server-side membership check to avoid client Firestore permission errors
-          console.debug('University membership check (server): uid=', u?.uid, 'selectedUni=', selectedUni, 'otherUni=', otherUni);
-          let serverResult: any = null;
-          try {
-            const idToken = await u.getIdToken();
-            const res = await fetch('/api/admin/isMember', { method: 'POST', headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedUni }) });
-            if (res.ok) serverResult = await res.json();
-          } catch (e) {
-            console.warn('Server membership check failed:', e);
-            serverResult = null;
-          }
+          console.debug('University membership check: uid=', u?.uid, 'selectedUni=', selectedUni, 'serverResult=', serverResult);
 
           if (serverResult && serverResult.isMember) {
             const memberUni = serverResult.university || selectedUni;

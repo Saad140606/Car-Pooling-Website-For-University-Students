@@ -487,7 +487,7 @@ export default function AccountPage() {
               {verifiedLocal ? (
                 <Alert className="bg-green-500/10 border-green-500/30">
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <AlertDescription className="flex items-center justify-between">
+                  <AlertDescription className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
                       <div className="text-sm font-medium text-green-700">{userData?.universityEmail || 'Verified'}</div>
                       <div className="text-xs text-green-600">Your university email is verified</div>
@@ -501,7 +501,7 @@ export default function AccountPage() {
                     <label className="block text-sm font-medium text-slate-200">
                       University Email {userData?.university && `(${getUniversityEmailDomain(userData.university)})`}
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                       <Input
                         type="email"
                         placeholder={userData?.university ? `yourname${getUniversityEmailDomain(userData.university)}` : 'Enter university email'}
@@ -516,6 +516,7 @@ export default function AccountPage() {
                         disabled={!universityEmail || !userData?.university || sendingVerification || (verificationSent && timeLeft > 0)}
                         variant="outline"
                         size="sm"
+                        className="w-full sm:w-auto"
                       >
                         <Mail className="h-4 w-4 mr-2" />
                         {sendingVerification
@@ -535,7 +536,7 @@ export default function AccountPage() {
                         <Mail className="h-4 w-4 text-blue-600" />
                         <AlertDescription className="space-y-2 text-sm text-blue-700">
                           <p>Enter the 6-digit code we sent to your university email.</p>
-                          <div className="flex gap-2 items-center">
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                             <Input
                               ref={otpInputRef as any}
                               value={otp}
@@ -543,9 +544,9 @@ export default function AccountPage() {
                               maxLength={6}
                               placeholder="123456"
                               inputMode="numeric"
-                              className="w-32 border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"
+                              className="w-full sm:w-32 border-border/40 bg-background/80 backdrop-blur-sm focus:border-primary/50"
                             />
-                            <Button type="button" size="sm" onClick={handleVerifyOtp} disabled={verifying || otp.length !== 6}>
+                            <Button type="button" size="sm" onClick={handleVerifyOtp} disabled={verifying || otp.length !== 6} className="w-full sm:w-auto">
                               {verifying ? 'Verifying...' : 'Verify'}
                             </Button>
                           </div>
@@ -558,14 +559,14 @@ export default function AccountPage() {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Button type="submit" disabled={saving} className="shadow-lg shadow-primary/30 hover:shadow-primary/50 btn-press">{saving ? 'Saving...' : 'Save Changes'}</Button>
-              <Button variant="ghost" onClick={() => {
+            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+              <Button type="submit" disabled={saving} className="shadow-lg shadow-primary/30 hover:shadow-primary/50 btn-press w-full sm:w-auto">{saving ? 'Saving...' : 'Save Changes'}</Button>
+              <Button variant="ghost" className="w-full sm:w-auto" onClick={() => {
                 setFullName(userData?.fullName || '');
                 setGender(userData?.gender || undefined);
                 setContactNumber((userData?.contactNumber || '').toString().replace(/\D/g, '').slice(0, 11));
               }}>Reset</Button>
-              <Button variant="outline" onClick={() => setShowPwForm(s => !s)}>Change Password</Button>
+              <Button variant="outline" className="w-full sm:w-auto" onClick={() => setShowPwForm(s => !s)}>Change Password</Button>
             </div>
           </form>
 
@@ -623,18 +624,20 @@ export default function AccountPage() {
                     <p className="text-xs text-destructive mt-1">New password must be different from your current password.</p>
                   )}
                 </div>
-                <div className="flex gap-2 items-center">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <Button 
                     type="submit" 
                     disabled={pwLoading || !passwordRateLimit?.allowed || (currentPassword.trim() !== '' && newPassword.trim() !== '' && currentPassword === newPassword)}
+                    className="w-full sm:w-auto"
                   >
                     {pwLoading ? 'Updating...' : 'Update Password'}
                   </Button>
-                  <Button variant="ghost" onClick={() => setShowPwForm(false)}>Cancel</Button>
+                  <Button variant="ghost" className="w-full sm:w-auto" onClick={() => setShowPwForm(false)}>Cancel</Button>
                   <Button 
                     variant="outline" 
                     onClick={handleSendResetEmail} 
                     disabled={resetLoading || !auth?.currentUser?.email || !passwordRateLimit?.allowed}
+                    className="w-full sm:w-auto"
                   >
                     {resetLoading ? 'Sending...' : 'Send reset email'}
                   </Button>

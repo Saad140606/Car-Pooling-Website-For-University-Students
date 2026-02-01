@@ -19,13 +19,13 @@ export async function POST(req: NextRequest) {
     }
 
     const url = 'https://api.openrouteservice.org/v2/directions/driving-car/geojson';
-    const maxAttempts = 3;
-    const baseTimeoutMs = 10000; // base timeout per attempt
+    const maxAttempts = 2; // Reduced from 3 to 2 for faster failure feedback
+    const baseTimeoutMs = 5000; // Reduced from 10000 to 5000 for faster timeout
     let lastErr: any = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
-      const timeoutMs = baseTimeoutMs * attempt; // increase timeout each attempt
+      const timeoutMs = attempt === 1 ? baseTimeoutMs : baseTimeoutMs + 2000; // 5s, then 7s
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
           // Retry on server errors
           if (response.status >= 500 && attempt < maxAttempts) {
-            await new Promise(r => setTimeout(r, 500 * attempt));
+            await new Promise(r => setTimeout(r, 200 * attempt)); // Faster backoff: 200ms, 400ms
             continue;
           }
 
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
         console.warn('ORS proxy fetch failed', { attempt, isTimeout, message: err?.message, code: err?.code });
 
         if (attempt < maxAttempts) {
-          await new Promise(r => setTimeout(r, 500 * attempt));
+          await new Promise(r => setTimeout(r, 200 * attempt)); // Faster retry backoff: 200ms, 400ms
           continue;
         }
 

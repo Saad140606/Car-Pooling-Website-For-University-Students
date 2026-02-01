@@ -83,6 +83,8 @@ const MapComponent = forwardRef<MapComponentRef, {
   lockedPosition?: { lat: number; lng: number; name?: string } | null;
   // Function to get auth token for API calls
   getAuthToken?: () => Promise<string>;
+  // University location to center map on - passed from parent
+  universityLocation?: { lat: number; lng: number; name?: string } | null;
 }>((props, ref) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   
@@ -189,7 +191,11 @@ const MapComponent = forwardRef<MapComponentRef, {
       } catch (_) {}
     
     // Use OpenStreetMap tiles (plain/default style used elsewhere)
-    mapInstanceRef.current = L.map(mapContainerRef.current).setView([24.8607, 67.0011], 16);
+    // Initialize map - will be centered on university location from props or FAST default
+    const mapCenter = props.universityLocation 
+      ? [props.universityLocation.lat, props.universityLocation.lng] as [number, number]
+      : [24.8569128, 67.2646384] as [number, number];
+    mapInstanceRef.current = L.map(mapContainerRef.current).setView(mapCenter, 13);
     // If parent requested an initial selection (e.g., university lock), apply it immediately
     if (props.initialSelection && props.activeMapSelect) {
       try {
@@ -399,35 +405,82 @@ const MapComponent = forwardRef<MapComponentRef, {
     }
   }, [props.from, props.to, props.lockedPin, props.lockedPosition]);
 
+  // Center map on university location when it changes (on initial load)
+  useEffect(() => {
+    if (!mapInstanceRef.current || !props.universityLocation) return;
+    // Center the map on the university location when the page loads
+    mapInstanceRef.current.setView([props.universityLocation.lat, props.universityLocation.lng], 13, { animate: false });
+  }, [props.universityLocation?.lat, props.universityLocation?.lng]);
 
   useEffect(() => {
     const drawRoute = async (start: LatLngLiteral, end: LatLngLiteral) => {
-        if (!mapInstanceRef.current) return;
+        // Wait up to 5 seconds for map to be initialized
+        let mapReady = false;
+        let waitCount = 0;
+        while (!mapInstanceRef.current && waitCount < 50) {
+          await new Promise(r => setTimeout(r, 100));
+          waitCount++;
+        }
+        
+        if (!mapInstanceRef.current) {
+          console.warn('[ROUTE] Map not initialized after waiting 5 seconds');
+          props.onRouteUpdate(null, null);
+          return;
+        }
+        
+        console.log('[ROUTE] Starting route generation from', start, 'to', end);
         if (routeLayerRef.current) {
             mapInstanceRef.current.removeLayer(routeLayerRef.current);
             routeLayerRef.current = null;
         }
 
         if (!process.env.NEXT_PUBLIC_ORS_API_KEY) {
-            console.warn('ORS API key missing. Cannot draw route. Please add NEXT_PUBLIC_ORS_API_KEY to your .env file.');
+            console.warn('[ROUTE] ORS API key missing. Cannot draw route. Please add NEXT_PUBLIC_ORS_API_KEY to your .env file.');
             props.onRouteUpdate(null, null);
             return;
         }
         
-        const body = { coordinates: [[start.lng, start.lat], [end.lng, end.lat]] };
+        // Validate coordinates before making API call
+        if (!start || !start.lat || !start.lng || !end || !end.lat || !end.lng) {
+          console.warn('[ROUTE] Invalid coordinates:', { start, end });
+          props.onRouteUpdate(null, null);
+          props.onRouteError?.(new Error('Invalid start or end coordinates'));
+          return;
+        }
+        
+        // Ensure coordinates are numbers
+        const startLat = Number(start.lat);
+        const startLng = Number(start.lng);
+        const endLat = Number(end.lat);
+        const endLng = Number(end.lng);
+        
+        if (!Number.isFinite(startLat) || !Number.isFinite(startLng) || !Number.isFinite(endLat) || !Number.isFinite(endLng)) {
+          console.warn('[ROUTE] Non-numeric coordinates:', { startLat, startLng, endLat, endLng });
+          props.onRouteUpdate(null, null);
+          props.onRouteError?.(new Error('Coordinates must be valid numbers'));
+          return;
+        }
+        
+        const body = { coordinates: [[startLng, startLat], [endLng, endLat]] };
 
-        const maxAttempts = 3;
+        const maxAttempts = 2; // Reduced from 3 to 2 for faster failure feedback
         let attempt = 0;
         let lastErr: any = null;
 
         while (attempt < maxAttempts) {
             attempt++;
             try {
+                // Use faster timeout: 6s base, 8s on retry (instead of 10s, 20s)
+                const timeoutMs = attempt === 1 ? 6000 : 8000;
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
                 const response = await fetch('/api/ors', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json; charset=utf-8' },
                     body: JSON.stringify(body),
-                });
+                    signal: controller.signal,
+                }).finally(() => clearTimeout(timeoutId));
 
                 if (!response.ok) {
                     // Try to parse returned JSON for more details
@@ -453,28 +506,54 @@ const MapComponent = forwardRef<MapComponentRef, {
                     throw new Error(`ORS proxy error: ${response.status} — ${short}`);
                 }
 
-                const routeData = await response.json();
+                let routeData: any;
+                try {
+                  routeData = await response.json();
+                } catch (parseErr) {
+                  console.error('[ROUTE] Failed to parse response JSON:', parseErr);
+                  throw new Error(`Failed to parse route response: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+                }
 
-                if (routeData.features && routeData.features.length > 0) {
-                    const coordinates = routeData.features[0].geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
-                    // Decide route color: if one endpoint equals lockedPosition, use primary (blue)
-                    const lockedPos = props.lockedPosition;
-                    const startIsLocked = lockedPos && start && Math.abs(start.lat - lockedPos.lat) < 1e-6 && Math.abs(start.lng - lockedPos.lng) < 1e-6;
-                    const endIsLocked = lockedPos && end && Math.abs(end.lat - lockedPos.lat) < 1e-6 && Math.abs(end.lng - lockedPos.lng) < 1e-6;
-                    const routeColor = (lockedPos && (startIsLocked || endIsLocked)) ? '#3F51B5' : '#9575CD';
-                    // Draw outline + foreground polyline for contrast on light basemap
-                    const polylineOutline = L.polyline(coordinates, { color: '#ffffff', weight: 10, opacity: 0.7 }).addTo(mapInstanceRef.current);
-                    const polyline = L.polyline(coordinates, { color: routeColor, weight: 6, opacity: 0.95 }).addTo(mapInstanceRef.current);
-                    routeLayerRef.current = polyline;
-                    // Only fit the map to the route if the user is NOT actively selecting a point — avoid interrupting selection
-                                if (!props.activeMapSelect) {
-                                  try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (_) {}
-                                }
-                    routeLayerRef.current = polyline;
+                if (!routeData.features || routeData.features.length === 0) {
+                    console.warn('[ROUTE] No features in response');
+                    props.onRouteUpdate(null, null);
+                    props.onRouteError?.(new Error('No route found between these points'));
+                    return;
+                }
 
-                    const summary = routeData.features[0].properties.summary;
+                const feature = routeData.features[0];
+                if (!feature.geometry || !feature.geometry.coordinates || feature.geometry.coordinates.length === 0) {
+                    console.warn('[ROUTE] Invalid geometry in response:', feature);
+                    props.onRouteUpdate(null, null);
+                    props.onRouteError?.(new Error('Invalid route geometry'));
+                    return;
+                }
+
+                console.log('[ROUTE] Route data received, drawing polyline with', feature.geometry.coordinates.length, 'coordinates');
+                const coordinates = feature.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
+                // Decide route color: if one endpoint equals lockedPosition, use primary (blue)
+                const lockedPos = props.lockedPosition;
+                const startIsLocked = lockedPos && start && Math.abs(start.lat - lockedPos.lat) < 1e-6 && Math.abs(start.lng - lockedPos.lng) < 1e-6;
+                const endIsLocked = lockedPos && end && Math.abs(end.lat - lockedPos.lat) < 1e-6 && Math.abs(end.lng - lockedPos.lng) < 1e-6;
+                const routeColor = (lockedPos && (startIsLocked || endIsLocked)) ? '#3F51B5' : '#9575CD';
+                
+                // Create single polyline with glow effect via CSS/opacity instead of double rendering
+                const polyline = L.polyline(coordinates, { color: routeColor, weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }).addTo(mapInstanceRef.current);
+                routeLayerRef.current = polyline;
+                console.log('[ROUTE] Polyline drawn successfully with', coordinates.length, 'coordinates');
+                
+                // Only fit the map to the route if the user is NOT actively selecting a point — avoid interrupting selection
+                if (!props.activeMapSelect) {
+                    try { mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50], animate: false }); } catch (_) {}
+                }
+
+                // Extract and update route summary
+                const summary = feature.properties?.summary;
+                if (summary) {
+                    console.log('[ROUTE] Route summary:', { distance: summary.distance, duration: summary.duration });
                     props.onRouteUpdate(summary.distance / 1000, summary.duration / 60);
                 } else {
+                    console.warn('[ROUTE] No summary in route properties');
                     props.onRouteUpdate(null, null);
                 }
 
@@ -482,9 +561,10 @@ const MapComponent = forwardRef<MapComponentRef, {
                 return;
             } catch (error) {
                 lastErr = error;
-                console.warn(`Route fetch attempt ${attempt} failed:`, error);
-                // small backoff before retrying
-                if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 500 * attempt));
+                const isTimeout = error instanceof Error && error.name === 'AbortError';
+                console.warn(`Route fetch attempt ${attempt} failed (timeout: ${isTimeout}):`, error);
+                // Faster backoff: 200ms instead of 500ms * attempt
+                if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 200));
             }
         }
 
@@ -495,7 +575,10 @@ const MapComponent = forwardRef<MapComponentRef, {
     };
     
     if (props.from && props.to) {
+        console.log('[ROUTE] Effect triggered: from and to are set, calling drawRoute');
         drawRoute(props.from, props.to);
+    } else {
+        console.log('[ROUTE] Effect triggered but from or to is missing', { from: props.from, to: props.to });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.from, props.to]);
@@ -511,7 +594,10 @@ const MapComponent = forwardRef<MapComponentRef, {
       startMarkerRef.current = null;
       endMarkerRef.current = null;
       routeLayerRef.current = null;
-      mapInstanceRef.current?.setView([24.8607, 67.0011], 13);
+      // Center map on university location if available, otherwise use FAST University coordinates
+      const centerLat = props.universityLocation?.lat || 24.8569128;
+      const centerLng = props.universityLocation?.lng || 67.2646384;
+      mapInstanceRef.current?.setView([centerLat, centerLng], 13);
       props.onRouteUpdate(null, null);
     },
     getRoute: () => {
@@ -997,7 +1083,7 @@ export default function CreateRidePage() {
           
           stops = idxs.map((i, idx) => ({
             id: `stop_${Date.now()}_${idx}_${Math.random()}`,
-            name: `Stop ${idx + 1}`,
+            name: `Loading...`, // Show "Loading..." instead of "Stop N" for better UX
             lat: latlngs[i].lat,
             lng: latlngs[i].lng,
             order: idx,
@@ -1095,21 +1181,25 @@ export default function CreateRidePage() {
               
               console.log('All stops named:', stopsWithNames.map(s => s.name));
               
-              // Don't filter too aggressively - we want to keep most stops
-              // First deduplicate stops that are very close together
+              // AGGRESSIVE deduplication strategy:
+              // Step 1: Remove stops within 300m of each other
               let filteredStops = deduplicateNearbyStops(stopsWithNames, 300);
-              console.log('After distance deduplication:', filteredStops.length, 'stops:', filteredStops.map(s => s.name));
+              console.log('After distance deduplication:', filteredStops.length, 'stops');
               
-              // Remove consecutive stops with same names (e.g., "National Highway" appearing 5 times)
+              // Step 2: Remove consecutive stops with same names (both exact and substring matches)
               filteredStops = deduplicateByName(filteredStops);
-              console.log('After name deduplication:', filteredStops.length, 'stops:', filteredStops.map(s => s.name));
+              console.log('After name deduplication:', filteredStops.length, 'stops');
               
-              // Try to filter to important stops, but keep all if filtering removes too many
+              // Step 3: Additional aggressive pass - remove "Loading..." placeholders if names were fetched
+              filteredStops = filteredStops.filter(stop => !stop.name?.includes('Loading'));
+              console.log('After loading placeholder removal:', filteredStops.length, 'stops');
+              
+              // Step 4: Try to filter to important stops
               const importantStops = filterImportantStops(filteredStops);
-              console.log('Important stops filtered:', importantStops.length, 'stops:', importantStops.map(s => s.name));
+              console.log('Important stops filtered:', importantStops.length, 'stops');
               
-              // Only use filtered stops if we have at least 5, otherwise keep all deduplicated stops
-              if (importantStops.length >= 5) {
+              // Only use filtered stops if we have at least 4, otherwise keep deduplicated stops
+              if (importantStops.length >= 4) {
                 filteredStops = importantStops;
               } else {
                 console.log('Keeping all deduplicated stops since important filter was too aggressive');
@@ -1163,13 +1253,13 @@ export default function CreateRidePage() {
   const searchTokenRef = useRef<string | null>(null);
   const searchTokenTimeRef = useRef<number>(0);
   const searchNominatim = async (q: string, limit: number) => {
-    if (q.length < 1) return [];
+    if (q.length < 1) return []; // Allow even single character for instant suggestions
     if (!user) return [];
     const queryText = q.trim().toLowerCase() === 'all' ? 'karachi' : q;
     try {
-      // Cache the token for 4 minutes (Firebase tokens are valid for 1 hour)
+      // Cache the token for 30 minutes (Firebase tokens are valid for 1 hour) - aggressive caching for speed
       const now = Date.now();
-      if (!searchTokenRef.current || now - searchTokenTimeRef.current > 4 * 60 * 1000) {
+      if (!searchTokenRef.current || now - searchTokenTimeRef.current > 30 * 60 * 1000) {
         try {
           searchTokenRef.current = await user.getIdToken();
           searchTokenTimeRef.current = now;
@@ -1194,7 +1284,8 @@ export default function CreateRidePage() {
       const res = await fetch(`/api/nominatim/search?${params.toString()}`, {
         headers: {
           'Authorization': `Bearer ${token}`
-        }
+        },
+        priority: 'high' as RequestInit['priority']
       });
       if (!res.ok) {
         console.warn('Nominatim search proxy returned non-OK', { status: res.status });
@@ -1218,14 +1309,12 @@ export default function CreateRidePage() {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     
     setSearchLoading(true);
-    if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
-    // Very fast debounce for instant suggestions - only 50ms to group rapid keystrokes
-    const delay = 50;
-    searchTimeoutRef.current = window.setTimeout(async () => {
+    // NO DEBOUNCE - search instantly when user types 1+ characters for truly instant suggestions
+    (async () => {
       const results = await searchNominatim(query.text, suggestLimit);
       setSuggestions(results);
       setSearchLoading(false);
-    }, delay);
+    })();
 
     return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
   }, [query, suggestLimit]);
@@ -1829,6 +1918,7 @@ export default function CreateRidePage() {
                     activeMapSelect={activeMapSelect}
                     lockedPin={(uniAuto === 'toUni' || uniAuto === 'fromUni')}
                     lockedPosition={(uniAuto === 'toUni' || uniAuto === 'fromUni') ? getCurrentUniversity() : null}
+                    universityLocation={getCurrentUniversity()}
                     onAnyMapClick={() => { /* noop - map clicks handled in MapComponent */ }}
                     getAuthToken={user ? () => user.getIdToken() : undefined}
                   />

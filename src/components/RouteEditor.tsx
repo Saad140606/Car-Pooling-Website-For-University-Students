@@ -1,7 +1,10 @@
+'use client';
+
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Waypoint, LatLng, encodePolyline, computeBounds } from '@/lib/route';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Loader2 } from 'lucide-react';
 
 type RouteEditorProps = {
   origin?: Waypoint | null;
@@ -14,9 +17,9 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [suggestLimit, setSuggestLimit] = useState<number>(20);
-  const debounceRef = useRef<number | null>(null);
   const [generating, setGenerating] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const addWaypoint = (p: Waypoint) => setWaypoints((s) => [...s, p]);
   const removeWaypoint = (i: number) => setWaypoints((s) => s.filter((_, idx) => idx !== i));
@@ -30,23 +33,61 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
     });
   };
 
-  useEffect(() => { setSuggestions([]); }, [query]);
-
-  // Default Karachi viewbox to restrict suggestions to Karachi area when using this editor
-  // Nominatim expects viewbox as: left_lon,top_lat,right_lon,bottom_lat
+  // Karachi viewbox: left_lon,top_lat,right_lon,bottom_lat
   const KARACHI_VIEWBOX = '66.5,25.5,67.5,24.6';
 
+  const extractPlaceName = (result: any) => {
+    const a = result.address || {};
+    const placeName = a.amenity || a.building || a.shop || a.office || a.tourism || a.leisure;
+    const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
+    const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+    const city = a.city || a.town || a.village;
+    
+    // Priority: place name > road + hood > hood > city
+    if (placeName && hood) {
+      return `${placeName}, ${hood}`;
+    } else if (placeName) {
+      return placeName;
+    } else if (road && hood) {
+      return `${road}, ${hood}`;
+    } else if (hood && city) {
+      return `${hood}, ${city}`;
+    } else if (hood) {
+      return hood;
+    } else if (road && city) {
+      return `${road}, ${city}`;
+    } else if (road) {
+      return road;
+    } else if (city) {
+      return city;
+    } else {
+      const parts = (result.display_name || '').split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+      return parts.slice(0, 2).join(', ') || 'Unknown Location';
+    }
+  };
+
   const searchPlaces = useCallback(async (q: string, limit: number) => {
-    if (!q || q.length < 1) return setSuggestions([]);
+    if (!q || q.length < 1) {
+      setSuggestions([]);
+      setSearchLoading(false);
+      return;
+    }
     try {
-      // Show more comprehensive results within Karachi; include small places
-      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q.trim().toLowerCase() === 'all' ? 'karachi' : q)}&limit=${encodeURIComponent(String(Math.max(1, Math.min(500, limit || 100))))}&addressdetails=1&viewbox=${encodeURIComponent(KARACHI_VIEWBOX)}&bounded=1`);
-      if (!res.ok) return setSuggestions([]);
+      setSearchLoading(true);
+      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q.trim())}&limit=${encodeURIComponent(String(Math.max(1, Math.min(50, limit || 20))))}&addressdetails=1&viewbox=${encodeURIComponent(KARACHI_VIEWBOX)}&bounded=1`);
+      if (!res.ok) {
+        setSuggestions([]);
+        setSearchLoading(false);
+        return;
+      }
       const json = await res.json();
       const results: any[] = Array.isArray(json) ? json : [];
-      // Server-side viewbox already bounds results to Karachi; include as-is
       setSuggestions(results);
-    } catch (e) { setSuggestions([]); }
+      setSearchLoading(false);
+    } catch (e) { 
+      setSuggestions([]);
+      setSearchLoading(false);
+    }
   }, []);
 
   // Recalculate route when origin/destination/waypoints change
@@ -56,113 +97,183 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
       setGenerating(true);
       let coords: [number, number][] = [];
       try {
-        // Prepare coordinates in [lng,lat] for ORS
         coords = [ [origin.lng, origin.lat] as [number, number], ...waypoints.map(w => [w.lng, w.lat] as [number, number]), [destination.lng, destination.lat] as [number, number] ];
-        const resp = await fetch('/api/ors', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ coordinates: coords })
-        });
-        if (!resp.ok) {
-          let bodyText: string | null = null;
-          let parsed: any = null;
-          try { bodyText = await resp.text(); } catch (e) { /* ignore */ }
-          try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch (e) { parsed = bodyText; }
-          const details = parsed && typeof parsed === 'object' ? parsed : (bodyText || '');
-          const friendly = 'No route found between these locations. Try different points or adjust the route.';
-          // Treat client-status errors as no-route, avoid console errors.
-          if (resp.status >= 400 && resp.status < 500) {
-            console.warn('Route service returned client error (no route/bad request)', { status: resp.status, details });
-            setRouteError(friendly);
-            return; // do not draw fallback straight line
+        
+        let lastErr: any = null;
+        
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            // Use faster timeout: 5s base, 7s on retry
+            const timeoutMs = attempt === 1 ? 5000 : 7000;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            
+            const resp = await fetch('/api/ors', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ coordinates: coords }),
+              signal: controller.signal,
+            }).finally(() => clearTimeout(timeoutId));
+            
+            if (!resp.ok) {
+              let bodyText: string | null = null;
+              let parsed: any = null;
+              try { bodyText = await resp.text(); } catch (e) { /* ignore */ }
+              try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch (e) { parsed = bodyText; }
+              const friendly = 'No route found between these locations. Try different points or adjust the route.';
+              if (resp.status >= 400 && resp.status < 500) {
+                console.warn('Route service returned client error (no route/bad request)', { status: resp.status });
+                setRouteError(friendly);
+                setGenerating(false);
+                return;
+              }
+              if (attempt < 2) {
+                await new Promise(r => setTimeout(r, 150)); // Faster retry: 150ms
+                continue;
+              }
+              console.warn('Route service error', { status: resp.status });
+              setRouteError(friendly);
+              setGenerating(false);
+              return;
+            }
+            const data = await resp.json();
+            setRouteError(null);
+            const coordsRes: any[] = (data?.features?.[0]?.geometry?.coordinates) || (data?.geometry?.coordinates) || [];
+            const latlngs: LatLng[] = coordsRes.map((c: any) => ({ lat: c[1], lng: c[0] }));
+            const polyline = encodePolyline(latlngs);
+            const bounds = computeBounds(latlngs);
+            const summary = (data?.features && data.features[0] && data.features[0].properties && data.features[0].properties.summary) || null;
+            const distanceMeters = summary?.distance ?? null;
+            const durationSeconds = summary?.duration ?? null;
+            onRouteGenerated?.({ waypoints, polyline, bounds, distanceMeters, durationSeconds });
+            setGenerating(false);
+            return; // Success
+          } catch (e: any) {
+            lastErr = e;
+            const isTimeout = e?.name === 'AbortError';
+            console.warn(`Route generation attempt ${attempt} failed (timeout: ${isTimeout}):`, e);
+            if (attempt < 2) {
+              await new Promise(r => setTimeout(r, 150)); // Faster retry: 150ms
+            }
           }
-          // For other statuses, also surface friendly message without throwing
-          console.warn('Route service error', { status: resp.status, details });
-          setRouteError(friendly);
-          return;
         }
-        const data = await resp.json();
-        setRouteError(null);
-        // ORS may return geometry coordinates as [lng,lat]
-        const coordsRes: any[] = (data?.features?.[0]?.geometry?.coordinates) || (data?.geometry?.coordinates) || [];
-        const latlngs: LatLng[] = coordsRes.map((c: any) => ({ lat: c[1], lng: c[0] }));
-        const polyline = encodePolyline(latlngs);
-        const bounds = computeBounds(latlngs);
-        // ORS returns summary in meters and seconds at features[0].properties.summary
-        const summary = (data?.features && data.features[0] && data.features[0].properties && data.features[0].properties.summary) || null;
-        const distanceMeters = summary?.distance ?? null;
-        const durationSeconds = summary?.duration ?? null;
-        onRouteGenerated?.({ waypoints, polyline, bounds, distanceMeters, durationSeconds });
+        
+        // All retries failed
+        console.warn('Route generation failed after retries', lastErr);
+        setRouteError('No route found between these locations. Try different points or adjust the route.');
       } catch (e: any) {
         console.warn('Route generation failed', e);
         setRouteError('No route found between these locations. Try different points or adjust the route.');
-        // Do not draw fallback straight line — show friendly message instead
       } finally { setGenerating(false); }
     };
     doGenerate();
   }, [origin, destination, waypoints, onRouteGenerated]);
 
   return (
-    <div className="space-y-3">
-      <h3 className="font-semibold">Add Route Points (Optional)</h3>
+    <div className="space-y-4">
+      <h3 className="font-semibold text-slate-100">Add Route Points (Optional)</h3>
+      
       <div className="flex gap-2">
-        <Input
-          placeholder="Search place or address"
-          value={query}
-          onChange={(e) => {
-            const v = e.target.value;
-            setQuery(v);
-            // Debounce requests to avoid firing for every keystroke
-            if (debounceRef.current) window.clearTimeout(debounceRef.current);
-            // Very fast debounce for instant suggestions - only 50ms
-            const delay = 50;
-            debounceRef.current = window.setTimeout(() => {
-              searchPlaces(v, suggestLimit);
-            }, delay) as unknown as number;
+        <div className="relative flex-1">
+          <Input
+            placeholder="Type 3+ characters to search for stops"
+            value={query}
+            onChange={(e) => {
+              const v = e.target.value;
+              setQuery(v);
+              // NO DEBOUNCE - search instantly when 3+ characters typed
+              if (v.length >= 3) {
+                searchPlaces(v, suggestLimit);
+              } else {
+                setSuggestions([]);
+                setSearchLoading(false);
+              }
+            }}
+            className="pr-10"
+          />
+          {searchLoading && <Loader2 className="absolute right-3 top-3 w-4 h-4 animate-spin text-muted-foreground" />}
+        </div>
+        <Button 
+          onClick={() => { 
+            if (suggestions[0]) {
+              const name = extractPlaceName(suggestions[0]);
+              addWaypoint({ name, lat: Number(suggestions[0].lat), lng: Number(suggestions[0].lon) }); 
+              setQuery('');
+              setSuggestions([]);
+            }
           }}
-        />
-        <Button onClick={() => { if (suggestions[0]) addWaypoint({ name: suggestions[0].display_name, lat: Number(suggestions[0].lat), lng: Number(suggestions[0].lon) }); }}>Add</Button>
+          disabled={!suggestions[0]}
+        >
+          Add
+        </Button>
       </div>
+
       {suggestions.length > 0 && (
-        <div className="bg-card p-2 rounded">
-          {suggestions.map((s) => (
-            <div key={s.place_id} className="p-1 hover:bg-muted cursor-pointer" onClick={() => { addWaypoint({ name: s.display_name, lat: Number(s.lat), lng: Number(s.lon) }); setQuery(''); setSuggestions([]); }}>
-              <div className="text-sm">{s.display_name}</div>
-              {(() => {
-                const a = (s as any).address || {};
-                const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
-                const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
-                const city = a.city || a.town || a.village || a.county;
-                const parts = [road, hood, city].filter(Boolean);
-                return parts.length ? <div className="text-xs text-muted-foreground truncate">{parts.join(', ')}</div> : null;
-              })()}
-            </div>
-          ))}
+        <div className="bg-slate-800/50 border border-slate-700 p-2 rounded max-h-72 overflow-y-auto z-50">
+          {suggestions.map((s, idx) => {
+            const primaryName = extractPlaceName(s);
+            const a = s.address || {};
+            const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
+            const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+            const city = a.city || a.town || a.village;
+            const secondary = [road, hood, city].filter(Boolean).join(', ');
+            
+            return (
+              <div 
+                key={s.place_id || idx}
+                className="p-2 hover:bg-slate-700 cursor-pointer rounded transition" 
+                onClick={() => { 
+                  addWaypoint({ name: primaryName, lat: Number(s.lat), lng: Number(s.lon) }); 
+                  setQuery(''); 
+                  setSuggestions([]);
+                }}
+              >
+                <div className="text-sm font-medium text-slate-100 truncate">{primaryName}</div>
+                {secondary && <div className="text-xs text-muted-foreground truncate">{secondary}</div>}
+              </div>
+            );
+          })}
           {suggestions.length >= suggestLimit && (
-            <div className="p-2 border-t">
-              <button type="button" className="text-xs text-accent hover:underline" onClick={() => setSuggestLimit((v) => Math.min(200, v + 30))}>Show more results</button>
+            <div className="p-2 border-t border-slate-700">
+              <button 
+                type="button" 
+                className="text-xs text-accent hover:underline" 
+                onClick={() => setSuggestLimit((v) => Math.min(50, v + 20))}
+              >
+                Show more results
+              </button>
             </div>
           )}
         </div>
       )}
 
-      <div className="space-y-2">
-        {waypoints.map((w, i) => (
-          <div key={`${w.lat}-${w.lng}-${i}`} className="flex items-center gap-2">
-            <div className="flex-1 text-sm truncate">{w.name || `Waypoint ${i + 1}`}</div>
-            <div className="flex gap-1">
-              <Button size="sm" onClick={() => moveWaypoint(i, -1)} disabled={i === 0}>↑</Button>
-              <Button size="sm" onClick={() => moveWaypoint(i, 1)} disabled={i === waypoints.length - 1}>↓</Button>
-              <Button size="sm" variant="destructive" onClick={() => removeWaypoint(i)}>Remove</Button>
-            </div>
+      <div className="space-y-2 mt-4">
+        {waypoints.length === 0 ? (
+          <div className="text-xs text-muted-foreground p-3 bg-slate-800/50 rounded border border-slate-700">
+            No route stops added yet. Type in the search box and click Add to include stops along your route.
           </div>
-        ))}
+        ) : (
+          <>
+            <div className="text-xs font-medium text-slate-300">Route Points ({waypoints.length})</div>
+            {waypoints.map((w, i) => (
+              <div key={`${w.lat}-${w.lng}-${i}`} className="flex items-center gap-2 p-3 bg-slate-800/50 border border-slate-700 rounded">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-100 truncate">{w.name || `Stop ${i + 1}`}</div>
+                  <div className="text-xs text-muted-foreground">{w.lat.toFixed(4)}, {w.lng.toFixed(4)}</div>
+                </div>
+                <div className="flex gap-1 flex-shrink-0">
+                  <Button size="sm" variant="ghost" onClick={() => moveWaypoint(i, -1)} disabled={i === 0} className="h-8 w-8">↑</Button>
+                  <Button size="sm" variant="ghost" onClick={() => moveWaypoint(i, 1)} disabled={i === waypoints.length - 1} className="h-8 w-8">↓</Button>
+                  <Button size="sm" variant="destructive" onClick={() => removeWaypoint(i)} className="h-8 w-8">✕</Button>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
 
-      <div>
-        <div className="text-xs text-muted-foreground">Route generation: {generating ? 'calculating...' : 'ready'}</div>
-        {routeError ? (
-          <div className="text-sm text-red-400 mt-2">{routeError}</div>
-        ) : null}
+      <div className="text-xs text-muted-foreground pt-2">
+        Route generation: <span className="font-medium">{generating ? 'calculating route...' : 'ready'}</span>
+        {routeError && <div className="text-red-400 mt-2">{routeError}</div>}
       </div>
     </div>
   );

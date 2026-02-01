@@ -124,10 +124,11 @@ export function filterImportantStops(stops: any[]): any[] {
 /**
  * Group nearby stops and return a filtered list
  * Combines stops that are very close together (within minDistance)
+ * AGGRESSIVE: Removes stops that are too close together
  */
 export function deduplicateNearbyStops(
   stops: any[],
-  minDistanceMeters: number = 200
+  minDistanceMeters: number = 300
 ): any[] {
   if (stops.length <= 2) return stops;
   
@@ -139,8 +140,11 @@ export function deduplicateNearbyStops(
     const distanceDiff = (currentStop.distanceFromStart || 0) - (lastKeptStop.distanceFromStart || 0);
     
     // Keep stop if it's far enough from the last kept stop
+    // Also log what's being removed for debugging
     if (Math.abs(distanceDiff) >= minDistanceMeters) {
       result.push(currentStop);
+    } else {
+      console.log(`[DEDUP-DISTANCE] Removing "${currentStop.name}" - only ${distanceDiff}m from last stop`);
     }
   }
   
@@ -155,44 +159,55 @@ export function deduplicateNearbyStops(
 /**
  * Remove consecutive stops with the same or very similar names
  * Keeps the first occurrence and skips duplicates
+ * AGGRESSIVE: Removes any stop with a name that appears similar to previous stops
  */
 export function deduplicateByName(stops: any[]): any[] {
   if (stops.length <= 2) return stops;
   
   const result = [stops[0]]; // Always keep first
+  const seenNames = new Set<string>([(stops[0].name || '').toLowerCase().trim()]);
   
   for (let i = 1; i < stops.length - 1; i++) {
     const currentStop = stops[i];
-    const lastKeptStop = result[result.length - 1];
-    
-    // Normalize names for comparison (lowercase, remove extra spaces)
     const currentName = (currentStop.name || '').toLowerCase().trim();
-    const lastName = (lastKeptStop.name || '').toLowerCase().trim();
     
-    // Skip if same name as previous kept stop
-    if (currentName === lastName) {
+    // Skip if we've already seen this exact name
+    if (seenNames.has(currentName)) {
+      console.log(`[DEDUP] Skipping duplicate: "${currentStop.name}"`);
       continue;
     }
     
-    // Also skip if names are very similar (one contains the other)
-    // But only if they're both longer than 5 characters to avoid false positives
-    if (currentName.length > 5 && lastName.length > 5) {
-      if (currentName.includes(lastName) || lastName.includes(currentName)) {
-        continue;
+    // Check if this name is very similar to any previously seen name
+    let isSimilarToExisting = false;
+    for (const seenName of seenNames) {
+      if (currentName === seenName) {
+        isSimilarToExisting = true;
+        break;
+      }
+      // Check for substring matches (but require both to be > 5 chars to avoid false positives)
+      if (currentName.length > 5 && seenName.length > 5) {
+        if (currentName.includes(seenName) || seenName.includes(currentName)) {
+          isSimilarToExisting = true;
+          console.log(`[DEDUP] Skipping similar name: "${currentStop.name}" (similar to "${seenName}")`);
+          break;
+        }
       }
     }
     
+    if (isSimilarToExisting) {
+      continue;
+    }
+    
     result.push(currentStop);
+    seenNames.add(currentName);
   }
   
-  // Always keep last stop if it's different from the last kept stop
+  // Always keep last stop if it's different
   if (stops.length > 1) {
     const lastStop = stops[stops.length - 1];
-    const lastKeptStop = result[result.length - 1];
     const lastStopName = (lastStop.name || '').toLowerCase().trim();
-    const lastKeptName = (lastKeptStop.name || '').toLowerCase().trim();
     
-    if (lastStopName !== lastKeptName) {
+    if (!seenNames.has(lastStopName)) {
       result.push(lastStop);
     }
   }

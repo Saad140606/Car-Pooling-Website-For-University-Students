@@ -159,21 +159,45 @@ export function deduplicateNearbyStops(
 /**
  * Remove consecutive stops with the same or very similar names
  * Keeps the first occurrence and skips duplicates
- * AGGRESSIVE: Removes any stop with a name that appears similar to previous stops
+ * Also removes stops that are too close together (within 500m)
  */
 export function deduplicateByName(stops: any[]): any[] {
   if (stops.length <= 2) return stops;
   
   const result = [stops[0]]; // Always keep first
-  const seenNames = new Set<string>([(stops[0].name || '').toLowerCase().trim()]);
+  const seenNames = new Set<string>();
+  
+  // Normalize name for comparison
+  const normalizeName = (name: string): string => {
+    return (name || '').toLowerCase().trim()
+      .replace(/[,\-\.]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+  
+  seenNames.add(normalizeName(stops[0].name));
   
   for (let i = 1; i < stops.length - 1; i++) {
     const currentStop = stops[i];
-    const currentName = (currentStop.name || '').toLowerCase().trim();
+    const currentName = normalizeName(currentStop.name);
+    const prevStop = result[result.length - 1];
+    
+    // Skip if the name looks like a placeholder (Stop N, Loading..., Location N)
+    if (/^(stop|loading|location)\s*\d*\.?\.?\.?$/i.test(currentName)) {
+      console.log(`[DEDUP] Skipping placeholder: "${currentStop.name}"`);
+      continue;
+    }
     
     // Skip if we've already seen this exact name
     if (seenNames.has(currentName)) {
       console.log(`[DEDUP] Skipping duplicate: "${currentStop.name}"`);
+      continue;
+    }
+    
+    // Skip if too close to previous stop (within 500m)
+    const distDiff = Math.abs((currentStop.distanceFromStart || 0) - (prevStop.distanceFromStart || 0));
+    if (distDiff < 500) {
+      console.log(`[DEDUP] Skipping too close (${distDiff}m): "${currentStop.name}"`);
       continue;
     }
     
@@ -184,11 +208,23 @@ export function deduplicateByName(stops: any[]): any[] {
         isSimilarToExisting = true;
         break;
       }
-      // Check for substring matches (but require both to be > 5 chars to avoid false positives)
-      if (currentName.length > 5 && seenName.length > 5) {
+      
+      // Extract first word/main part for comparison
+      const currentMainPart = currentName.split(/[\s,]/)[0];
+      const seenMainPart = seenName.split(/[\s,]/)[0];
+      
+      // Skip if main parts match and both are substantial (>4 chars)
+      if (currentMainPart.length > 4 && seenMainPart.length > 4 && currentMainPart === seenMainPart) {
+        isSimilarToExisting = true;
+        console.log(`[DEDUP] Skipping similar (same main part): "${currentStop.name}" ~ "${seenName}"`);
+        break;
+      }
+      
+      // Check for substring matches (but require both to be > 6 chars to avoid false positives)
+      if (currentName.length > 6 && seenName.length > 6) {
         if (currentName.includes(seenName) || seenName.includes(currentName)) {
           isSimilarToExisting = true;
-          console.log(`[DEDUP] Skipping similar name: "${currentStop.name}" (similar to "${seenName}")`);
+          console.log(`[DEDUP] Skipping similar (substring): "${currentStop.name}" ~ "${seenName}"`);
           break;
         }
       }
@@ -202,15 +238,23 @@ export function deduplicateByName(stops: any[]): any[] {
     seenNames.add(currentName);
   }
   
-  // Always keep last stop if it's different
+  // Always keep last stop if it's different from the last kept stop
   if (stops.length > 1) {
     const lastStop = stops[stops.length - 1];
-    const lastStopName = (lastStop.name || '').toLowerCase().trim();
+    const lastStopName = normalizeName(lastStop.name);
+    const lastKeptName = normalizeName(result[result.length - 1].name);
     
-    if (!seenNames.has(lastStopName)) {
+    // Only add if name is different AND far enough from last kept stop
+    const distFromLastKept = Math.abs((lastStop.distanceFromStart || 0) - (result[result.length - 1].distanceFromStart || 0));
+    
+    if (lastStopName !== lastKeptName && distFromLastKept > 300) {
       result.push(lastStop);
+    } else if (result[result.length - 1] !== lastStop) {
+      // Replace the last result with the actual last stop to ensure end point is correct
+      result[result.length - 1] = lastStop;
     }
   }
   
-  return result;
+  // Re-order the stops sequentially
+  return result.map((stop, idx) => ({ ...stop, order: idx }));
 }

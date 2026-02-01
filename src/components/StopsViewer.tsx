@@ -61,17 +61,36 @@ export default function StopsViewer({
 
   const universityDisplay = getUniversityDisplay();
 
-  // ===== FIX: Deduplicate stops by name to prevent duplicates like 'Shahrah-e-Faisal' appearing twice =====
+  // ===== FIX: Deduplicate stops by name and filter out placeholders =====
   const [stops, setStops] = useState<Stop[]>(() => {
-    // Remove consecutive duplicate names
+    // Remove placeholder names and consecutive duplicates
     const deduped: Stop[] = [];
     let lastName = '';
+    const seenNames = new Set<string>();
+    
     for (const stop of initialStops) {
-      if (stop.name !== lastName) {
-        deduped.push(stop);
-        lastName = stop.name;
+      const normalizedName = (stop.name || '').toLowerCase().trim();
+      
+      // Skip placeholder names like "Stop N", "Loading...", "Location N"
+      if (/^(stop|loading|location)\s*\d*\.?\.?\.?$/i.test(normalizedName)) {
+        continue;
       }
+      
+      // Skip if we've already seen this exact name
+      if (seenNames.has(normalizedName)) {
+        continue;
+      }
+      
+      // Skip if consecutive duplicate
+      if (normalizedName === lastName) {
+        continue;
+      }
+      
+      deduped.push(stop);
+      lastName = normalizedName;
+      seenNames.add(normalizedName);
     }
+    
     return deduped;
   });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -89,15 +108,39 @@ export default function StopsViewer({
   // Update stops when initialStops changes
   React.useEffect(() => {
     console.log('[STOPS_VIEWER] Initial stops changed, updating state:', initialStops.length, 'stops');
+    
+    // Remove placeholder names and consecutive duplicates
     const deduped: Stop[] = [];
     let lastName = '';
+    const seenNames = new Set<string>();
+    
     for (const stop of initialStops) {
-      if (stop.name !== lastName) {
-        deduped.push(stop);
-        lastName = stop.name;
+      const normalizedName = (stop.name || '').toLowerCase().trim();
+      
+      // Skip placeholder names like "Stop N", "Loading...", "Location N"
+      if (/^(stop|loading|location)\s*\d*\.?\.?\.?$/i.test(normalizedName)) {
+        continue;
       }
+      
+      // Skip if we've already seen this exact name
+      if (seenNames.has(normalizedName)) {
+        continue;
+      }
+      
+      // Skip if consecutive duplicate
+      if (normalizedName === lastName) {
+        continue;
+      }
+      
+      deduped.push(stop);
+      lastName = normalizedName;
+      seenNames.add(normalizedName);
     }
-    setStops(deduped);
+    
+    // Re-number the order
+    const renumbered = deduped.map((stop, idx) => ({ ...stop, order: idx }));
+    
+    setStops(renumbered);
     setIsFetchingNames(false); // Reset fetching state
   }, [initialStops]);
 
@@ -394,7 +437,14 @@ export default function StopsViewer({
                     ) : (
                       <div>
                         <div className="font-semibold text-sm flex items-center gap-2">
-                          {stop.name}
+                          {/^(loading|stop|location)\s*\d*\.?\.?\.?$/i.test(stop.name) ? (
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Fetching name...
+                            </span>
+                          ) : (
+                            stop.name
+                          )}
                           {isFirstStop && (
                             <Badge className="text-xs" variant="secondary">START</Badge>
                           )}
@@ -807,7 +857,14 @@ export default function StopsViewer({
                     ) : (
                       <div>
                         <div className="font-semibold text-sm flex items-center gap-2">
-                          {stop.name}
+                          {/^(loading|stop|location)\s*\d*\.?\.?\.?$/i.test(stop.name) ? (
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Fetching name...
+                            </span>
+                          ) : (
+                            stop.name
+                          )}
                           {isFirstStop && (
                             <Badge className="text-xs" variant="secondary">START</Badge>
                           )}

@@ -468,12 +468,12 @@ const MapComponent = forwardRef<MapComponentRef, {
         let lastErr: any = null;
 
         while (attempt < maxAttempts) {
-            attempt++;
-            try {
-                // Use faster timeout: 6s base, 8s on retry (instead of 10s, 20s)
-                const timeoutMs = attempt === 1 ? 6000 : 8000;
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          attempt++;
+            // Use longer timeout for client to wait for server proxy: 16s base, 22s on retry
+            const timeoutMs = attempt === 1 ? 16000 : 22000;
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
                 const response = await fetch('/api/ors', {
                     method: 'POST',
@@ -560,28 +560,45 @@ const MapComponent = forwardRef<MapComponentRef, {
                 // success — break retry loop
                 return;
             } catch (error) {
-                lastErr = error;
-                const isTimeout = error instanceof Error && error.name === 'AbortError';
-                console.warn(`Route fetch attempt ${attempt} failed (timeout: ${isTimeout}):`, error);
-                // Faster backoff: 200ms instead of 500ms * attempt
-                if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 200));
+              lastErr = error;
+              const isTimeout = error instanceof Error && error.name === 'AbortError';
+              if (isTimeout) {
+                // Timeout: avoid printing the full error stack which can be noisy in console
+                console.warn(`[ROUTE] Route fetch attempt ${attempt} aborted due to timeout (${timeoutMs}ms)`);
+              } else {
+                console.warn(`\n[ROUTE] Route fetch attempt ${attempt} failed:`, error);
+              }
+              // Faster backoff: 200ms instead of 500ms * attempt
+              if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 200));
             }
         }
 
         // If we reach here, all attempts failed
-        console.error("Error drawing route after retries:", lastErr);
-        props.onRouteUpdate(null, null);
-        props.onRouteError?.(lastErr instanceof Error ? lastErr : new Error(String(lastErr)));
+        // Provide a clearer, user-friendly error for common causes
+        const isTimeoutFinal = lastErr instanceof Error && lastErr.name === 'AbortError';
+        if (isTimeoutFinal) {
+          console.error('[ROUTE] All route attempts timed out');
+          props.onRouteUpdate(null, null);
+          props.onRouteError?.(new Error('Route request timed out. Try again or move points closer.'));
+        } else {
+          console.error('[ROUTE] Error drawing route after retries:', lastErr);
+          props.onRouteUpdate(null, null);
+          props.onRouteError?.(lastErr instanceof Error ? lastErr : new Error(String(lastErr)));
+        }
     };
     
     if (props.from && props.to) {
-        console.log('[ROUTE] Effect triggered: from and to are set, calling drawRoute');
+        console.log('[ROUTE] ✓ Effect triggered: Both from and to are set');
+        console.log('[ROUTE]   FROM:', props.from);
+        console.log('[ROUTE]   TO:', props.to);
         drawRoute(props.from, props.to);
     } else {
-        console.log('[ROUTE] Effect triggered but from or to is missing', { from: props.from, to: props.to });
+        console.log('[ROUTE] ✗ Effect triggered but coordinates missing');
+        console.log('[ROUTE]   FROM:', props.from ? 'SET' : 'NULL');
+        console.log('[ROUTE]   TO:', props.to ? 'SET' : 'NULL');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.from, props.to]);
+  // Use stringified values for proper deep comparison of coordinate objects
+  }, [props.from?.lat, props.from?.lng, props.to?.lat, props.to?.lng]);
 
 
   useImperativeHandle(ref, () => ({
@@ -730,6 +747,12 @@ export default function CreateRidePage() {
 
   const [fromCoords, setFromCoords] = useState<LatLngLiteral | null>(null);
   const [toCoords, setToCoords] = useState<LatLngLiteral | null>(null);
+  
+  // Debug: Log when coordinates change
+  useEffect(() => {
+    console.log('[COORDS] State updated - fromCoords:', fromCoords ? `${fromCoords.lat.toFixed(4)}, ${fromCoords.lng.toFixed(4)}` : 'null');
+    console.log('[COORDS] State updated - toCoords:', toCoords ? `${toCoords.lat.toFixed(4)}, ${toCoords.lng.toFixed(4)}` : 'null');
+  }, [fromCoords, toCoords]);
   const [routePolyline, setRoutePolyline] = useState<string | null>(null);
   const [routeBounds, setRouteBounds] = useState<any | null>(null);
   const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
@@ -942,8 +965,10 @@ export default function CreateRidePage() {
 
         form.setValue(activeMapSelect!, name, { shouldValidate: true, shouldDirty: true });
         if (activeMapSelect === 'from') {
+          console.log('[CONFIRM] Setting FROM coordinates from map:', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
           setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
         } else {
+          console.log('[CONFIRM] Setting TO coordinates from map:', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
           setToCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
         }
       } catch (e) {
@@ -952,8 +977,10 @@ export default function CreateRidePage() {
         const fallbackName = 'Selected Location';
         form.setValue(activeMapSelect!, fallbackName, { shouldValidate: true, shouldDirty: true });
         if (activeMapSelect === 'from') {
+          console.log('[CONFIRM] Setting FROM coordinates from map (fallback):', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
           setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
         } else {
+          console.log('[CONFIRM] Setting TO coordinates from map (fallback):', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
           setToCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
         }
       } finally {
@@ -971,6 +998,8 @@ export default function CreateRidePage() {
   const handleMapClick = (lat: number, lng: number, name: string) => {
     if (!activeMapSelect) return;
 
+    console.log('[MAP_CLICK] Map clicked:', { lat, lng, name, activeMapSelect });
+
     // Prefer canonical university names when the clicked point lies within a university radius
     const ned = NED_UNI;
     const fast = FAST_UNI;
@@ -982,9 +1011,11 @@ export default function CreateRidePage() {
 
     // Apply immediately and exit selection mode
     if (activeMapSelect === 'from') {
+      console.log('[MAP_CLICK] Setting FROM coordinates:', { lat, lng, name: finalName });
       form.setValue('from', finalName, { shouldValidate: true, shouldDirty: true });
       setFromCoords({ lat, lng, name: finalName });
     } else {
+      console.log('[MAP_CLICK] Setting TO coordinates:', { lat, lng, name: finalName });
       form.setValue('to', finalName, { shouldValidate: true, shouldDirty: true });
       setToCoords({ lat, lng, name: finalName });
     }
@@ -1083,7 +1114,7 @@ export default function CreateRidePage() {
           
           stops = idxs.map((i, idx) => ({
             id: `stop_${Date.now()}_${idx}_${Math.random()}`,
-            name: `Loading...`, // Show "Loading..." instead of "Stop N" for better UX
+            name: `Stop ${idx + 1}`, // Use generic "Stop N" so StopsViewer can fetch real names
             lat: latlngs[i].lat,
             lng: latlngs[i].lng,
             order: idx,
@@ -1112,106 +1143,106 @@ export default function CreateRidePage() {
           });
           
           // Set initial stops with university names pre-applied
+          console.log('[STOPS] Setting initial stops:', initialStops.length, 'stops');
           setGeneratedStops([...initialStops]);
           
-          // Fetch place names for all stops asynchronously
+          // Fetch place names for all stops asynchronously with incremental updates
           (async () => {
             try {
               const stopsWithNames = [...initialStops];
               
-              console.log('Fetching names for', stopsWithNames.length, 'stops...');
+              console.log('[STOPS] Starting to fetch names for', stopsWithNames.length, 'stops...');
               
-              // Fetch all names in parallel with rate limiting
-              const promises = stopsWithNames.map(async (stop, idx) => {
+              // Fetch names sequentially with immediate state updates
+              for (let idx = 0; idx < stopsWithNames.length; idx++) {
+                const stop = stopsWithNames[idx];
+                
                 try {
                   // Check if this stop is at the university location (within 500m)
                   const isUniStop = distanceInMeters(currentUni, { lat: stop.lat, lng: stop.lng }) < 500;
                   
                   if (isUniStop) {
-                    // Use short university name for stops at university
-                    console.log(`Stop ${idx + 1} is at university:`, uniShortName);
-                    return { idx, name: uniShortName };
-                  }
-                  
-                  // Add staggered delay to avoid rate limiting
-                  await new Promise(resolve => setTimeout(resolve, idx * 150));
-                  
-                  try {
-                    const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`);
-                    if (res.ok) {
-                      const data = await res.json();
-                      console.log(`Stop ${idx + 1} API response:`, data.display_name);
-                      if (data.display_name) {
-                        const displayName = extractMeaningfulStopName(data.display_name);
-                        console.log(`Stop ${idx + 1} extracted name:`, displayName);
-                        // Ensure we have a valid name, not empty or just coordinates
-                        if (displayName && displayName.length > 3 && !displayName.match(/^\d+\.\d+,\s*\d+\.\d+$/)) {
-                          return { idx, name: displayName };
-                        } else {
-                          // Fallback to a readable format from coordinates
-                          const area = data.address?.neighbourhood || data.address?.suburb || data.address?.city_district || data.address?.city || data.address?.town;
-                          if (area) {
-                            return { idx, name: area };
+                    stopsWithNames[idx] = { ...stop, name: uniShortName };
+                    console.log(`[STOPS] Stop ${idx + 1}: University (${uniShortName})`);
+                  } else {
+                    // Add small delay to avoid rate limiting
+                    if (idx > 0) await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    try {
+                      const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`);
+                      if (res.ok) {
+                        const data = await res.json();
+                        
+                        // Build a meaningful name from the response
+                        let placeName = 'Stop';
+                        
+                        if (data.address) {
+                          const addr = data.address;
+                          // Priority: road + area > area > road > city
+                          const road = addr.road || addr.street || addr.avenue || addr.boulevard;
+                          const area = addr.neighbourhood || addr.suburb || addr.quarter || addr.city_district;
+                          const city = addr.city || addr.town || addr.village;
+                          const amenity = addr.amenity || addr.shop || addr.building;
+                          
+                          if (amenity && area) {
+                            placeName = `${amenity}, ${area}`;
+                          } else if (road && area) {
+                            placeName = `${road}, ${area}`;
+                          } else if (area) {
+                            placeName = area;
+                          } else if (road && city) {
+                            placeName = `${road}, ${city}`;
+                          } else if (road) {
+                            placeName = road;
+                          } else if (city) {
+                            placeName = city;
+                          } else if (data.display_name) {
+                            const parts = data.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+                            placeName = parts.slice(0, 2).join(', ');
                           }
-                          return { idx, name: `Stop ${idx + 1}` };
+                        } else if (data.display_name) {
+                          const parts = data.display_name.split(',').map((p: string) => p.trim()).filter((p: string) => p && !/^\d+$/.test(p));
+                          placeName = parts.slice(0, 2).join(', ');
+                        }
+                        
+                        // Validate and set name
+                        if (placeName && placeName.length > 2 && !placeName.match(/^\d+\.\d+/)) {
+                          stopsWithNames[idx] = { ...stop, name: placeName };
+                          console.log(`[STOPS] Stop ${idx + 1}: ${placeName}`);
+                        } else {
+                          stopsWithNames[idx] = { ...stop, name: `Location ${idx + 1}` };
+                          console.warn(`[STOPS] Stop ${idx + 1}: Invalid name, using fallback`);
                         }
                       } else {
-                        return { idx, name: `Stop ${idx + 1}` };
+                        stopsWithNames[idx] = { ...stop, name: `Location ${idx + 1}` };
+                        console.warn(`[STOPS] Stop ${idx + 1}: API error ${res.status}`);
                       }
-                    } else {
-                      console.warn(`Failed to fetch name for stop ${idx + 1}, status: ${res.status}`);
-                      return { idx, name: `Stop ${idx + 1}` };
+                    } catch (fetchErr) {
+                      stopsWithNames[idx] = { ...stop, name: `Location ${idx + 1}` };
+                      console.error(`[STOPS] Stop ${idx + 1}: Fetch failed`, fetchErr);
                     }
-                  } catch (fetchErr) {
-                    console.error('Fetch error for stop', idx + 1, fetchErr);
-                    return { idx, name: `Stop ${idx + 1}` };
+                  }
+                  
+                  // Update state after every 2 stops to show progress
+                  if (idx % 2 === 1 || idx === stopsWithNames.length - 1) {
+                    setGeneratedStops([...stopsWithNames]);
                   }
                 } catch (e) {
-                  console.error('Failed to fetch name for stop', idx + 1, e);
-                  return { idx, name: `Stop ${idx + 1}` };
+                  console.error(`[STOPS] Stop ${idx + 1}: Error`, e);
+                  stopsWithNames[idx] = { ...stop, name: `Location ${idx + 1}` };
                 }
-              });
-              
-              const results = await Promise.all(promises);
-              
-              // Update all stops with their names
-              for (const result of results) {
-                stopsWithNames[result.idx] = { ...stopsWithNames[result.idx], name: result.name };
               }
               
-              console.log('All stops named:', stopsWithNames.map(s => s.name));
+              console.log('[STOPS] All names fetched:', stopsWithNames.map(s => s.name));
               
-              // AGGRESSIVE deduplication strategy:
-              // Step 1: Remove stops within 300m of each other
-              let filteredStops = deduplicateNearbyStops(stopsWithNames, 300);
-              console.log('After distance deduplication:', filteredStops.length, 'stops');
+              // Deduplicate consecutive stops with same names
+              const deduped = deduplicateByName(stopsWithNames);
+              console.log('[STOPS] After deduplication:', deduped.length, 'stops:', deduped.map(s => s.name));
               
-              // Step 2: Remove consecutive stops with same names (both exact and substring matches)
-              filteredStops = deduplicateByName(filteredStops);
-              console.log('After name deduplication:', filteredStops.length, 'stops');
-              
-              // Step 3: Additional aggressive pass - remove "Loading..." placeholders if names were fetched
-              filteredStops = filteredStops.filter(stop => !stop.name?.includes('Loading'));
-              console.log('After loading placeholder removal:', filteredStops.length, 'stops');
-              
-              // Step 4: Try to filter to important stops
-              const importantStops = filterImportantStops(filteredStops);
-              console.log('Important stops filtered:', importantStops.length, 'stops');
-              
-              // Only use filtered stops if we have at least 4, otherwise keep deduplicated stops
-              if (importantStops.length >= 4) {
-                filteredStops = importantStops;
-              } else {
-                console.log('Keeping all deduplicated stops since important filter was too aggressive');
-              }
-              
-              console.log('Final stops to display:', filteredStops.length, 'stops:', filteredStops.map(s => s.name));
-              
-              // Update final stops
-              setGeneratedStops([...filteredStops]);
+              // Final update
+              setGeneratedStops([...deduped]);
             } catch (e) {
-              console.error('Failed to fetch stop names', e);
-              // Set fallback names
+              console.error('[STOPS] Failed to fetch stop names', e);
               const fallbackStops = finalStops.map((s: any, idx: number) => ({
                 ...s,
                 name: `Location ${idx + 1}`
@@ -1391,8 +1422,10 @@ export default function CreateRidePage() {
     
     form.setValue(field, name, { shouldValidate: true, shouldDirty: true });
     if (field === 'from') {
+        console.log('[SEARCH] Setting FROM coords:', { lat, lng, name });
         setFromCoords({ lat, lng, name });
     } else {
+        console.log('[SEARCH] Setting TO coords:', { lat, lng, name });
         setToCoords({ lat, lng, name });
     }
     
@@ -1551,8 +1584,8 @@ export default function CreateRidePage() {
       if (obj === undefined) return undefined;
       if (obj === null) return null;
 
-      // Keep Firestore Timestamp intact
-      if (obj instanceof Timestamp) return obj;
+      // Keep Firestore Timestamp-like objects intact (duck-typed to avoid runtime/type import issues)
+      if (obj && typeof (obj as any).toDate === 'function') return obj;
 
       // Preserve Firestore FieldValue sentinels (detected by internal _methodName)
       if (typeof obj === 'object' && obj !== null && typeof (obj as any)._methodName === 'string') {

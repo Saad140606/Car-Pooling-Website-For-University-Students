@@ -103,8 +103,8 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
         
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            // Use faster timeout: 5s base, 7s on retry
-            const timeoutMs = attempt === 1 ? 5000 : 7000;
+            // Use longer timeout: 16s base, 22s on retry to match server proxy timeouts
+            const timeoutMs = attempt === 1 ? 16000 : 22000;
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             

@@ -5,13 +5,25 @@ import { type NextRequest, NextResponse } from 'next/server';
 export async function POST(req: NextRequest) {
   // Try both server-side and public env names to support different local setups
   const ORS_API_KEY = process.env.ORS_API_KEY || process.env.NEXT_PUBLIC_ORS_API_KEY;
+  const ORS_KEY_SOURCE = process.env.ORS_API_KEY ? 'ORS_API_KEY' : (process.env.NEXT_PUBLIC_ORS_API_KEY ? 'NEXT_PUBLIC_ORS_API_KEY' : null);
   if (!ORS_API_KEY) {
     console.error('ORS API key missing. Set ORS_API_KEY or NEXT_PUBLIC_ORS_API_KEY in environment.');
     return NextResponse.json({ error: 'ORS API key is not configured.' }, { status: 500 });
   }
+  // NOTE: Do not log the key value; log which env var provided it for debugging
+  console.log('ORS proxy using key from env:', ORS_KEY_SOURCE);
 
   try {
-    const body = await req.json(); // The coordinates from the client
+    let body: any = null;
+    try {
+      body = await req.json(); // The coordinates from the client
+    } catch (parseErr) {
+      console.error('ORS proxy: failed to parse request JSON', parseErr);
+      return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 });
+    }
+
+    // Log incoming body for debugging (trim large payloads)
+    try { console.log('ORS proxy incoming body:', JSON.stringify(body).slice(0, 2000)); } catch (_) {}
 
     // Basic request validation to avoid sending malformed requests to ORS
     if (!body || !Array.isArray(body.coordinates) || body.coordinates.length < 2) {
@@ -20,12 +32,12 @@ export async function POST(req: NextRequest) {
 
     const url = 'https://api.openrouteservice.org/v2/directions/driving-car/geojson';
     const maxAttempts = 2; // Reduced from 3 to 2 for faster failure feedback
-    const baseTimeoutMs = 5000; // Reduced from 10000 to 5000 for faster timeout
+    const baseTimeoutMs = 15000; // 15s base timeout - ORS typically responds in 6-10s
     let lastErr: any = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
-      const timeoutMs = attempt === 1 ? baseTimeoutMs : baseTimeoutMs + 2000; // 5s, then 7s
+      const timeoutMs = attempt === 1 ? baseTimeoutMs : baseTimeoutMs + 5000; // 15s, then 20s
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {

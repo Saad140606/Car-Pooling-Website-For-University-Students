@@ -86,93 +86,20 @@ export default function StopsViewer({
   const [selectedPlaceName, setSelectedPlaceName] = useState<string | null>(null);
   const [isFetchingNames, setIsFetchingNames] = useState(false);
 
-  // Fetch names for stops that don't have meaningful names
+  // Update stops when initialStops changes
   React.useEffect(() => {
-    const fetchMissingNames = async () => {
-      // Check if any stops need names fetched (have generic names like "Stop 1", "Stop 2", empty, or coordinates)
-      const stopsNeedingNames = stops.filter(stop => 
-        !stop.name || 
-        /^(Stop|Location|Loading)\s*\d+$/i.test(stop.name.trim()) ||
-        stop.name.trim().length === 0 ||
-        /^\d+\.\d+,\s*\d+\.\d+$/.test(stop.name.trim()) // Match coordinate patterns like "24.8607, 67.0011"
-      );
-
-      if (stopsNeedingNames.length === 0 || isFetchingNames) return;
-
-      console.log('Fetching names for', stopsNeedingNames.length, 'stops without meaningful names');
-      setIsFetchingNames(true);
-
-      try {
-        const updatedStops = [...stops];
-        
-        for (let i = 0; i < stopsNeedingNames.length; i++) {
-          const stop = stopsNeedingNames[i];
-          const stopIndex = stops.findIndex(s => s.id === stop.id);
-          
-          if (stopIndex === -1) continue;
-
-          try {
-            await new Promise(resolve => setTimeout(resolve, i * 150)); // Rate limiting
-            
-            const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.display_name) {
-                // Extract meaningful name from display_name
-                const parts = data.display_name.split(',').map((p: string) => p.trim());
-                let shortName = parts[0];
-                
-                // Improve name extraction for better readability
-                if (data.address) {
-                  const area = data.address.neighbourhood || data.address.suburb || data.address.city_district;
-                  const road = data.address.road || data.address.residential || data.address.pedestrian;
-                  
-                  if (road && area) {
-                    shortName = `${road}, ${area}`;
-                  } else if (road) {
-                    shortName = road;
-                  } else if (area) {
-                    shortName = area;
-                  } else if (parts.length > 1 && (/^\d+[a-z]?$/.test(shortName.trim()))) {
-                    shortName = `${parts[0]}, ${parts[1]}`;
-                  } else if (shortName.length < 3 && parts[1]?.length > 2) {
-                    shortName = `${parts[0]}, ${parts[1]}`;
-                  }
-                }
-                
-                // Final validation - ensure name is not empty or coordinates
-                if (shortName && shortName.length > 2 && !/^\d+\.\d+/.test(shortName)) {
-                  updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: shortName };
-                  console.log(`Fetched name for stop ${stopIndex + 1}:`, shortName);
-                } else {
-                  // Fallback to a generic but informative name
-                  updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: `Stop ${stopIndex + 1}` };
-                }
-              }
-            }
-          } catch (error) {
-            console.error(`Failed to fetch name for stop at index ${stopIndex}:`, error);
-            // Ensure we at least have a generic name
-            if (!updatedStops[stopIndex].name || updatedStops[stopIndex].name.trim().length === 0) {
-              updatedStops[stopIndex] = { ...updatedStops[stopIndex], name: `Stop ${stopIndex + 1}` };
-            }
-          }
-        }
-        
-        // Remove consecutive duplicate names (e.g., "National Highway" appearing multiple times)
-        const deduplicatedStops = deduplicateByName(updatedStops);
-        
-        setStops(deduplicatedStops);
-        console.log('Finished fetching stop names. Final count after deduplication:', deduplicatedStops.length);
-      } catch (error) {
-        console.error('Error fetching stop names:', error);
-      } finally {
-        setIsFetchingNames(false);
+    console.log('[STOPS_VIEWER] Initial stops changed, updating state:', initialStops.length, 'stops');
+    const deduped: Stop[] = [];
+    let lastName = '';
+    for (const stop of initialStops) {
+      if (stop.name !== lastName) {
+        deduped.push(stop);
+        lastName = stop.name;
       }
-    };
-
-    fetchMissingNames();
-  }, [initialStops]); // Re-run if initialStops change
+    }
+    setStops(deduped);
+    setIsFetchingNames(false); // Reset fetching state
+  }, [initialStops]);
 
   const handleRemoveStop = (id: string) => {
     setStops(stops.filter((s) => s.id !== id));

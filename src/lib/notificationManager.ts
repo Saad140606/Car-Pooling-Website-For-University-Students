@@ -216,12 +216,6 @@ class NotificationManager {
       this.handleFCMMessage(event.detail);
     }) as EventListener);
 
-    // Request notification permission
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {
-        console.debug('[NotificationManager] Notification permission denied');
-      });
-    }
   }
 
   /**

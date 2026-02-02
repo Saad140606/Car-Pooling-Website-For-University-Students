@@ -10,16 +10,21 @@ type RouteEditorProps = {
   origin?: Waypoint | null;
   destination?: Waypoint | null;
   onRouteGenerated?: (data: { waypoints: Waypoint[]; polyline: string; bounds: ReturnType<typeof computeBounds> | null; distanceMeters?: number | null; durationSeconds?: number | null }) => void;
+  getAuthToken?: () => Promise<string>;
 };
 
-export default function RouteEditor({ origin, destination, onRouteGenerated }: RouteEditorProps) {
+export default function RouteEditor({ origin, destination, onRouteGenerated, getAuthToken }: RouteEditorProps) {
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [suggestLimit, setSuggestLimit] = useState<number>(20);
+  const [suggestLimit, setSuggestLimit] = useState<number>(50);
   const [generating, setGenerating] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const cacheRef = useRef<Map<string, any[]>>(new Map());
+  const latestQueryRef = useRef<string>('');
 
   const addWaypoint = (p: Waypoint) => setWaypoints((s) => [...s, p]);
   const removeWaypoint = (i: number) => setWaypoints((s) => s.filter((_, idx) => idx !== i));
@@ -66,29 +71,149 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
     }
   };
 
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const highlightMatch = (text: string, q: string) => {
+    if (!q) return text;
+    const safe = escapeRegExp(q.trim());
+    if (!safe) return text;
+    const parts = text.split(new RegExp(`(${safe})`, 'ig'));
+    return parts.map((part, idx) =>
+      part.toLowerCase() === q.trim().toLowerCase() ? (
+        <span key={`${part}-${idx}`} className="text-primary font-semibold">
+          {part}
+        </span>
+      ) : (
+        <span key={`${part}-${idx}`}>{part}</span>
+      )
+    );
+  };
+
+  const getSearchText = (item: any) => {
+    const primary = extractPlaceName(item);
+    const display = item.display_name || '';
+    return `${primary} ${display}`.toLowerCase();
+  };
+
+  const scoreSuggestion = (item: any, q: string) => {
+    const text = getSearchText(item);
+    const queryText = q.toLowerCase().trim();
+    if (!queryText) return 0;
+
+    let score = 0;
+    if (text.startsWith(queryText)) score += 120;
+    if (text.includes(queryText)) score += 60;
+
+    const popular = [
+      'malir cantt', 'malir', 'gulshan-e-iqbal', 'gulshan', 'saddar', 'dha', 'nazimabad',
+      'korangi', 'clifton', 'defence', 'bahadurabad', 'shahra e faisal', 'shahrah-e-faisal',
+      'north nazimabad', 'north karachi', 'johar', 'gulistan-e-johar', 'stadium',
+      'airport', 'jinnah', 'university', 'ned', 'fast', 'ku', 'dow', 'aku',
+      'hospital', 'mall', 'campus'
+    ];
+
+    for (const key of popular) {
+      if (text.includes(key)) score += 100;
+    }
+
+    if (typeof item.importance === 'number') score += item.importance * 10;
+    return score;
+  };
+
   const searchPlaces = useCallback(async (q: string, limit: number) => {
-    if (!q || q.length < 1) {
+    if (!q || q.length < 3) {
+      abortRef.current?.abort();
       setSuggestions([]);
       setSearchLoading(false);
       return;
     }
     try {
+      const trimmed = q.trim();
+      const cacheKey = `${trimmed.toLowerCase()}::${limit}`;
+      const cached = cacheRef.current.get(cacheKey);
+      if (cached) {
+        if (latestQueryRef.current === q) {
+          setSuggestions(cached);
+        }
+        setSearchLoading(false);
+        return;
+      }
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setSearchLoading(true);
-      const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q.trim())}&limit=${encodeURIComponent(String(Math.max(1, Math.min(50, limit || 20))))}&addressdetails=1&viewbox=${encodeURIComponent(KARACHI_VIEWBOX)}&bounded=1`);
+      const query = encodeURIComponent(q.trim());
+      const limitStr = String(Math.max(1, Math.min(100, limit || 50)));
+      const viewbox = encodeURIComponent(KARACHI_VIEWBOX);
+      const url = `/api/nominatim/search?q=${query}&limit=${limitStr}&addressdetails=1&viewbox=${viewbox}&bounded=1`;
+      
+      console.log('[SEARCH] Searching for:', q, 'URL:', url);
+      
+      // Get auth token if available
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (getAuthToken) {
+        try {
+          const token = await getAuthToken();
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
+        } catch (e) {
+          console.warn('[SEARCH] Could not get auth token:', e);
+        }
+      }
+      
+      const res = await fetch(url, { 
+        method: 'GET',
+        headers,
+        signal: controller.signal
+      });
+      
       if (!res.ok) {
+        console.error('[SEARCH] API returned:', res.status, res.statusText);
         setSuggestions([]);
         setSearchLoading(false);
         return;
       }
+      
       const json = await res.json();
-      const results: any[] = Array.isArray(json) ? json : [];
-      setSuggestions(results);
+      console.log('[SEARCH] Got results:', json);
+      
+      const results: any[] = Array.isArray(json) ? json : (json?.features || []);
+      const sorted = results
+        .map((item) => ({ item, score: scoreSuggestion(item, q) }))
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.item);
+      const limited = sorted.slice(0, limit || 50);
+      cacheRef.current.set(cacheKey, limited);
+      if (latestQueryRef.current === q) {
+        setSuggestions(limited);
+      }
       setSearchLoading(false);
-    } catch (e) { 
+    } catch (e) {
+      if ((e as any)?.name === 'AbortError') return;
+      console.error('[SEARCH] Error:', e);
       setSuggestions([]);
       setSearchLoading(false);
     }
-  }, []);
+  }, [getAuthToken]);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!query || query.trim().length < 3) {
+      abortRef.current?.abort();
+      setSuggestions([]);
+      setSearchLoading(false);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      searchPlaces(query, suggestLimit);
+    }, 400);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query, suggestLimit, searchPlaces]);
 
   // Recalculate route when origin/destination/waypoints change
   useEffect(() => {
@@ -175,18 +300,12 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Input
-            placeholder="Type 3+ characters to search for stops"
+            placeholder="Search for routes and places"
             value={query}
             onChange={(e) => {
               const v = e.target.value;
+              latestQueryRef.current = v;
               setQuery(v);
-              // NO DEBOUNCE - search instantly when 3+ characters typed
-              if (v.length >= 3) {
-                searchPlaces(v, suggestLimit);
-              } else {
-                setSuggestions([]);
-                setSearchLoading(false);
-              }
             }}
             className="pr-10"
           />
@@ -208,7 +327,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
       </div>
 
       {suggestions.length > 0 && (
-        <div className="bg-slate-800/50 border border-slate-700 p-2 rounded max-h-72 overflow-y-auto z-50">
+        <div className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700 p-2 rounded max-h-72 overflow-y-auto z-50 shadow-lg">
           {suggestions.map((s, idx) => {
             const primaryName = extractPlaceName(s);
             const a = s.address || {};
@@ -227,8 +346,14 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
                   setSuggestions([]);
                 }}
               >
-                <div className="text-sm font-medium text-slate-100 truncate">{primaryName}</div>
-                {secondary && <div className="text-xs text-muted-foreground truncate">{secondary}</div>}
+                <div className="text-sm font-medium text-slate-100 truncate">
+                  {highlightMatch(primaryName, query)}
+                </div>
+                {secondary && (
+                  <div className="text-xs text-muted-foreground truncate">
+                    {highlightMatch(secondary, query)}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -237,7 +362,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated }: R
               <button 
                 type="button" 
                 className="text-xs text-accent hover:underline" 
-                onClick={() => setSuggestLimit((v) => Math.min(50, v + 20))}
+                onClick={() => setSuggestLimit((v) => Math.min(100, v + 25))}
               >
                 Show more results
               </button>

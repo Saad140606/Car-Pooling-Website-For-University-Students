@@ -220,19 +220,19 @@ export const StatCard = memo(function StatCard({
         styles.iconBg
       )} />
 
-      <div className="relative z-10">
+      <div className="relative z-10 space-y-2">
         {/* Header with icon */}
-        <div className="flex items-start justify-between mb-3">
+        <div className="flex items-start justify-between mb-2 gap-2">
           <div className={cn(
-            'p-2.5 rounded-lg',
+            'p-2 rounded-lg flex-shrink-0',
             styles.iconBg
           )}>
-            <div className={cn('w-5 h-5', styles.iconColor)}>
+            <div className={cn('w-4 h-4 sm:w-5 sm:h-5', styles.iconColor)}>
               {icon}
             </div>
           </div>
           {trend !== undefined && (
-            <div className={cn('flex items-center gap-1 text-sm font-medium', getTrendColor())}>
+            <div className={cn('flex items-center gap-0.5 text-xs sm:text-sm font-medium whitespace-nowrap', getTrendColor())}>
               {getTrendIcon()}
               <span className="tabular-nums">
                 {trend > 0 ? '+' : ''}{trend}%
@@ -242,7 +242,7 @@ export const StatCard = memo(function StatCard({
         </div>
 
         {/* Title */}
-        <p className="text-sm text-slate-400 mb-1">{title}</p>
+        <p className="text-xs sm:text-sm text-slate-400 mb-1 leading-snug">{title}</p>
 
         {/* Value */}
         <div className="flex items-baseline gap-1">
@@ -252,10 +252,10 @@ export const StatCard = memo(function StatCard({
               prefix={prefix}
               suffix={suffix}
               decimals={decimals}
-              className={cn('font-bold text-white', compact ? 'text-2xl' : 'text-3xl')}
+              className={cn('font-bold text-white', compact ? 'text-lg sm:text-2xl' : 'text-xl sm:text-3xl')}
             />
           ) : (
-            <span className={cn('font-bold text-white', compact ? 'text-2xl' : 'text-3xl')}>
+            <span className={cn('font-bold text-white break-words', compact ? 'text-lg sm:text-2xl' : 'text-xl sm:text-3xl')}>
               {prefix}{value}{suffix}
             </span>
           )}
@@ -263,7 +263,7 @@ export const StatCard = memo(function StatCard({
 
         {/* Subtitle or trend label */}
         {(subtitle || trendLabel) && (
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 mt-2 leading-snug">
             {subtitle || trendLabel}
           </p>
         )}
@@ -283,13 +283,13 @@ interface StatCardsGridProps {
 
 export function StatCardsGrid({ children, columns = 4 }: StatCardsGridProps) {
   const gridCols = {
-    2: 'grid-cols-1 sm:grid-cols-2',
-    3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
-    4: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4',
+    2: 'grid-cols-1 xs:grid-cols-2',
+    3: 'grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-3',
+    4: 'grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
   };
 
   return (
-    <div className={cn('grid gap-4', gridCols[columns])}>
+    <div className={cn('grid gap-3 sm:gap-4', gridCols[columns])}>
       {children}
     </div>
   );

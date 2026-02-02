@@ -99,11 +99,11 @@ export const AnalyticsLayout: React.FC<AnalyticsLayoutProps> = ({
     <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="sticky top-0 z-40 backdrop-blur-xl bg-background/80 border-b border-white/10">
-        <div className="container mx-auto px-6 py-4">
+        <div className="container mx-auto px-4 sm:px-6 py-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             {/* Title & Portal Badge */}
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl lg:text-3xl font-bold text-white animate-fade-slide-up">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white animate-fade-slide-up">
                 {title}
               </h1>
               <span
@@ -119,13 +119,13 @@ export const AnalyticsLayout: React.FC<AnalyticsLayoutProps> = ({
             </div>
 
             {/* Actions */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto">
               {/* Date Range Picker */}
               <div className="relative">
                 <button
                   onClick={() => setShowDatePicker(!showDatePicker)}
                   className="
-                    flex items-center gap-2 px-4 py-2 rounded-lg
+                    flex items-center justify-between gap-2 px-4 py-2 rounded-lg w-full sm:w-auto
                     bg-card border border-white/10
                     hover:border-primary/50 hover:bg-card/80
                     transition-all duration-300
@@ -147,7 +147,7 @@ export const AnalyticsLayout: React.FC<AnalyticsLayoutProps> = ({
                     />
                     <div
                       className="
-                        absolute top-full right-0 mt-2 w-56 p-2
+                        absolute top-full left-0 sm:left-auto sm:right-0 mt-2 w-56 max-w-[90vw] p-2
                         bg-card border border-white/10 rounded-lg shadow-2xl
                         animate-scale-up z-20
                       "
@@ -183,7 +183,7 @@ export const AnalyticsLayout: React.FC<AnalyticsLayoutProps> = ({
                   <button
                     onClick={() => setShowFilters(!showFilters)}
                     className="
-                      relative flex items-center gap-2 px-4 py-2 rounded-lg
+                        relative flex items-center justify-between gap-2 px-4 py-2 rounded-lg w-full sm:w-auto
                       bg-card border border-white/10
                       hover:border-primary/50 hover:bg-card/80
                       transition-all duration-300
@@ -209,7 +209,7 @@ export const AnalyticsLayout: React.FC<AnalyticsLayoutProps> = ({
                       />
                       <div
                         className="
-                          absolute top-full right-0 mt-2 w-80 p-4
+                          absolute top-full left-0 sm:left-auto sm:right-0 mt-2 w-72 max-w-[90vw] p-4
                           bg-card border border-white/10 rounded-lg shadow-2xl
                           animate-slide-down z-20 max-h-96 overflow-y-auto
                         "
@@ -352,7 +352,7 @@ export const AnalyticsLayout: React.FC<AnalyticsLayoutProps> = ({
       </div>
 
       {/* Content */}
-      <div className="container mx-auto px-6 py-8">
+      <div className="container mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
         {isLoading && (
           <div className="absolute inset-0 bg-background/50 backdrop-blur-sm flex items-center justify-center z-30">
             <div className="flex items-center gap-3">

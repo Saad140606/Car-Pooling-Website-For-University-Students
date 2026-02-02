@@ -83,7 +83,7 @@ const team = [
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50">
+    <div className="about-page min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50">
       <SiteHeader />
       <div className="relative">
         <div className="pointer-events-none absolute inset-0 -z-10">

@@ -460,7 +460,7 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
     } catch (tokenErr) {
       console.error('Token refresh failed:', tokenErr);
       toast({ variant: 'destructive', title: 'Authentication Error', description: 'Please sign out and sign in again.' });
-      router.push('/auth/ned/login');
+      router.push('/auth/select-university');
       return false;
     }
 

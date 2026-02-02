@@ -252,8 +252,9 @@ export function AuthForm({ university, action }: AuthFormProps) {
           return; // CRITICAL: Stop here, do NOT redirect to verify page
         }
 
-        // Enforce signup email verification before allowing login (except admins)
-        // Only check this if user belongs to the SELECTED university or is new
+        // ===== CRITICAL SECURITY: ENFORCE EMAIL VERIFICATION =====
+        // BLOCK ALL UNVERIFIED USERS FROM SIGNING IN (except admins)
+        // This is the FIRST check after authentication - before any other logic
         try {
           let emailVerifiedFlag = false;
           let userExistsInSelectedUni = false;
@@ -264,9 +265,18 @@ export function AuthForm({ university, action }: AuthFormProps) {
             emailVerifiedFlag = Boolean(profile?.emailVerified);
           }
 
-          // Only require email verification if user EXISTS in selected university but is not verified
-          // If user doesn't exist at all, the membership check below will handle it
+          // CRITICAL: If user EXISTS but email is NOT verified, BLOCK login completely
+          // Do NOT create session, Do NOT issue tokens, Do NOT redirect to dashboard
           if (userExistsInSelectedUni && !isAdminAccount && !emailVerifiedFlag) {
+            // Sign out immediately - do not allow user to stay logged in
+            try { 
+              await signOut(auth); 
+              console.log('[AUTH] Blocked unverified user login attempt:', u.email);
+            } catch (e) { 
+              console.error('[AUTH] Failed to sign out unverified user:', e);
+            }
+            
+            // Send new OTP for verification
             try {
               const otpResponse = await fetch('/api/send-signup-otp', {
                 method: 'POST',
@@ -275,21 +285,46 @@ export function AuthForm({ university, action }: AuthFormProps) {
               });
               const otpData = await otpResponse.json().catch(() => ({}));
               if (otpResponse.ok) {
-                toast({ title: 'Verify your email', description: otpData?.otp ? `Dev: OTP ${otpData.otp}` : `We sent a 6-digit code to ${values.email}.` });
+                toast({ 
+                  variant: 'destructive',
+                  title: 'Email Verification Required', 
+                  description: otpData?.otp 
+                    ? `Dev: OTP ${otpData.otp} - Check your email to verify your account.` 
+                    : `Please verify your email before signing in. We've sent a new code to ${values.email}.` 
+                });
               } else {
-                toast({ variant: 'destructive', title: 'Verification required', description: String(otpData?.error || 'Could not send code. Please try again.') });
+                toast({ 
+                  variant: 'destructive', 
+                  title: 'Email Verification Required', 
+                  description: 'Your email is not verified. Please check your inbox for the verification code.' 
+                });
               }
             } catch (_) {
-              toast({ variant: 'destructive', title: 'Verification required', description: 'Could not send code. Please try again.' });
+              toast({ 
+                variant: 'destructive', 
+                title: 'Email Verification Required', 
+                description: 'You must verify your email before signing in. Please check your inbox.' 
+              });
             }
-            try { await signOut(auth); } catch (e) { /* ignore */ }
+            
+            // ALWAYS redirect to verification page - do not allow access to dashboard
             router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${selectedUni}&uid=${u.uid}`);
-            return;
+            setLoading(false);
+            return; // CRITICAL: Stop execution here
           }
         } catch (e) {
-          // If we fail to read the profile, check if this is a wrong-university situation first
-          console.debug('Failed to check email verification status:', e);
+          console.error('[AUTH] Failed to check email verification status:', e);
+          // If verification check fails, err on the side of caution - require verification
+          try { await signOut(auth); } catch (err) { /* ignore */ }
+          toast({ 
+            variant: 'destructive', 
+            title: 'Verification Check Failed', 
+            description: 'Please try signing in again or contact support.' 
+          });
+          setLoading(false);
+          return;
         }
+        // ===== END CRITICAL SECURITY CHECK =====
 
 
         // Check for an existing user document under the university-specific path

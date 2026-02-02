@@ -404,37 +404,33 @@ function computeDriverMetrics(
     .slice(0, 5);
 
   // Earnings calculation - CRITICAL FIX
-  // Calculate earnings based on CONFIRMED requests per ride, not just ride price
-  const totalEarnings = rides.reduce((sum, ride) => {
-    // Only count completed/confirmed rides
-    if (ride.status === 'completed' || ride.status === 'confirmed') {
-      // Count confirmed passengers for this ride
-      const rideRequests = receivedRequests.filter(
-        r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'ACCEPTED' || r.status === 'confirmed')
-      );
-      const confirmedPassengers = rideRequests.length;
-      
-      // Earnings = confirmed passengers × price per seat
-      const pricePerSeat = ride.price || ride.fare || 0;
-      const rideEarnings = confirmedPassengers > 0 ? confirmedPassengers * pricePerSeat : 0;
-      
-      return sum + rideEarnings;
-    }
-    return sum;
+  // Calculate earnings ONLY from rides that are actually completed (departure time has passed)
+  const totalEarnings = completedRides.reduce((sum, ride) => {
+    // Count CONFIRMED requests ONLY (not ACCEPTED or PENDING)
+    const rideRequests = receivedRequests.filter(
+      r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'confirmed')
+    );
+    const confirmedPassengers = rideRequests.length;
+    
+    // Earnings = confirmed passengers × price per seat
+    const pricePerSeat = ride.price || ride.fare || 0;
+    const rideEarnings = confirmedPassengers > 0 ? confirmedPassengers * pricePerSeat : 0;
+    
+    return sum + rideEarnings;
   }, 0);
   const averageEarningsPerRide = completedRides.length > 0
     ? Math.round(totalEarnings / completedRides.length)
     : 0;
 
-  // Best performing days - using corrected earnings calculation
+  // Best performing days - using corrected earnings calculation (only completed rides)
   const dayEarnings = new Map<string, number>();
   completedRides.forEach(ride => {
     const date = toDate(ride.createdAt);
     if (date) {
       const day = getFullDayName(date);
-      // Count confirmed passengers for this ride (same logic as totalEarnings)
+      // Count CONFIRMED passengers ONLY (same logic as totalEarnings)
       const rideRequests = receivedRequests.filter(
-        r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'ACCEPTED' || r.status === 'confirmed')
+        r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'confirmed')
       );
       const confirmedPassengers = rideRequests.length;
       const pricePerSeat = ride.price || ride.fare || 0;
@@ -447,12 +443,12 @@ function computeDriverMetrics(
     .slice(0, 3)
     .map(([day]) => day);
 
-  // Time series data - CRITICAL FIX: Use corrected earnings calculation
+  // Time series data - CRITICAL FIX: Use completed rides only with corrected earnings
   // Create a map of ride earnings for time series
   const rideEarningsMap = new Map<string, number>();
   completedRides.forEach(ride => {
     const rideRequests = receivedRequests.filter(
-      r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'ACCEPTED' || r.status === 'confirmed')
+      r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'confirmed')
     );
     const confirmedPassengers = rideRequests.length;
     const pricePerSeat = ride.price || ride.fare || 0;
@@ -495,25 +491,25 @@ function computePassengerMetrics(
 ): PassengerMetrics {
   const commonMetrics = computeCommonMetrics([], bookings, false);
 
-  // CRITICAL FIX: Only count bookings where ride is actually completed
-  // (ride's departureTime has passed)
+  // CRITICAL FIX: Only count bookings where status is CONFIRMED (not accepted/pending)
   const confirmedBookings = bookings.filter(
-    b => (b.status === 'CONFIRMED' || b.status === 'confirmed' || b.status === 'accepted')
+    b => (b.status === 'CONFIRMED' || b.status === 'confirmed')
   );
   
   // Filter for completed rides (ride departure time has passed)
+  // ONLY these rides should count toward spending analytics
   const completedBookings = confirmedBookings.filter(
     b => b.rideData && isRideCompleted(b.rideData.departureTime)
   );
   
   const totalRidesTaken = completedBookings.length;
 
-  // Request to confirm rate
-  const ridesRequested = bookings.length + requests.length;
-  const ridesConfirmed = confirmedBookings.length;
+  // Request to confirm rate - use completed bookings only
+  const ridesRequested = bookings.length;
+  const ridesConfirmed = completedBookings.length;
   const requestToConfirmRate = ridesRequested > 0
     ? Math.round((ridesConfirmed / ridesRequested) * 100)
-    : 100;
+    : 0;
 
   // Cancellation rate
   const cancelledBookings = bookings.filter(

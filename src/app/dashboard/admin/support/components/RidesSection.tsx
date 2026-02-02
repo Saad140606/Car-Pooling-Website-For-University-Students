@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useFirestore } from '@/firebase';
 import { getDocs, updateDoc, doc, query, collection } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
-import { Car, MapPin, Clock, XCircle, Eye } from 'lucide-react';
+import { Car, MapPin, Clock, XCircle, Eye, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface Ride {
   id: string;
@@ -18,12 +18,14 @@ interface Ride {
   seats: number;
   price: number;
   createdAt?: any;
+  universityType?: string;
 }
 
 export default function RidesSection({ universityType }: { universityType: string }) {
   const firestore = useFirestore();
   const [rides, setRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'completed' | 'cancelled'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -33,44 +35,82 @@ export default function RidesSection({ universityType }: { universityType: strin
   useEffect(() => {
     if (!firestore) return;
 
-    (async () => {
-      try {
-        const ridesCol = safeCollection(firestore, 'rides');
-        const ridesSnap = await getDocs(ridesCol);
-        
-        let ridesList: Ride[] = ridesSnap.docs.map(doc => ({
-          id: doc.id,
-          driverName: doc.data().driverName || 'Unknown',
-          driverEmail: doc.data().driverEmail || '',
-          from: doc.data().from || '',
-          to: doc.data().to || '',
-          departureTime: doc.data().departureTime,
-          status: doc.data().status || 'active',
-          passengers: doc.data().confirmedBookings?.length || 0,
-          seats: doc.data().seats || 0,
-          price: doc.data().price || 0,
-          createdAt: doc.data().createdAt,
-        }));
+    setLoading(true);
+    setError(null);
 
-        setRides(ridesList);
-      } catch (err) {
-        console.error('Failed to fetch rides:', err);
-      } finally {
+    // Fetch rides from BOTH universities for complete admin view
+    const fetchAllRides = async () => {
+      try {
+        const universities = ['NED', 'FAST'];
+        let allRides: Ride[] = [];
+
+        for (const univId of universities) {
+          const ridesCol = collection(firestore, `universities/${univId}/rides`);
+          const ridesSnap = await getDocs(ridesCol);
+          
+          console.log(`[RidesSection] Fetched ${ridesSnap.size} rides from ${univId}`);
+          
+          const univRides: Ride[] = ridesSnap.docs.map(doc => ({
+            id: doc.id,
+            driverName: doc.data().driverName || doc.data().driver?.name || 'Unknown',
+            driverEmail: doc.data().driverEmail || doc.data().driver?.email || '',
+            from: doc.data().from || doc.data().origin || '',
+            to: doc.data().to || doc.data().destination || '',
+            departureTime: doc.data().departureTime,
+            status: doc.data().status || 'active',
+            passengers: doc.data().confirmedBookings?.length || doc.data().confirmedPassengers?.length || 0,
+            seats: doc.data().seats || doc.data().availableSeats || 0,
+            price: doc.data().price || doc.data().fare || 0,
+            createdAt: doc.data().createdAt,
+            universityType: univId,
+          }));
+          
+          allRides = [...allRides, ...univRides];
+        }
+
+        console.log(`[RidesSection] Total rides loaded: ${allRides.length}`);
+        setRides(allRides);
+        setLoading(false);
+        setError(null);
+      } catch (err: any) {
+        console.error('[RidesSection] Failed to fetch rides:', err);
+        setError(`Failed to load rides: ${err.message}`);
         setLoading(false);
       }
-    })();
+    };
+
+    fetchAllRides();
   }, [firestore]);
 
-  const handleCancelRide = async (rideId: string) => {
+  const handleCancelRide = async (rideId: string, rideUniversity: string) => {
     if (!firestore || !confirm('Force cancel this ride?')) return;
     try {
-      const rideRef = doc(firestore, 'rides', rideId);
+      // Use correct university-scoped path
+      const rideRef = doc(firestore, `universities/${rideUniversity}/rides`, rideId);
       await updateDoc(rideRef, { status: 'cancelled' });
       setRides(rides.map(r => r.id === rideId ? { ...r, status: 'cancelled' } : r));
-    } catch (err) {
-      console.error('Failed to cancel ride:', err);
+    } catch (err: any) {
+      console.error('[RidesSection] Failed to cancel ride:', err);
+      alert(`Failed to cancel ride: ${err.message}`);
     }
   };
+
+  // Error state UI
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 mx-auto"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   let filteredRides = rides.filter(ride => {
     let matches = true;
@@ -203,6 +243,7 @@ export default function RidesSection({ universityType }: { universityType: strin
                     <p><span className="text-slate-400">Ride ID:</span> <span className="text-slate-300 font-mono text-xs">{ride.id}</span></p>
                     <p><span className="text-slate-400">Ride Provider Email:</span> <span className="text-slate-300">{ride.driverEmail}</span></p>
                     <p><span className="text-slate-400">Created:</span> <span className="text-slate-300">{ride.createdAt?.toDate?.()?.toLocaleDateString?.() || 'N/A'}</span></p>
+                    <p><span className="text-slate-400">University:</span> <span className="text-slate-300">{ride.universityType || 'N/A'}</span></p>
                   </div>
 
                   {/* Actions */}
@@ -210,7 +251,7 @@ export default function RidesSection({ universityType }: { universityType: strin
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleCancelRide(ride.id);
+                        handleCancelRide(ride.id, ride.universityType || 'NED');
                       }}
                       className="w-full px-4 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-300 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                     >

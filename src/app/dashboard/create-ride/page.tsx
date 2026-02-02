@@ -6,8 +6,8 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallba
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { addDoc, collection, serverTimestamp, doc, getDoc, Timestamp } from 'firebase/firestore';
-import * as firestoreNamespace from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { Timestamp as FirestoreTimestamp } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
@@ -732,6 +732,13 @@ const MapComponent = forwardRef<MapComponentRef, {
 });
 MapComponent.displayName = 'MapComponent';
 
+// Geocoding cache to prevent repeated API calls
+const geocodingCache = new Map<string, string>();
+
+function getCacheKey(lat: number, lng: number): string {
+  // Round to 4 decimal places (~11 meters precision) for cache key
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`;
+}
 
 export default function CreateRidePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1130,73 +1137,74 @@ export default function CreateRidePage() {
           const currentUni = getCurrentUniversity();
           const uniShortName = getUniversityShortName();
           
-          // Pre-set university names for first and last stops if they're at university location
-          const initialStops = finalStops.map((stop, idx) => {
-            const isFirstOrLast = idx === 0 || idx === finalStops.length - 1;
-            if (isFirstOrLast) {
-              const isUniStop = distanceInMeters(currentUni, { lat: stop.lat, lng: stop.lng }) < 500;
-              if (isUniStop) {
-                return { ...stop, name: uniShortName };
-              }
-            }
-            return stop;
-          });
+          console.log('[STOPS] Processing', finalStops.length, 'stops...');
           
-          // Set initial stops with university names pre-applied
-          console.log('[STOPS] Setting initial stops:', initialStops.length, 'stops');
-          setGeneratedStops([...initialStops]);
-          
-          // Fetch place names for all stops asynchronously with incremental updates
+          // Fetch ALL place names in parallel and build complete array BEFORE rendering
           (async () => {
             try {
-              const stopsWithNames = [...initialStops];
+              // Get auth token for API calls
+              let authToken = '';
+              try {
+                if (user) {
+                  authToken = await user.getIdToken();
+                }
+              } catch (e) {
+                console.warn('[STOPS] Could not get auth token:', e);
+              }
               
-              console.log('[STOPS] Starting to fetch names for', stopsWithNames.length, 'stops...');
-              
-              // Fetch names sequentially with immediate state updates
-              for (let idx = 0; idx < stopsWithNames.length; idx++) {
-                const stop = stopsWithNames[idx];
-                
+              // Function to geocode a single stop
+              const geocodeStop = async (stop: any, idx: number): Promise<any> => {
                 try {
                   // Check if this stop is at the university location (within 500m)
                   const isUniStop = distanceInMeters(currentUni, { lat: stop.lat, lng: stop.lng }) < 500;
                   
                   if (isUniStop) {
-                    stopsWithNames[idx] = { ...stop, name: uniShortName };
                     console.log(`[STOPS] Stop ${idx + 1}: University (${uniShortName})`);
-                  } else {
-                    // Add small delay to avoid rate limiting
-                    if (idx > 0) await new Promise(resolve => setTimeout(resolve, 100));
-                    
+                    return { ...stop, name: uniShortName };
+                  }
+                  
+                  // Check cache first
+                  const cacheKey = getCacheKey(stop.lat, stop.lng);
+                  const cachedName = geocodingCache.get(cacheKey);
+                  
+                  if (cachedName) {
+                    console.log(`[STOPS] Stop ${idx + 1}: "${cachedName}" (cached)`);
+                    return { ...stop, name: cachedName };
+                  }
+                  
+                  // Try to fetch from API with retries
+                  let retries = 3;
+                  let placeName = '';
+                  
+                  while (retries > 0 && !placeName) {
                     try {
+                      const fetchHeaders: HeadersInit = {
+                        'Content-Type': 'application/json'
+                      };
+                      
+                      if (authToken) {
+                        fetchHeaders['Authorization'] = `Bearer ${authToken}`;
+                      }
+                      
                       const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`, {
-                        signal: AbortSignal.timeout(8000) // 8 second timeout
+                        method: 'GET',
+                        headers: fetchHeaders,
+                        signal: AbortSignal.timeout(12000)
                       });
+                      
                       if (res.ok) {
                         const data = await res.json();
                         
-                        // Build a meaningful name from the response - prioritize recognizable place names
-                        let placeName = '';
-                        
                         if (data.address) {
                           const addr = data.address;
-                          
-                          // Named places (landmarks, buildings, amenities)
                           const landmark = addr.amenity || addr.shop || addr.building || addr.office || 
-                                           addr.tourism || addr.leisure || addr.historic;
-                          
-                          // Roads and streets
+                                          addr.tourism || addr.leisure || addr.historic;
                           const road = addr.road || addr.street || addr.avenue || addr.boulevard ||
-                                       addr.highway || addr.path || addr.residential;
-                          
-                          // Areas and neighborhoods
+                                      addr.highway || addr.path || addr.residential;
                           const area = addr.neighbourhood || addr.suburb || addr.quarter || 
-                                       addr.city_district || addr.residential || addr.hamlet;
-                          
-                          // City/town level
+                                      addr.city_district || addr.hamlet;
                           const city = addr.city || addr.town || addr.village || addr.municipality;
                           
-                          // Build the best name - prefer landmarks, then road+area, then area alone
                           if (landmark) {
                             placeName = area ? `${landmark}, ${area}` : landmark;
                           } else if (road && area) {
@@ -1214,13 +1222,11 @@ export default function CreateRidePage() {
                           }
                         }
                         
-                        // Fallback to display_name parsing if no structured address worked
                         if (!placeName && data.display_name) {
                           const parts = data.display_name.split(',')
                             .map((p: string) => p.trim())
                             .filter((p: string) => p && !/^\d+$/.test(p) && p.length > 2);
                           
-                          // Take the most meaningful parts (skip numeric-only entries)
                           if (parts.length >= 2) {
                             placeName = `${parts[0]}, ${parts[1]}`;
                           } else if (parts.length === 1) {
@@ -1228,53 +1234,84 @@ export default function CreateRidePage() {
                           }
                         }
                         
-                        // Final validation - ensure we have a meaningful name
                         if (placeName && placeName.length > 2 && 
-                            !placeName.match(/^\d+\.\d+/) && 
-                            !placeName.match(/^-?\d+$/)) {
-                          stopsWithNames[idx] = { ...stop, name: placeName };
-                          console.log(`[STOPS] Stop ${idx + 1}: "${placeName}"`);
-                        } else {
-                          // Use distance-based description as last resort
-                          const distKm = Math.round(stop.distanceFromStart / 100) / 10;
-                          stopsWithNames[idx] = { ...stop, name: `${distKm}km from start` };
-                          console.warn(`[STOPS] Stop ${idx + 1}: No name found, using distance`);
+                            !placeName.match(/^\d+\.\d+/) && !placeName.match(/^-?\d+$/)) {
+                          break;
                         }
-                      } else {
-                        const distKm = Math.round(stop.distanceFromStart / 100) / 10;
-                        stopsWithNames[idx] = { ...stop, name: `${distKm}km from start` };
-                        console.warn(`[STOPS] Stop ${idx + 1}: API error ${res.status}`);
+                      } else if (res.status === 429) {
+                        console.warn(`[STOPS] Stop ${idx + 1}: Rate limited`);
+                        await new Promise(r => setTimeout(r, 1500));
                       }
-                    } catch (fetchErr) {
-                      const distKm = Math.round(stop.distanceFromStart / 100) / 10;
-                      stopsWithNames[idx] = { ...stop, name: `${distKm}km from start` };
-                      console.error(`[STOPS] Stop ${idx + 1}: Fetch failed`, fetchErr);
+                    } catch (fetchErr: any) {
+                      console.error(`[STOPS] Stop ${idx + 1}: Fetch error`, fetchErr.message);
+                      if (retries > 1) {
+                        await new Promise(r => setTimeout(r, 800));
+                      }
                     }
+                    
+                    retries--;
                   }
                   
-                  // Update state after every 2 stops to show progress
-                  if (idx % 2 === 1 || idx === stopsWithNames.length - 1) {
-                    setGeneratedStops([...stopsWithNames]);
+                  // Validate and store result
+                  if (placeName && placeName.length > 2 && 
+                      !placeName.match(/^\d+\.\d+/) && !placeName.match(/^-?\d+$/)) {
+                    geocodingCache.set(cacheKey, placeName);
+                    console.log(`[STOPS] Stop ${idx + 1}: "${placeName}"`);
+                    return { ...stop, name: placeName };
+                  } else {
+                    // Fallback
+                    try {
+                      const fallbackHeaders: HeadersInit = { 'Content-Type': 'application/json' };
+                      if (authToken) fallbackHeaders['Authorization'] = `Bearer ${authToken}`;
+                      
+                      const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`, {
+                        headers: fallbackHeaders,
+                        signal: AbortSignal.timeout(8000)
+                      });
+                      
+                      if (res.ok) {
+                        const data = await res.json();
+                        const cityName = data.address?.city || data.address?.town || 
+                                        data.address?.village || data.address?.suburb || 
+                                        data.address?.neighbourhood || 'location';
+                        placeName = `Near ${cityName}`;
+                        geocodingCache.set(cacheKey, placeName);
+                      } else {
+                        placeName = `Stop ${idx + 1}`;
+                      }
+                    } catch {
+                      placeName = `Stop ${idx + 1}`;
+                    }
+                    
+                    console.warn(`[STOPS] Stop ${idx + 1}: Fallback "${placeName}"`);
+                    return { ...stop, name: placeName };
                   }
                 } catch (e) {
                   console.error(`[STOPS] Stop ${idx + 1}: Error`, e);
-                  stopsWithNames[idx] = { ...stop, name: `Location ${idx + 1}` };
+                  return { ...stop, name: `Stop ${idx + 1}` };
                 }
-              }
+              };
               
-              console.log('[STOPS] All names fetched:', stopsWithNames.map(s => s.name));
+              // Process ALL stops in PARALLEL
+              console.log('[STOPS] Geocoding', finalStops.length, 'stops in parallel...');
+              const stopsWithNames = await Promise.all(
+                finalStops.map((stop, idx) => geocodeStop(stop, idx))
+              );
               
-              // Deduplicate consecutive stops with same names
+              console.log('[STOPS] All names resolved:', stopsWithNames.map((s, i) => `${i+1}:"${s.name}"`).join(', '));
+              
+              // Deduplicate
               const deduped = deduplicateByName(stopsWithNames);
-              console.log('[STOPS] After deduplication:', deduped.length, 'stops:', deduped.map(s => s.name));
+              console.log('[STOPS] After dedup:', deduped.length, 'stops:', deduped.map(s => s.name).join(' → '));
               
-              // Final update
+              // UPDATE STATE ONLY ONCE with complete array
+              console.log('[STOPS] FINAL RENDER:', deduped.length, 'stops');
               setGeneratedStops([...deduped]);
             } catch (e) {
-              console.error('[STOPS] Failed to fetch stop names', e);
+              console.error('[STOPS] Fatal error:', e);
               const fallbackStops = finalStops.map((s: any, idx: number) => ({
                 ...s,
-                name: `Location ${idx + 1}`
+                name: `Stop ${idx + 1}`
               }));
               setGeneratedStops([...fallbackStops]);
             }
@@ -1579,8 +1616,8 @@ export default function CreateRidePage() {
       from: values.from,
       to: values.to,
       time: values.departureTime,
-      // Firestore rules require timestamp type for departureTime
-      departureTime: Timestamp.fromDate(values.departureTime),
+      // Firestore will auto-convert Date to Timestamp
+      departureTime: values.departureTime,
       transportMode: values.transportMode,
       price: Math.trunc(values.price),
       seats: totalSeats, // canonical
@@ -2001,7 +2038,12 @@ export default function CreateRidePage() {
 
               {/* Route editor: add/reorder/remove waypoints and generate final polyline */}
               <div className="mb-6">
-                <RouteEditor origin={fromCoords || null} destination={toCoords || null} onRouteGenerated={onRouteGenerated} />
+                <RouteEditor 
+                  origin={fromCoords || null} 
+                  destination={toCoords || null} 
+                  onRouteGenerated={onRouteGenerated}
+                  getAuthToken={user ? () => user.getIdToken() : undefined}
+                />
                 {routePolyline ? (
                   <div className="mt-2 text-xs text-muted-foreground">
                     {(() => {
@@ -2025,6 +2067,7 @@ export default function CreateRidePage() {
                       routePolyline={routePolyline || undefined}
                       routeCoordinates={routeLatLngs}
                       isCreator={true}
+                      getAuthToken={user ? () => user.getIdToken() : undefined}
                       onUpdateStops={async (updatedStops) => {
                         setGeneratedStops(updatedStops);
                       }}

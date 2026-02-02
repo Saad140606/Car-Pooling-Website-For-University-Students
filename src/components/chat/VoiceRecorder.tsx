@@ -77,12 +77,13 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
     setUploading(true);
     try {
       const voiceData = await voiceMessageService.uploadVoiceMessage(audioBlob, '');
-      onSend(voiceData.url);
+      await onSend(voiceData.url);
       setAudioBlob(null);
       setDuration(0);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[VoiceRecorder] Failed to upload voice:', err);
-      alert('Failed to send voice message. Please try again.');
+      const errorMessage = err?.message || 'Failed to send voice message. Please try again.';
+      alert(errorMessage);
     } finally {
       setUploading(false);
     }

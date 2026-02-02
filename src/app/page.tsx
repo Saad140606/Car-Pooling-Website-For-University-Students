@@ -6,7 +6,7 @@ import { SiteHeader } from '@/components/SiteHeader';
 import { Reveal } from '@/components/Reveal';
 import { AnimatedCard } from '@/components/AnimatedCard';
 import { AnimatedButton } from '@/components/AnimatedButton';
-import { HomePageClient } from '@/components/HomePageClient';
+import { RootPageGuard } from '@/components/RootPageGuard';
 
 export default function Home() {
   const features = [
@@ -28,7 +28,7 @@ export default function Home() {
   ];
 
   return (
-    <HomePageClient>
+    <RootPageGuard>
       <div className="flex flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
       <SiteHeader />
       <main className="flex-grow">
@@ -275,6 +275,6 @@ export default function Home() {
         </div>
       </footer>
       </div>
-    </HomePageClient>
+    </RootPageGuard>
   );
 }

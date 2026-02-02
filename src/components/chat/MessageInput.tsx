@@ -77,7 +77,14 @@ export default function MessageInput({ onSend, onTyping, onSendMedia, onSendVoic
               <Send className="h-5 w-5" />
             </button>
           ) : (
-            <VoiceRecorder onSend={async (url) => { await onSendVoice(url); }} />
+            <VoiceRecorder onSend={async (url: string) => { 
+              try {
+                await onSendVoice(url);
+              } catch (err: any) {
+                console.error('Failed to send voice:', err);
+                alert(err?.message || 'Failed to send voice message');
+              }
+            }} />
           )}
         </div>
       </div>

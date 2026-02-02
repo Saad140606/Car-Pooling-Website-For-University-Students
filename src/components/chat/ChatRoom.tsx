@@ -30,6 +30,8 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const callTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const callUnsubsRef = useRef<Array<() => void>>([]);
 
   const getIceServers = () => {
     const servers: any[] = [ { urls: 'stun:stun.l.google.com:19302' } ];
@@ -179,6 +181,20 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   // Helper: cleanup call resources
   const cleanupCall = async () => {
     try {
+      // Clear timeout
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
+      
+      // Clear subscriptions
+      if (callUnsubsRef.current.length > 0) {
+        callUnsubsRef.current.forEach(unsub => {
+          try { unsub(); } catch (_) {}
+        });
+        callUnsubsRef.current = [];
+      }
+      
       if (pcRef.current) {
         try {
           const maybeCleanup = (pcRef.current as any).__cleanup;
@@ -225,6 +241,14 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     const pc = new RTCPeerConnection({ iceServers: getIceServers() });
     pcRef.current = pc;
+    
+    // Set call timeout (45 seconds for ringing, then auto-hangup)
+    callTimeoutRef.current = window.setTimeout(() => {
+      if (inCall && isConnecting) {
+        setCallError('Call timeout - recipient did not answer');
+        cleanupCall().catch(() => {});
+      }
+    }, 45000);
 
     // local stream
     let stream: MediaStream | null = null;
@@ -270,17 +294,34 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     pc.ontrack = (event) => {
       setRemoteStream(event.streams[0]);
       setIsConnecting(false);
+      // Clear timeout on successful connection
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'failed') {
+        setCallError('Connection failed. Please try again.');
+        cleanupCall().catch(() => {});
+      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
         cleanupCall().catch(() => {});
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+      if (pc.iceConnectionState === 'failed') {
+        setCallError('Network connection failed. Please check your internet.');
         cleanupCall().catch(() => {});
+      } else if (pc.iceConnectionState === 'disconnected') {
+        cleanupCall().catch(() => {});
+      }
+    };
+
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') {
+        console.debug('ICE gathering complete');
       }
     };
 
@@ -288,7 +329,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     const callerCandidatesCollection = collection(cdoc, 'callerCandidates');
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        try { addDoc(callerCandidatesCollection, event.candidate.toJSON()); } catch (e) { console.warn(e); }
+        try { addDoc(callerCandidatesCollection, event.candidate.toJSON()).catch(e => console.warn('Failed to add ICE candidate:', e)); } catch (e) { console.warn(e); }
       }
     };
 
@@ -315,9 +356,16 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           }
         } catch (_) {}
         await setDoc(cdoc, { offer: { type: offer.type, sdp: offer.sdp }, caller: user.uid, callee: calleeId, mode, status: 'ringing', createdAt: Date.now() });
-      } catch (e) { console.warn('failed to set call doc', e); }
+      } catch (e) { 
+        console.error('failed to set call doc', e);
+        setCallError('Failed to initiate call. Please try again.');
+        setInCall(false);
+        await cleanupCall();
+        return;
+      }
     } catch (e) {
-      console.warn('offer creation failed', e);
+      console.error('offer creation failed', e);
+      setCallError('Failed to create call offer. Please try again.');
       setInCall(false);
       setIsConnecting(false);
       await cleanupCall();
@@ -328,6 +376,10 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     // Listen for answer
     const unsubAnswer = onSnapshot(cdoc, async (snap) => {
       if (!snap.exists()) {
+        // Call doc deleted - probably rejected
+        if (isConnecting) {
+          setCallError('Call was rejected');
+        }
         cleanupCall().catch(() => {});
         return;
       }
@@ -335,13 +387,25 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       if (!data) return;
       if (data.answer && pc && !pc.currentRemoteDescription) {
         const answer = new RTCSessionDescription(data.answer);
-        try { await pc.setRemoteDescription(answer); setIsConnecting(false); } catch (e) { console.warn(e); }
+        try { 
+          await pc.setRemoteDescription(answer); 
+          // Clear timeout on answer received
+          if (callTimeoutRef.current) {
+            clearTimeout(callTimeoutRef.current);
+            callTimeoutRef.current = null;
+          }
+          setIsConnecting(false); 
+        } catch (e) { 
+          console.error('Failed to set remote description:', e);
+          setCallError('Failed to establish connection');
+        }
       }
       if (data.status === 'ended' || data.status === 'rejected') {
         cleanupCall().catch(() => {});
       }
     }, (err) => {
-      console.warn('Call answer snapshot error', err);
+      console.error('Call answer snapshot error', err);
+      setCallError('Lost connection to call server');
       cleanupCall().catch(()=>{});
     });
 
@@ -351,15 +415,24 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       snap.docChanges().forEach(change => {
         if (change.type === 'added') {
           const data = change.doc.data();
-          try { pc.addIceCandidate(new RTCIceCandidate(data)); } catch (e) { console.warn(e); }
+          try { 
+            if (pc.remoteDescription) {
+              pc.addIceCandidate(new RTCIceCandidate(data)).catch(e => console.warn('Failed to add ICE candidate:', e)); 
+            }
+          } catch (e) { console.warn(e); }
         }
       });
     }, (err) => {
-      console.warn('Callee candidates snapshot error', err);
+      console.error('Callee candidates snapshot error', err);
     });
 
     // Keep these unsubscribers stored on the pc for cleanup
-    (pc as any).__cleanup = async () => { unsubAnswer(); unsubCallee(); };
+    (pc as any).__cleanup = async () => { 
+      try { unsubAnswer(); } catch (_) {}
+      try { unsubCallee(); } catch (_) {}
+    };
+    
+    callUnsubsRef.current.push(unsubAnswer, unsubCallee);
   };
 
   const answerCall = async () => {
@@ -412,6 +485,8 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       handleMediaError(e);
       setInCall(false);
       setIsConnecting(false);
+      // Reject the call
+      try { await setDoc(cdoc, { status: 'rejected' }, { merge: true }); } catch(_) {}
       await cleanupCall();
       return;
     }
@@ -422,13 +497,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'failed') {
+        setCallError('Connection failed');
+        cleanupCall().catch(() => {});
+      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
         cleanupCall().catch(() => {});
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+      if (pc.iceConnectionState === 'failed') {
+        setCallError('Network connection failed');
+        cleanupCall().catch(() => {});
+      } else if (pc.iceConnectionState === 'disconnected') {
         cleanupCall().catch(() => {});
       }
     };
@@ -440,12 +521,38 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     // set remote desc from offer
     const offer = data.offer;
-    try { await pc.setRemoteDescription(new RTCSessionDescription(offer)); } catch (e) { console.warn(e); }
+    try { 
+      await pc.setRemoteDescription(new RTCSessionDescription(offer)); 
+    } catch (e) { 
+      console.error('Failed to set remote description:', e);
+      setCallError('Failed to connect. Please try again.');
+      setInCall(false);
+      await cleanupCall();
+      return;
+    }
 
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+    let answer;
+    try {
+      answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+    } catch (e) {
+      console.error('Failed to create answer:', e);
+      setCallError('Failed to create answer. Please try again.');
+      setInCall(false);
+      await cleanupCall();
+      return;
+    }
+    
     // write answer
-    try { await setDoc(cdoc, { answer: { type: answer.type, sdp: answer.sdp }, callee: user.uid, status: 'connected', updatedAt: Date.now() }, { merge: true }); } catch (e) { console.warn(e); }
+    try { 
+      await setDoc(cdoc, { answer: { type: answer.type, sdp: answer.sdp }, callee: user.uid, status: 'connected', updatedAt: Date.now() }, { merge: true }); 
+    } catch (e) { 
+      console.error('Failed to write answer to firestore:', e);
+      setCallError('Failed to send answer. Please try again.');
+      setInCall(false);
+      await cleanupCall();
+      return;
+    }
 
     // listen for caller candidates
     const callerCandidatesCol = collection(cdoc, 'callerCandidates');
@@ -453,14 +560,22 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       snap.docChanges().forEach(change => {
         if (change.type === 'added') {
           const data = change.doc.data();
-          try { pc.addIceCandidate(new RTCIceCandidate(data)); } catch (e) { console.warn(e); }
+          try { 
+            if (pc.remoteDescription) {
+              pc.addIceCandidate(new RTCIceCandidate(data)).catch(e => console.warn('Failed to add ICE candidate:', e)); 
+            }
+          } catch (e) { console.warn(e); }
         }
       });
     }, (err) => {
-      console.warn('Caller candidates snapshot error', err);
+      console.error('Caller candidates snapshot error', err);
     });
 
-    (pc as any).__cleanup = async () => { unsubCaller(); };
+    (pc as any).__cleanup = async () => { 
+      try { unsubCaller(); } catch (_) {}
+    };
+    
+    callUnsubsRef.current.push(unsubCaller);
   };
 
   const hangup = async () => {
@@ -667,7 +782,16 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
               </button>
               <button 
                 className="px-6 py-3 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg" 
-                onClick={async () => { stopRingtone(); setIncomingCall(null); try { if (callDocRef.current) await deleteDoc(callDocRef.current); } catch(_) {} }}
+                onClick={async () => { 
+                  stopRingtone(); 
+                  setIncomingCall(null); 
+                  try { 
+                    if (callDocRef.current) {
+                      await setDoc(callDocRef.current, { status: 'rejected' }, { merge: true });
+                      await deleteDoc(callDocRef.current); 
+                    }
+                  } catch(_) {} 
+                }}
               >
                 Reject
               </button>

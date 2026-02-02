@@ -79,62 +79,91 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     setShownBookings((s) => s.filter((b) => b.id !== booking.id));
 
     try {
-      await runTransaction(firestore, async (transaction) => {
-        const rideRef = doc(firestore, `universities/${university}/rides`, booking.rideId);
-        const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
-        const requestDoc = await transaction.get(requestRef);
-        if (!requestDoc.exists()) throw new Error('Request no longer exists');
-        const requestData = requestDoc.data() as BookingType & { status?: string };
-        if (!['PENDING', 'pending'].includes(requestData.status)) return;
-
-        if (newStatus === 'accepted') {
-          const rideDoc = await transaction.get(rideRef);
-          if (!rideDoc.exists()) throw new Error('Ride does not exist!');
-          const currentRideData = rideDoc.data() as RideType;
-
-          const driverDetails = currentRideData.driverInfo || null;
-          const rideSnapshot = {
-            id: rideDoc.id,
-            driverId: currentRideData.driverId,
-            from: currentRideData.from,
-            to: currentRideData.to,
-            departureTime: currentRideData.departureTime,
-            price: currentRideData.price,
-            route: currentRideData.route,
-            driverInfo: currentRideData.driverInfo,
-          } as Partial<RideType>;
-
-          // Create booking doc with 'accepted' status (not confirmed yet)
-          const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
-          const chatId = booking.id;
-          const chatRef2 = doc(firestore, `universities/${university}/chats`, chatId);
-          const chatData = {
-            bookingId: booking.id,
+      // Use API endpoint for accept to ensure idempotency and proper seat management
+      if (newStatus === 'accepted') {
+        const res = await fetch('/api/requests/accept', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            university,
             rideId: booking.rideId,
-            passengerId: requestData.passengerId,
-            providerId: currentRideData.driverId,
-            participants: [requestData.passengerId, currentRideData.driverId],
-            createdAt: serverTimestamp(),
-            status: 'active'
-          };
+            requestId: booking.id
+          })
+        });
 
-          const bookingPayload = Object.assign({}, requestData, {
-            status: 'accepted',
-            createdAt: serverTimestamp(),
-            driverDetails,
-            ride: rideSnapshot,
-            chatId,
-          });
-
-          transaction.set(chatRef2, chatData);
-          transaction.set(bookingRef, bookingPayload);
-          transaction.update(requestRef, { status: newStatus, driverDetails, ride: rideSnapshot, chatId });
-          // DO NOT reduce seats here - only reduce when passenger confirms
-        } else {
-          // For rejects: update request status only. Do not create a booking.
-          transaction.update(requestRef, { status: newStatus });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || data.message || 'Failed to accept request');
         }
-      });
+
+        // Update local request to accepted status
+        await runTransaction(firestore, async (transaction) => {
+          const rideRef = doc(firestore, `universities/${university}/rides`, booking.rideId);
+          const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
+          const rideDoc = await transaction.get(rideRef);
+          
+          if (rideDoc.exists()) {
+            const currentRideData = rideDoc.data() as RideType;
+            const driverDetails = currentRideData.driverInfo || null;
+            const rideSnapshot = {
+              id: rideDoc.id,
+              driverId: currentRideData.driverId,
+              from: currentRideData.from,
+              to: currentRideData.to,
+              departureTime: currentRideData.departureTime,
+              price: currentRideData.price,
+              route: currentRideData.route,
+              driverInfo: currentRideData.driverInfo,
+            } as Partial<RideType>;
+
+            // Create booking doc with 'accepted' status
+            const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
+            const chatId = booking.id;
+            const chatRef2 = doc(firestore, `universities/${university}/chats`, chatId);
+            const chatData = {
+              bookingId: booking.id,
+              rideId: booking.rideId,
+              passengerId: booking.passengerId,
+              providerId: currentRideData.driverId,
+              participants: [booking.passengerId, currentRideData.driverId],
+              createdAt: serverTimestamp(),
+              status: 'active'
+            };
+
+            const bookingPayload = Object.assign({}, booking, {
+              status: 'accepted',
+              createdAt: serverTimestamp(),
+              driverDetails,
+              ride: rideSnapshot,
+              chatId,
+            });
+
+            transaction.set(chatRef2, chatData);
+            transaction.set(bookingRef, bookingPayload);
+          }
+        });
+      } else {
+        // For rejects: use API if available, otherwise direct update
+        const res = await fetch('/api/requests/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            university,
+            rideId: booking.rideId,
+            requestId: booking.id,
+            cancelledBy: booking.driverId,
+            reason: 'Driver rejected request'
+          })
+        });
+
+        if (!res.ok) {
+          // Fallback: update directly
+          await runTransaction(firestore, async (transaction) => {
+            const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
+            transaction.update(requestRef, { status: 'rejected' });
+          });
+        }
+      }
 
       onProcessed?.(booking.id, newStatus);
 

@@ -55,7 +55,7 @@ export function useSafeNavigation() {
         );
 
         if (isProtectedRoute) {
-          router.replace('/auth/ned/login');
+          router.replace('/auth/select-university');
         }
       }
     }, 400);
@@ -76,7 +76,7 @@ export function useSafeNavigation() {
       const targetIsAdmin = path.startsWith('/dashboard/admin') || path.startsWith('/admin');
       
       if (!targetIsAdmin && options?.requireAuth && !user) {
-        router.replace('/auth/ned/login');
+        router.replace('/auth/select-university');
         return;
       }
 

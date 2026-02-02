@@ -17,6 +17,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
+import { notifyRequestAccepted } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -81,8 +82,18 @@ export async function POST(req: NextRequest) {
       }
       const request = reqSnap.data() as any;
 
-      // Validate request status
-      if (request.status && request.status !== 'PENDING') {
+      // ===== IDEMPOTENCY CHECK: If already ACCEPTED, return success =====
+      if (request.status === 'ACCEPTED') {
+        return { 
+          passengerId: request.passengerId, 
+          rideId, 
+          timerType: request.timerType || 'short',
+          idempotent: true 
+        };
+      }
+
+      // Validate request status - only PENDING can be accepted
+      if (request.status !== 'PENDING') {
         throw new Error('Only PENDING requests can be accepted');
       }
 
@@ -106,12 +117,9 @@ export async function POST(req: NextRequest) {
       const availableSeats = (ride.availableSeats ?? 0) as number;
       const totalSeats = (ride.totalSeats ?? 0) as number;
 
-      // Prevent overbooking
+      // Prevent overbooking - check that we have seats to reserve
       if (availableSeats <= 0) {
         throw new Error('No seats available');
-      }
-      if (reservedSeats + 1 > totalSeats - availableSeats) {
-        throw new Error('Cannot reserve more seats than available');
       }
 
       // Calculate dynamic confirmation deadline based on pickup time
@@ -154,8 +162,12 @@ export async function POST(req: NextRequest) {
         // Use default 5-minute timer on error
       }
 
-      // Update ride and request
-      tx.update(rideRef, { reservedSeats: reservedSeats + 1 });
+      // ===== ATOMIC UPDATE: Accept request and reserve seat =====
+      // Only increment reservedSeats if transitioning from PENDING to ACCEPTED
+      tx.update(rideRef, { 
+        reservedSeats: reservedSeats + 1,
+        updatedAt: now
+      });
       tx.update(requestRef, {
         status: 'ACCEPTED',
         acceptedAt: now,
@@ -163,10 +175,37 @@ export async function POST(req: NextRequest) {
         timerType,
         confirmLater: false,
         remindersCount: 0,
+        updatedAt: now
       });
 
       return { passengerId, rideId, timerType };
     });
+
+    // ===== SEND NOTIFICATION: After successful transaction =====
+    try {
+      if (!result.idempotent) {  // Only send notification on first accept, not on idempotent calls
+        // Get ride and passenger info for notification
+        const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+        const rideData = rideSnap.data() as any;
+        
+        await notifyRequestAccepted(
+          adminDb,
+          validUniversity,
+          result.passengerId,
+          rideId,
+          requestId,
+          {
+            from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+            to: rideData?.dropoffLocation || rideData?.to || 'Destination',
+            departureTime: rideData?.departureTime,
+            driverName: rideData?.driverName || 'Driver'
+          }
+        );
+      }
+    } catch (notifError) {
+      // Log notification error but don't fail the request
+      console.error('[AcceptRequest] Notification error (non-critical):', notifError);
+    }
 
     return successResponse({ ok: true, data: result });
   } catch (e: any) {

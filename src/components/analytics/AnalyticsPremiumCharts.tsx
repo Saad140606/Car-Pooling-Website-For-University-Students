@@ -117,7 +117,7 @@ export const ChartWrapper = memo(function ChartWrapper({
       className={cn(
         'relative overflow-hidden rounded-xl border border-slate-800/50',
         'bg-gradient-to-br from-slate-900/80 via-slate-900/60 to-slate-950/80',
-        'backdrop-blur-md p-6',
+        'backdrop-blur-md p-4 sm:p-6',
         className
       )}
     >

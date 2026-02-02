@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield, AlertTriangle, BarChart3 } from 'lucide-react';
@@ -7,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import Logo from '@/components/logo';
-import { useAuth, useUser, useIsAdmin } from '@/firebase';
+import { useAuth, useUser, useIsAdmin, useFirestore } from '@/firebase';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -16,6 +17,7 @@ import { useNotifications } from '@/contexts/NotificationContext';
 import NotificationBadge from '@/components/NotificationBadge';
 import { ErrorState } from '@/components/StateComponents';
 import { useToast } from '@/hooks/use-toast';
+import { EnableNotificationsBanner } from '@/components/notifications/EnableNotificationsBanner';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -33,12 +35,88 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { isAdmin, loading: adminLoading } = useIsAdmin();
   const { unreadCount } = useNotifications();
   const auth = useAuth();
+  const firestore = useFirestore();
   const router = useRouter();
   const { toast } = useToast();
   const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [verificationChecked, setVerificationChecked] = useState(false);
 
   // Check if current route is an admin route
   const isAdminRoute = pathname?.startsWith('/dashboard/admin');
+  
+  // CRITICAL: All hooks must be called before any conditional returns
+  // Store redirect intent in state instead of returning early
+
+  // ===== CRITICAL SECURITY: Verify email verification status =====
+  // This is a safety check to ensure unverified users can't access dashboard
+  // even if they somehow bypass the login flow
+  useEffect(() => {
+    // Skip check until user data is loaded
+    if (!user || !userData || !initialized || !firestore || verificationChecked) return;
+
+    // Skip for admins
+    const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    
+    if (user.email && adminEmails.includes(user.email.toLowerCase())) {
+      setVerificationChecked(true);
+      return;
+    }
+
+    // Check if email is verified
+    const checkVerification = async () => {
+      try {
+        const university = userData?.university;
+        if (!university || (university !== 'ned' && university !== 'fast')) {
+          console.warn('[Dashboard] Invalid university in userData:', university);
+          setVerificationChecked(true);
+          return;
+        }
+
+        const { doc, getDoc } = await import('firebase/firestore');
+        const userDocRef = doc(firestore, 'universities', university, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (!userDoc.exists()) {
+          console.error('[Dashboard] User document not found');
+          setVerificationChecked(true);
+          return;
+        }
+
+        const profile = userDoc.data();
+        const emailVerified = Boolean(profile?.emailVerified);
+
+        if (!emailVerified) {
+          console.log('[Dashboard] Unverified user detected, redirecting to verification');
+          toast({
+            variant: 'destructive',
+            title: 'Email Verification Required',
+            description: 'Please verify your email to access the dashboard.',
+          });
+          
+          // Sign out and redirect to verification
+          try {
+            await auth?.signOut();
+          } catch (e) {
+            console.error('[Dashboard] Failed to sign out unverified user:', e);
+          }
+          
+          router.replace(`/auth/verify-email?email=${encodeURIComponent(user.email || '')}&university=${university}&uid=${user.uid}`);
+          return;
+        }
+
+        setVerificationChecked(true);
+      } catch (error) {
+        console.error('[Dashboard] Verification check failed:', error);
+        setVerificationChecked(true);
+      }
+    };
+
+    checkVerification();
+  }, [user, userData, initialized, firestore, verificationChecked, auth, router, toast]);
+  // ===== END CRITICAL SECURITY CHECK =====
 
   // Auth redirect logic - only redirect unauthenticated users to login
   useEffect(() => {
@@ -59,9 +137,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       return;
     }
     
-    // For non-admin routes: if no user at all, redirect to login page
+    // For non-admin routes: if no user at all, redirect to select university
     if (!isAdminRoute && !user && !userLoading && initialized) {
-      router.replace('/auth/ned/login');
+      router.replace('/auth/select-university');
       return;
     }
   }, [initialized, user, userLoading, isAdmin, adminLoading, isAdminRoute, router]);
@@ -116,6 +194,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return name.split(' ').map(n => n[0]?? '').join('').toUpperCase().slice(0, 2);
   }
 
+  // Ensure children arrays have stable keys to avoid React missing-key warnings
+  const safeChildren = React.Children.toArray(children).map((child, idx) => {
+    if (React.isValidElement(child)) {
+      // React.Children.toArray already assigns keys, but we ensure they're preserved
+      return child;
+    }
+    return child;
+  });
+
   return (
     <div className="flex min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise relative">
       {/* Animated background effects */}
@@ -161,7 +248,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               );
             })}
             {isAdmin && (
-              <li className="animate-slide-in-left" style={{ animationDelay: `${navItems.length * 50}ms` }}>
+              <li key="admin-panel" className="animate-slide-in-left" style={{ animationDelay: `${navItems.length * 50}ms` }}>
                 <Button
                   asChild
                   variant={pathname?.startsWith('/dashboard/admin') ? 'secondary' : 'ghost'}
@@ -258,7 +345,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </DropdownMenuItem>
               ))}
               {isAdmin && (
-                <DropdownMenuItem asChild className="rounded-lg">
+                <DropdownMenuItem key="admin-panel" asChild className="rounded-lg">
                   <Link href="/dashboard/admin" className={cn("cursor-pointer", pathname?.startsWith('/dashboard/admin') && "bg-muted")}>
                     <Shield className="mr-2 h-4 w-4" />
                     Admin
@@ -276,7 +363,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Main Content Area */}
         <main className="flex-1 px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8 bg-transparent overflow-x-hidden">
-          {children}
+          <EnableNotificationsBanner />
+          {safeChildren}
         </main>
       </div>
     </div>

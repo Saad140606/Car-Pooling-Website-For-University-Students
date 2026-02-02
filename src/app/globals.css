@@ -801,6 +801,18 @@
   .scrollbar-custom::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--primary) / 0.6);
   }
+
+  /* About page: prevent oversized custom scrollbars */
+  .about-page .scrollbar-custom {
+    scrollbar-width: thin;
+  }
+  .about-page .scrollbar-custom::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  .about-page [data-radix-scroll-area-scrollbar] {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

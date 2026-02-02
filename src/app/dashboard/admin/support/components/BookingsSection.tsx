@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useFirestore } from '@/firebase';
 import { getDocs, updateDoc, doc, query, collection } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
-import { BookOpen, MapPin, User, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { BookOpen, MapPin, User, Clock, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface Booking {
   id: string;
@@ -18,12 +18,15 @@ interface Booking {
   seats: number;
   price: number;
   createdAt?: any;
+  universityType?: string;
+  rideId?: string;
 }
 
 export default function BookingsSection({ universityType }: { universityType: string }) {
   const firestore = useFirestore();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -33,44 +36,134 @@ export default function BookingsSection({ universityType }: { universityType: st
   useEffect(() => {
     if (!firestore) return;
 
-    (async () => {
-      try {
-        const bookingsCol = safeCollection(firestore, 'bookings');
-        const bookingsSnap = await getDocs(bookingsCol);
-        
-        let bookingsList: Booking[] = bookingsSnap.docs.map(doc => ({
-          id: doc.id,
-          studentName: doc.data().studentName || 'Unknown',
-          studentEmail: doc.data().studentEmail || '',
-          rideFrom: doc.data().rideFrom || '',
-          rideTo: doc.data().rideTo || '',
-          driverName: doc.data().driverName || '',
-          departureTime: doc.data().departureTime,
-          status: doc.data().status || 'pending',
-          seats: doc.data().seats || 1,
-          price: doc.data().price || 0,
-          createdAt: doc.data().createdAt,
-        }));
+    setLoading(true);
+    setError(null);
 
-        setBookings(bookingsList);
-      } catch (err) {
-        console.error('Failed to fetch bookings:', err);
-      } finally {
+    // Fetch bookings from BOTH universities for complete admin view
+    const fetchAllBookings = async () => {
+      try {
+        const universities = ['NED', 'FAST'];
+        let allBookings: Booking[] = [];
+
+        for (const univId of universities) {
+          // First, try to get bookings from university-level bookings collection
+          try {
+            const bookingsCol = collection(firestore, `universities/${univId}/bookings`);
+            const bookingsSnap = await getDocs(bookingsCol);
+            
+            console.log(`[BookingsSection] Fetched ${bookingsSnap.size} bookings from ${univId}/bookings`);
+            
+            const univBookings: Booking[] = bookingsSnap.docs.map(doc => ({
+              id: doc.id,
+              studentName: doc.data().studentName || doc.data().passengerName || 'Unknown',
+              studentEmail: doc.data().studentEmail || doc.data().passengerEmail || '',
+              rideFrom: doc.data().rideFrom || doc.data().from || doc.data().origin || '',
+              rideTo: doc.data().rideTo || doc.data().to || doc.data().destination || '',
+              driverName: doc.data().driverName || '',
+              departureTime: doc.data().departureTime,
+              status: doc.data().status || 'pending',
+              seats: doc.data().seats || doc.data().seatsBooked || 1,
+              price: doc.data().price || doc.data().fare || 0,
+              createdAt: doc.data().createdAt,
+              universityType: univId,
+              rideId: doc.data().rideId,
+            }));
+            
+            allBookings = [...allBookings, ...univBookings];
+          } catch (e) {
+            console.log(`[BookingsSection] No university-level bookings for ${univId}`);
+          }
+
+          // Also check ride-level requests/bookings
+          try {
+            const ridesCol = collection(firestore, `universities/${univId}/rides`);
+            const ridesSnap = await getDocs(ridesCol);
+            
+            for (const rideDoc of ridesSnap.docs) {
+              try {
+                const requestsCol = collection(firestore, `universities/${univId}/rides/${rideDoc.id}/requests`);
+                const requestsSnap = await getDocs(requestsCol);
+                
+                const rideData = rideDoc.data();
+                const rideBookings: Booking[] = requestsSnap.docs.map(reqDoc => ({
+                  id: reqDoc.id,
+                  studentName: reqDoc.data().passengerName || reqDoc.data().name || 'Unknown',
+                  studentEmail: reqDoc.data().passengerEmail || reqDoc.data().email || '',
+                  rideFrom: rideData.from || rideData.origin || '',
+                  rideTo: rideData.to || rideData.destination || '',
+                  driverName: rideData.driverName || rideData.driver?.name || '',
+                  departureTime: rideData.departureTime,
+                  status: reqDoc.data().status || 'pending',
+                  seats: reqDoc.data().seatsRequested || reqDoc.data().seats || 1,
+                  price: rideData.price || rideData.fare || 0,
+                  createdAt: reqDoc.data().createdAt,
+                  universityType: univId,
+                  rideId: rideDoc.id,
+                }));
+                
+                allBookings = [...allBookings, ...rideBookings];
+              } catch (e) {
+                // Skip if can't read requests for this ride
+              }
+            }
+          } catch (e) {
+            console.log(`[BookingsSection] Could not fetch ride requests for ${univId}`);
+          }
+        }
+
+        console.log(`[BookingsSection] Total bookings loaded: ${allBookings.length}`);
+        setBookings(allBookings);
+        setLoading(false);
+        setError(null);
+      } catch (err: any) {
+        console.error('[BookingsSection] Failed to fetch bookings:', err);
+        setError(`Failed to load bookings: ${err.message}`);
         setLoading(false);
       }
-    })();
+    };
+
+    fetchAllBookings();
   }, [firestore]);
 
-  const handleStatusChange = async (bookingId: string, newStatus: string) => {
+  const handleStatusChange = async (bookingId: string, newStatus: string, bookingUniversity?: string, rideId?: string) => {
     if (!firestore) return;
     try {
-      const bookingRef = doc(firestore, 'bookings', bookingId);
+      // Determine the correct path based on where the booking is stored
+      let bookingRef;
+      if (rideId && bookingUniversity) {
+        // If it's a ride request
+        bookingRef = doc(firestore, `universities/${bookingUniversity}/rides/${rideId}/requests`, bookingId);
+      } else if (bookingUniversity) {
+        // If it's in university bookings collection
+        bookingRef = doc(firestore, `universities/${bookingUniversity}/bookings`, bookingId);
+      } else {
+        throw new Error('Cannot determine booking location');
+      }
+      
       await updateDoc(bookingRef, { status: newStatus });
       setBookings(bookings.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
-    } catch (err) {
-      console.error('Failed to update booking:', err);
+    } catch (err: any) {
+      console.error('[BookingsSection] Failed to update booking:', err);
+      alert(`Failed to update booking: ${err.message}`);
     }
   };
+
+  // Error state UI
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 mx-auto"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   let filteredBookings = bookings.filter(booking => {
     let matches = true;
@@ -222,6 +315,7 @@ export default function BookingsSection({ universityType }: { universityType: st
                     <p><span className="text-slate-400">Booking ID:</span> <span className="text-slate-300 font-mono text-xs">{booking.id}</span></p>
                     <p><span className="text-slate-400">Departure:</span> <span className="text-slate-300">{booking.departureTime?.toDate?.()?.toLocaleString?.() || 'N/A'}</span></p>
                     <p><span className="text-slate-400">Booked:</span> <span className="text-slate-300">{booking.createdAt?.toDate?.()?.toLocaleDateString?.() || 'N/A'}</span></p>
+                    <p><span className="text-slate-400">University:</span> <span className="text-slate-300">{booking.universityType || 'N/A'}</span></p>
                   </div>
 
                   {/* Status Actions */}
@@ -230,7 +324,7 @@ export default function BookingsSection({ universityType }: { universityType: st
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleStatusChange(booking.id, 'confirmed');
+                          handleStatusChange(booking.id, 'confirmed', booking.universityType, booking.rideId);
                         }}
                         className="px-3 py-2 bg-green-900/30 hover:bg-green-900/50 text-green-300 rounded-lg text-sm font-medium transition-colors"
                       >
@@ -239,7 +333,7 @@ export default function BookingsSection({ universityType }: { universityType: st
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleStatusChange(booking.id, 'cancelled');
+                          handleStatusChange(booking.id, 'cancelled', booking.universityType, booking.rideId);
                         }}
                         className="px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-300 rounded-lg text-sm font-medium transition-colors"
                       >

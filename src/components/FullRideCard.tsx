@@ -75,6 +75,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const bookingStatus = existingBooking ? existingBooking.status : null;
   // Only treat accepted when a booking exists and is accepted. Pending requests should show pending.
   const isAcceptedBooking = bookingStatus === 'accepted' || bookingStatus === 'ACCEPTED';
+  const isConfirmedBooking = bookingStatus === 'CONFIRMED' || bookingStatus === 'confirmed';
   const isPendingRequest = existingRequestStatus === 'pending' || existingRequestStatus === 'PENDING';
   const isRejectedRequest = existingRequestStatus === 'rejected' || existingRequestStatus === 'REJECTED';
   const isAcceptedRequest = existingRequestStatus === 'ACCEPTED' || existingRequestStatus === 'accepted';
@@ -82,6 +83,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const disabledReason = isDriver ? "Can't book own ride"
     : isFull ? 'Ride is full'
     : genderMismatch ? `Reserved for ${ride.genderAllowed} riders`
+    : isConfirmedBooking ? `You have already confirmed this ride`
     : isAcceptedBooking ? `You already requested this ride (accepted)`
     : isPendingRequest ? `You already requested this ride (pending)`
     : (hasActiveBooking ? 'You already have an active booking on another ride' : undefined);
@@ -202,7 +204,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
 
   const handleBook = async (pt?: LatLng) => {
     if (!user || !firestore) {
-      toast({ variant: 'destructive', title: 'Not signed in' });
+      router.push('/auth/select-university');
       return false;
     }
     if (!userData || !userData.university) {
@@ -452,7 +454,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         onViewStops={() => setOpenStops(true)}
         onBook={() => {
           if (!user) {
-            router.push('/auth/ned/login');
+            router.push('/auth/select-university');
             return;
           }
           setOpenBook(true);
@@ -530,10 +532,11 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
               routeCoordinates={ride.routePolyline ? decodePolyline(ride.routePolyline) : undefined}
               isCreator={false}
               triggerText=""
+              getAuthToken={user ? () => user.getIdToken() : undefined}
               onRequestRide={() => {
                 setOpenStops(false);
                 if (!user) {
-                  router.push('/auth/ned/login');
+                  router.push('/auth/select-university');
                   return;
                 }
                 setOpenBook(true);

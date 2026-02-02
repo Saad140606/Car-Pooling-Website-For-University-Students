@@ -59,11 +59,11 @@ const RoleToggle = memo(function RoleToggle({
   if (role !== 'both') return null;
 
   return (
-    <div className="flex items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg">
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg w-full sm:w-auto">
       <button
         onClick={() => onViewChange('driver')}
         className={cn(
-          'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
+          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
           activeView === 'driver'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
@@ -75,7 +75,7 @@ const RoleToggle = memo(function RoleToggle({
       <button
         onClick={() => onViewChange('passenger')}
         className={cn(
-          'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
+          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
           activeView === 'passenger'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
@@ -106,7 +106,7 @@ const SectionHeader = memo(function SectionHeader({
   action,
 }: SectionHeaderProps) {
   return (
-    <div className="flex items-center justify-between mb-6">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-primary/15">
           {icon}
@@ -116,7 +116,7 @@ const SectionHeader = memo(function SectionHeader({
           {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
         </div>
       </div>
-      {action}
+      <div className="sm:mt-0 mt-1">{action}</div>
     </div>
   );
 });
@@ -535,7 +535,7 @@ export default function AnalyticsPage() {
   // Loading state
   if (userLoading || isLoading) {
     return (
-      <div className="min-h-screen p-4 md:p-6 lg:p-8">
+      <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
         <div className="max-w-7xl mx-auto">
           <AnalyticsSkeleton />
         </div>
@@ -546,7 +546,7 @@ export default function AnalyticsPage() {
   // Error state
   if (error) {
     return (
-      <div className="min-h-screen p-4 md:p-6 lg:p-8">
+      <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
         <div className="max-w-7xl mx-auto">
           <ErrorState message={error} onRetry={fetchAnalytics} />
         </div>
@@ -557,7 +557,7 @@ export default function AnalyticsPage() {
   // Empty state
   if (!analytics || (!analytics.driverMetrics && !analytics.passengerMetrics)) {
     return (
-      <div className="min-h-screen p-4 md:p-6 lg:p-8">
+      <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
         <div className="max-w-7xl mx-auto">
           <EmptyState />
         </div>
@@ -566,17 +566,17 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-screen p-4 md:p-6 lg:p-8 overflow-x-hidden">
+    <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 overflow-x-hidden [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
       <div className="max-w-7xl mx-auto">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8"
+          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8 [@media(max-height:700px)]:mb-4"
         >
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
-              <BarChart3 className="w-8 h-8 text-primary" />
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+              <BarChart3 className="w-7 h-7 sm:w-8 sm:h-8 text-primary" />
               Analytics Dashboard
             </h1>
             <p className="text-sm text-slate-500 mt-1">
@@ -586,7 +586,7 @@ export default function AnalyticsPage() {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
             {/* Role Toggle */}
             <RoleToggle
               role={analytics.userRole}
@@ -600,7 +600,7 @@ export default function AnalyticsPage() {
               size="sm"
               onClick={fetchAnalytics}
               disabled={isLoading}
-              className="gap-2 border-slate-700 hover:bg-slate-800"
+              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto"
             >
               <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
               Refresh
@@ -613,7 +613,7 @@ export default function AnalyticsPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mb-6"
+            className="mb-6 [@media(max-height:700px)]:mb-4"
           >
             <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-full text-sm font-medium text-primary">
               {userData.university.toUpperCase()} University
@@ -630,7 +630,7 @@ export default function AnalyticsPage() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
-            className="space-y-8"
+            className="space-y-8 [@media(max-height:700px)]:space-y-5"
           >
             {/* Role-specific analytics */}
             {activeView === 'driver' && analytics.driverMetrics && (

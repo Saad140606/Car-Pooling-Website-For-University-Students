@@ -2,43 +2,52 @@
 
 import React, { useState, useEffect } from 'react';
 import { useFirestore } from '@/firebase';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, onSnapshot } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
-import { Eye, Check, Trash2 } from 'lucide-react';
+import { Eye, Check, Trash2, AlertCircle, RefreshCw, FileText } from 'lucide-react';
 
 export default function ReportsSection({ universityType }: { universityType: string }) {
   const firestore = useFirestore();
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'resolved'>('all');
 
   useEffect(() => {
     if (!firestore) return;
 
-    (async () => {
-      try {
-        const reportsCol = safeCollection(firestore, 'reports');
-        const reportsSnap = await getDocs(reportsCol);
+    setLoading(true);
+    setError(null);
+
+    // Use real-time listener for reports
+    const reportsCol = safeCollection(firestore, 'reports');
+    
+    const unsubscribe = onSnapshot(
+      reportsCol,
+      (snapshot) => {
+        console.log('[ReportsSection] Snapshot received:', snapshot.size, 'reports');
         
-        let reportsList = reportsSnap.docs.map(doc => ({
+        const reportsList = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
         }));
 
-        // Filter by university type
-        reportsList = reportsList.filter((report: any) => {
-          if (!report.reportedBy) return false;
-          // Match by email domain or stored university
-          return true; // In production, filter by university field
-        });
-
-        setReports(reportsList);
-      } catch (err) {
-        console.error('Failed to fetch reports:', err);
-      } finally {
+        setReports(reportsList.sort((a, b) => {
+          const dateA = a.createdAt?.toDate?.() || new Date(0);
+          const dateB = b.createdAt?.toDate?.() || new Date(0);
+          return dateB.getTime() - dateA.getTime();
+        }));
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('[ReportsSection] Failed to fetch reports:', err);
+        setError(`Failed to load reports: ${err.message}`);
         setLoading(false);
       }
-    })();
+    );
+
+    return () => unsubscribe();
   }, [firestore]);
 
   const handleResolve = async (reportId: string) => {
@@ -46,17 +55,35 @@ export default function ReportsSection({ universityType }: { universityType: str
     try {
       const reportRef = doc(firestore, 'reports', reportId);
       await updateDoc(reportRef, { status: 'resolved' });
-      setReports(reports.map(r => r.id === reportId ? { ...r, status: 'resolved' } : r));
-    } catch (err) {
-      console.error('Failed to resolve report:', err);
+      // State will auto-update via onSnapshot listener
+    } catch (err: any) {
+      console.error('[ReportsSection] Failed to resolve report:', err);
+      alert(`Failed to resolve report: ${err.message}`);
     }
   };
 
   const filteredReports = reports.filter(report => {
-    if (filterStatus === 'pending') return report.status !== 'resolved';
-    if (filterStatus === 'resolved') return report.status === 'resolved';
+    if (filterStatus === 'pending') return report.status !== 'resolved' && report.status !== 'action_taken';
+    if (filterStatus === 'resolved') return report.status === 'resolved' || report.status === 'action_taken';
     return true;
   });
+
+  // Error state UI
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 mx-auto"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -106,7 +133,9 @@ export default function ReportsSection({ universityType }: { universityType: str
               ) : filteredReports.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                    No reports found
+                    <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>No reports found</p>
+                    <p className="text-xs text-slate-500 mt-1">User reports will appear here when submitted</p>
                   </td>
                 </tr>
               ) : (

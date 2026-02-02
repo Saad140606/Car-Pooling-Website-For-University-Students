@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { useFirestore } from '@/firebase';
-import { getDocs, updateDoc, doc, deleteDoc, query, collection } from 'firebase/firestore';
+import { getDocs, updateDoc, doc, deleteDoc, query, collection, onSnapshot } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
-import { Users, Shield, Ban, Trash2, ChevronDown } from 'lucide-react';
+import { Users, Shield, Ban, Trash2, ChevronDown, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface User {
   id: string;
@@ -22,6 +22,7 @@ export default function UsersSection({ universityType }: { universityType: strin
   const firestore = useFirestore();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterRole, setFilterRole] = useState<'all' | 'provider' | 'student'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -31,52 +32,92 @@ export default function UsersSection({ universityType }: { universityType: strin
   useEffect(() => {
     if (!firestore) return;
 
-    (async () => {
-      try {
-        const usersCol = safeCollection(firestore, 'users');
-        const usersSnap = await getDocs(usersCol);
-        
-        let usersList: User[] = usersSnap.docs.map(doc => ({
-          id: doc.id,
-          fullName: doc.data().fullName || 'Unknown',
-          email: doc.data().email || '',
-          role: doc.data().role || 'student',
-          universityType: doc.data().universityType,
-          isSuspended: doc.data().isSuspended || false,
-          createdAt: doc.data().createdAt,
-          rides: doc.data().ridesAsProvider?.length || 0,
-          bookings: doc.data().bookings?.length || 0,
-        }));
+    setLoading(true);
+    setError(null);
 
-        setUsers(usersList);
-      } catch (err) {
-        console.error('Failed to fetch users:', err);
-      } finally {
+    // Fetch users from BOTH universities for complete admin view
+    const universities = ['NED', 'FAST'];
+    let allUsers: User[] = [];
+    let completedFetches = 0;
+
+    const fetchAllUsers = async () => {
+      try {
+        for (const univId of universities) {
+          const usersCol = collection(firestore, `universities/${univId}/users`);
+          const usersSnap = await getDocs(usersCol);
+          
+          console.log(`[UsersSection] Fetched ${usersSnap.size} users from ${univId}`);
+          
+          const univUsers: User[] = usersSnap.docs.map(doc => ({
+            id: doc.id,
+            fullName: doc.data().fullName || doc.data().name || 'Unknown',
+            email: doc.data().email || '',
+            role: doc.data().role || 'student',
+            universityType: univId,
+            isSuspended: doc.data().isSuspended || false,
+            createdAt: doc.data().createdAt,
+            rides: doc.data().ridesAsProvider?.length || doc.data().ridesOffered || 0,
+            bookings: doc.data().bookings?.length || doc.data().ridesBooked || 0,
+          }));
+          
+          allUsers = [...allUsers, ...univUsers];
+        }
+        
+        console.log(`[UsersSection] Total users loaded: ${allUsers.length}`);
+        setUsers(allUsers);
+        setLoading(false);
+        setError(null);
+      } catch (err: any) {
+        console.error('[UsersSection] Failed to fetch users:', err);
+        setError(`Failed to load users: ${err.message}`);
         setLoading(false);
       }
-    })();
+    };
+
+    fetchAllUsers();
   }, [firestore]);
 
-  const handleSuspendUser = async (userId: string, isSuspended: boolean) => {
+  const handleSuspendUser = async (userId: string, isSuspended: boolean, userUniversity: string) => {
     if (!firestore) return;
     try {
-      const userRef = doc(firestore, 'users', userId);
+      // Use correct university-scoped path
+      const userRef = doc(firestore, `universities/${userUniversity}/users`, userId);
       await updateDoc(userRef, { isSuspended: !isSuspended });
       setUsers(users.map(u => u.id === userId ? { ...u, isSuspended: !u.isSuspended } : u));
-    } catch (err) {
-      console.error('Failed to update user status:', err);
+    } catch (err: any) {
+      console.error('[UsersSection] Failed to update user status:', err);
+      alert(`Failed to update user: ${err.message}`);
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
+  const handleDeleteUser = async (userId: string, userUniversity: string) => {
     if (!firestore || !confirm('Are you sure? This action cannot be undone.')) return;
     try {
-      await deleteDoc(doc(firestore, 'users', userId));
+      // Use correct university-scoped path
+      await deleteDoc(doc(firestore, `universities/${userUniversity}/users`, userId));
       setUsers(users.filter(u => u.id !== userId));
-    } catch (err) {
-      console.error('Failed to delete user:', err);
+    } catch (err: any) {
+      console.error('[UsersSection] Failed to delete user:', err);
+      alert(`Failed to delete user: ${err.message}`);
     }
   };
+
+  // Error state UI
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 mx-auto"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   let filteredUsers = users.filter(user => {
     let matches = true;
@@ -204,7 +245,7 @@ export default function UsersSection({ universityType }: { universityType: strin
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleSuspendUser(user.id, user.isSuspended || false);
+                              handleSuspendUser(user.id, user.isSuspended || false, user.universityType || 'NED');
                             }}
                             className={`p-2 rounded transition-colors ${
                               user.isSuspended
@@ -217,7 +258,7 @@ export default function UsersSection({ universityType }: { universityType: strin
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleDeleteUser(user.id);
+                              handleDeleteUser(user.id, user.universityType || 'NED');
                             }}
                             className="p-2 hover:bg-red-900/30 rounded transition-colors text-slate-400 hover:text-red-400"
                           >

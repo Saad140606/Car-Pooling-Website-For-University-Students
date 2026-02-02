@@ -2,49 +2,68 @@
 
 import React, { useState, useEffect } from 'react';
 import { useFirestore } from '@/firebase';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, onSnapshot } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
-import { MessageCircle, Check, CheckCheck, Trash2 } from 'lucide-react';
+import { MessageCircle, Check, CheckCheck, Trash2, RefreshCw, AlertCircle } from 'lucide-react';
 
 export default function ContactMessagesSection({ universityType }: { universityType: string }) {
   const firestore = useFirestore();
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'unread' | 'read'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!firestore) return;
 
-    (async () => {
-      try {
-        const messagesCol = safeCollection(firestore, 'contactMessages');
-        const messagesSnap = await getDocs(messagesCol);
+    setLoading(true);
+    setError(null);
+
+    // Use real-time listener for contact messages
+    // FIXED: Collection name is 'contact_messages' (with underscore) per Firestore rules
+    const messagesCol = safeCollection(firestore, 'contact_messages');
+    
+    const unsubscribe = onSnapshot(
+      messagesCol,
+      (snapshot) => {
+        console.log('[ContactMessages] Snapshot received:', snapshot.size, 'documents');
         
-        let messagesList = messagesSnap.docs.map(doc => ({
+        const messagesList = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
+          // Normalize field names (status/isRead compatibility)
+          isRead: doc.data().isRead ?? doc.data().status === 'resolved',
         }));
 
-        setMessages(messagesList.sort((a, b) => 
-          (b.createdAt?.toDate?.() || new Date()) - (a.createdAt?.toDate?.() || new Date())
-        ));
-      } catch (err) {
-        console.error('Failed to fetch messages:', err);
-      } finally {
+        setMessages(messagesList.sort((a, b) => {
+          const dateA = a.createdAt?.toDate?.() || new Date(0);
+          const dateB = b.createdAt?.toDate?.() || new Date(0);
+          return dateB.getTime() - dateA.getTime();
+        }));
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('[ContactMessages] Failed to fetch messages:', err);
+        setError(`Failed to load messages: ${err.message}`);
         setLoading(false);
       }
-    })();
+    );
+
+    return () => unsubscribe();
   }, [firestore]);
 
   const handleMarkAsRead = async (messageId: string) => {
     if (!firestore) return;
     try {
-      const msgRef = doc(firestore, 'contactMessages', messageId);
-      await updateDoc(msgRef, { isRead: true });
-      setMessages(messages.map(m => m.id === messageId ? { ...m, isRead: true } : m));
-    } catch (err) {
-      console.error('Failed to mark as read:', err);
+      // FIXED: Use correct collection name
+      const msgRef = doc(firestore, 'contact_messages', messageId);
+      await updateDoc(msgRef, { isRead: true, status: 'resolved' });
+      // State will auto-update via onSnapshot listener
+    } catch (err: any) {
+      console.error('[ContactMessages] Failed to mark as read:', err);
+      alert(`Failed to mark as read: ${err.message}`);
     }
   };
 
@@ -53,6 +72,23 @@ export default function ContactMessagesSection({ universityType }: { universityT
     if (filterStatus === 'read') return msg.isRead;
     return true;
   });
+
+  // Error state
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 mx-auto"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -927,16 +927,16 @@ export default function UniversityBIDashboard() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 [@media(max-height:700px)]:space-y-4">
       {/* Header Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 [@media(max-height:700px)]:gap-3">
         {/* University Tabs */}
         <div className="flex items-center gap-2 p-1 bg-slate-800/50 rounded-xl border border-slate-700/50">
           {universities.map((uni) => (
             <button
               key={uni.id}
               onClick={() => setActiveUniversity(uni.id as 'NED' | 'FAST')}
-              className={`relative flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium transition-all duration-300 ${
+              className={`relative flex items-center gap-2 px-5 py-2.5 [@media(max-height:700px)]:px-4 [@media(max-height:700px)]:py-2 rounded-lg font-medium transition-all duration-300 ${
                 activeUniversity === uni.id
                   ? 'text-white'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
@@ -958,10 +958,10 @@ export default function UniversityBIDashboard() {
         </div>
 
         {/* Time Range & Refresh */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 [@media(max-height:700px)]:gap-2">
           {/* Time Range Dropdown */}
           <div className="relative group">
-            <button className="flex items-center gap-2 px-4 py-2.5 bg-slate-800/50 border border-slate-700/50 rounded-lg text-slate-300 hover:text-white hover:border-slate-600 transition-all">
+            <button className="flex items-center gap-2 px-4 py-2.5 [@media(max-height:700px)]:py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-slate-300 hover:text-white hover:border-slate-600 transition-all">
               <Calendar className="h-4 w-4" />
               <span className="text-sm font-medium">{timeRange.label}</span>
               <ChevronDown className="h-4 w-4" />

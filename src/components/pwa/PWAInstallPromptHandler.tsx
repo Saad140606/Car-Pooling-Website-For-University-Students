@@ -42,6 +42,47 @@ export function PWAInstallPromptHandler() {
   const [showInstallUI, setShowInstallUI] = useState(false);
   const [dismissedCount, setDismissedCount] = useState(0);
   const [installationStatus, setInstallationStatus] = useState<'idle' | 'installing' | 'success' | 'error'>('idle');
+  const [hasInteracted, setHasInteracted] = useState(false);
+
+  const SHOW_DELAY_MS = 5 * 60 * 1000; // 5 minutes
+  const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
+  const STORAGE_LAST_SHOWN = 'pwa_install_last_shown';
+  const STORAGE_LAST_DISMISSED = 'pwa_install_last_dismissed';
+
+  const canShowPrompt = () => {
+    if (typeof window === 'undefined') return false;
+    const now = Date.now();
+    const lastShown = Number(window.localStorage.getItem(STORAGE_LAST_SHOWN) || 0);
+    const lastDismissed = Number(window.localStorage.getItem(STORAGE_LAST_DISMISSED) || 0);
+    if (now - lastShown < COOLDOWN_MS) return false;
+    if (now - lastDismissed < COOLDOWN_MS) return false;
+    return true;
+  };
+
+  const markShown = () => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_LAST_SHOWN, String(Date.now()));
+  };
+
+  const markDismissed = () => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_LAST_DISMISSED, String(Date.now()));
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const markInteracted = () => setHasInteracted(true);
+    window.addEventListener('scroll', markInteracted, { passive: true, once: true });
+    window.addEventListener('click', markInteracted, { once: true });
+    window.addEventListener('keydown', markInteracted, { once: true });
+
+    return () => {
+      window.removeEventListener('scroll', markInteracted as any);
+      window.removeEventListener('click', markInteracted as any);
+      window.removeEventListener('keydown', markInteracted as any);
+    };
+  }, []);
 
   /**
    * Detect if running on iOS using feature detection
@@ -120,13 +161,14 @@ export function PWAInstallPromptHandler() {
       // Store the prompt for later use
       (window as any).deferredInstallPrompt = event as BeforeInstallPromptEvent;
 
-      // Show install UI after a delay on first visit (unless dismissed multiple times)
+      // Show install UI after interaction + 5 minutes, and only if cooldown allows
       if (dismissedCount === 0) {
         setTimeout(() => {
-          if (!isAlreadyInstalled()) {
+          if (!isAlreadyInstalled() && hasInteracted && canShowPrompt()) {
+            markShown();
             setShowInstallUI(true);
           }
-        }, 2500);
+        }, SHOW_DELAY_MS);
       }
     };
 
@@ -182,7 +224,7 @@ export function PWAInstallPromptHandler() {
         fullscreenMQ.removeListener(handleDisplayModeChange);
       }
     };
-  }, [dismissedCount]);
+  }, [dismissedCount, hasInteracted]);
 
   /**
    * Check if desktop browser supports PWA
@@ -248,6 +290,7 @@ export function PWAInstallPromptHandler() {
    * Handle dismiss button click
    */
   const handleDismiss = () => {
+    markDismissed();
     setShowInstallUI(false);
     setDismissedCount(prev => prev + 1);
   };

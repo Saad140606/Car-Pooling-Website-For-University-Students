@@ -7,7 +7,6 @@ import { CallingProvider } from '@/contexts/CallingContext';
 import { IncomingCallScreen } from '@/components/calling/IncomingCallScreen';
 import { ActiveCallScreen } from '@/components/calling/ActiveCallScreen';
 import { BackgroundCallHandler } from '@/components/calling/BackgroundCallHandler';
-import { PermissionRequester } from '@/components/premium/PermissionRequester';
 import { RingtoneInitializer } from '@/hooks/useRingtoneInitializer';
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 import 'leaflet/dist/leaflet.css'; // CRITICAL: Import Leaflet CSS for markers, popups, and controls to render correctly.
@@ -97,7 +96,6 @@ export default function RootLayout({
             <CallingProvider>
               <NotificationProvider>
                 <BackgroundCallHandler />
-                <PermissionRequester />
                 <IncomingCallScreen />
                 <ActiveCallScreen />
                 {children}

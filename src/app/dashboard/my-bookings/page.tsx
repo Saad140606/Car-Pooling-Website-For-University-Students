@@ -68,6 +68,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
   const driver = safeGet(booking, 'driverDetails') || safeGet(booking, 'ride.driverInfo') || { fullName: 'Driver' };
   
   const [confirming, setConfirming] = React.useState(false);
+  const [cancelling, setCancelling] = React.useState(false);
   const [confirmationProcessed, setConfirmationProcessed] = React.useState(booking.status === 'CONFIRMED');
   const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
   const [departureTimer, setDepartureTimer] = React.useState<string>('');
@@ -307,6 +308,59 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
     }
   };
 
+  const handleCancelRide = async () => {
+    if (!firestore || !user?.uid || !booking?.id || !booking?.rideId || !ride?.id) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Missing required booking information'
+      });
+      return;
+    }
+
+    if (!window.confirm('Are you sure you want to cancel this confirmed ride? This may incur a cancellation penalty.')) {
+      return;
+    }
+
+    setCancelling(true);
+    try {
+      const res = await fetch('/api/requests/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          university,
+          rideId: ride.id,
+          requestId: booking.id,
+          cancelledBy: user.uid,
+          reason: 'Passenger cancelled confirmed ride'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || data.message || 'Failed to cancel ride');
+      }
+
+      toast({
+        title: 'Ride Cancelled',
+        description: 'Your booking has been cancelled. The seat has been released.'
+      });
+
+      // Update local state
+      setLocalBookingStatus('CANCELLED');
+      setConfirmationProcessed(false);
+    } catch (err: any) {
+      console.error('Error cancelling ride:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: err?.message || 'Failed to cancel ride'
+      });
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   // Departure timer
   React.useEffect(() => {
     if (booking?.status !== 'CONFIRMED' || !ride?.departureTime) return;
@@ -467,11 +521,12 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
       </CardContent>
 
       <CardFooter className="flex gap-2 pt-3">
-        {booking.status === 'accepted' && rideStatus === 'available' && !confirmationProcessed && (
+        {/* ACCEPTED STATUS - Show Confirm button */}
+        {(booking.status === 'accepted' || localBookingStatus === 'accepted') && !confirmationProcessed && (
           <>
             <Button
               onClick={handleConfirmRide}
-              disabled={confirming || confirmationProcessed}
+              disabled={confirming || confirmationProcessed || rideStatus !== 'available'}
               size="sm"
               className="flex-1"
             >
@@ -488,18 +543,42 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
             )}
           </>
         )}
-        {(localBookingStatus === 'CONFIRMED' || confirmationProcessed) && (
-          <div className="w-full">
+
+        {/* CONFIRMED STATUS - Show Confirmed badge and Cancel button */}
+        {(localBookingStatus === 'CONFIRMED' || confirmationProcessed || booking.status === 'CONFIRMED') && (
+          <div className="w-full space-y-2">
             <div className="flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-green-600/20 border border-green-600/50 text-green-200 text-sm font-medium">
               <CheckCircle2 className="h-4 w-4" />
               Ride Confirmed!
             </div>
-            {chatId && <ChatButton chatId={chatId} university={university} label="Chat" />}
+            <div className="flex gap-2">
+              {chatId && (
+                <ChatButton chatId={chatId} university={university} label="Chat" />
+              )}
+              <Button
+                onClick={handleCancelRide}
+                disabled={cancelling}
+                variant="destructive"
+                size="sm"
+                className="flex-1"
+              >
+                {cancelling ? 'Cancelling...' : 'Cancel Ride'}
+              </Button>
+            </div>
           </div>
         )}
-        {(rideStatus === 'full' || rideStatus === 'expired') && (
-          <div className="w-full text-center text-xs text-slate-400">
-            {rideStatus === 'full' ? 'Seats are full' : 'Ride has expired'}
+
+        {/* RIDE FULL - Show message */}
+        {rideStatus === 'full' && !confirmationProcessed && (
+          <div className="w-full text-center py-2 px-3 rounded-md bg-amber-600/20 border border-amber-600/50 text-amber-200 text-xs font-medium">
+            All Seats Filled
+          </div>
+        )}
+
+        {/* RIDE EXPIRED - Show message */}
+        {rideStatus === 'expired' && !confirmationProcessed && (
+          <div className="w-full text-center py-2 px-3 rounded-md bg-red-600/20 border border-red-600/50 text-red-200 text-xs font-medium">
+            Ride Has Expired
           </div>
         )}
       </CardFooter>

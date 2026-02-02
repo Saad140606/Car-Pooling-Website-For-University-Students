@@ -17,6 +17,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
+import { notifyRideConfirmed } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -78,22 +79,31 @@ export async function POST(req: NextRequest) {
         throw new Error('FORBIDDEN: Only the passenger can confirm this request');
       }
 
+      // ===== IDEMPOTENCY CHECK: If already CONFIRMED, return success =====
+      if (request.status === 'CONFIRMED') {
+        return { 
+          passenger: authenticatedUserId, 
+          tripKey: request.tripKey,
+          idempotent: true
+        };
+      }
+
       if (request.status !== 'ACCEPTED') {
         throw new Error('Only ACCEPTED requests can be confirmed');
       }
       
       // Check expiry with proper timestamp handling
       const now = admin.firestore.Timestamp.now();
-      if (request.expiresAt) {
-        const expiryTs = request.expiresAt.toMillis 
-          ? request.expiresAt 
-          : admin.firestore.Timestamp.fromDate(new Date(request.expiresAt));
-        if (expiryTs.toMillis() < now.toMillis()) {
-          throw new Error('Request expired');
+      if (request.confirmDeadline) {
+        const deadlineTs = request.confirmDeadline.toMillis 
+          ? request.confirmDeadline 
+          : admin.firestore.Timestamp.fromDate(new Date(request.confirmDeadline));
+        if (deadlineTs.toMillis() < now.toMillis()) {
+          throw new Error('Request expired - confirmation window has closed');
         }
       }
 
-      // Ensure passenger has no other CONFIRMED rides
+      // Ensure passenger has no OTHER CONFIRMED rides
       const confirmedSnap = await db.collectionGroup('requests')
         .where('passengerId', '==', authenticatedUserId)
         .where('status', '==', 'CONFIRMED')
@@ -101,23 +111,34 @@ export async function POST(req: NextRequest) {
         .get();
       
       if (!confirmedSnap.empty) {
-        throw new Error('You already have a confirmed ride. Please cancel it first.');
+        // Check if the only confirmed ride is this one (idempotent case)
+        const confirmedDoc = confirmedSnap.docs[0];
+        if (confirmedDoc.id !== requestId) {
+          throw new Error('You already have a confirmed ride. Please cancel it first.');
+        }
       }
 
       const reservedSeats = (ride.reservedSeats ?? 0) as number;
       const availableSeats = (ride.availableSeats ?? 0) as number;
       
+      // Check seats are available BEFORE confirming
       if (availableSeats <= 0) {
-        throw new Error('Ride is full');
+        throw new Error('Ride is full - no seats available');
       }
 
+      // ===== ATOMIC UPDATE: Confirm ride and decrement available seats =====
       tx.update(rideRef, { 
-        availableSeats: availableSeats - 1, 
-        reservedSeats: Math.max(0, reservedSeats - 1) 
+        availableSeats: Math.max(0, availableSeats - 1),
+        reservedSeats: Math.max(0, reservedSeats - 1),
+        updatedAt: now,
+        // Mark ride as full if no seats left
+        ...(availableSeats - 1 === 0 && { status: 'full' })
       });
+      
       tx.update(requestRef, { 
         status: 'CONFIRMED', 
-        confirmedAt: now 
+        confirmedAt: now,
+        updatedAt: now
       });
 
       return { passenger: authenticatedUserId, tripKey: request.tripKey };
@@ -159,6 +180,41 @@ export async function POST(req: NextRequest) {
       }
       
       await batch.commit();
+    }
+
+    // ===== SEND NOTIFICATION: After successful confirmation =====
+    try {
+      if (!result.idempotent) {  // Only send notification on first confirm
+        // Get ride and passenger info for notification
+        const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+        const requestSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`).get();
+        const rideData = rideSnap.data() as any;
+        const requestData = requestSnap.data() as any;
+        
+        // Get passenger info for notification
+        const passengerRef = await adminDb.collection('users').doc(authenticatedUserId).get();
+        const passengerData = passengerRef.data() as any;
+        
+        await notifyRideConfirmed(
+          adminDb,
+          validUniversity,
+          rideData?.driverId,
+          rideId,
+          requestId,
+          {
+            uid: authenticatedUserId,
+            fullName: passengerData?.fullName || 'Passenger',
+            email: passengerData?.email
+          },
+          {
+            from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+            to: rideData?.dropoffLocation || rideData?.to || 'Destination'
+          }
+        );
+      }
+    } catch (notifError) {
+      // Log notification error but don't fail the request
+      console.error('[ConfirmRequest] Notification error (non-critical):', notifError);
     }
 
     return successResponse({ ok: true });

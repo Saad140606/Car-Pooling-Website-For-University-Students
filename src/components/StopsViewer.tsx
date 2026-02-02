@@ -33,6 +33,7 @@ interface StopsViewerProps {
   triggerText?: string;
   onRequestRide?: () => void;
   university?: string;  // ===== NEW: Display university name =====
+  getAuthToken?: () => Promise<string>;
 }
 
 export default function StopsViewer({
@@ -44,7 +45,50 @@ export default function StopsViewer({
   triggerText = 'View Stops',
   onRequestRide,
   university,  // ===== NEW: Accept university prop =====
+  getAuthToken,
 }: StopsViewerProps) {
+  const resolvingNamesRef = useRef(false);
+  const requestedNameKeysRef = useRef<Set<string>>(new Set());
+
+  const getStopKey = (stop: Stop, index: number) => {
+    return stop.id || `${stop.lat}-${stop.lng}-${index}`;
+  };
+
+  const needsNameLookup = (name: string | undefined | null) => {
+    const normalized = (name || '').toLowerCase().trim();
+    if (!normalized) return true;
+    if (/^(stop|loading|location|unknown)\s*\d*\.?\.?\.?$/i.test(normalized)) return true;
+    if (/\bkm from start\b/i.test(normalized)) return true;
+    return false;
+  };
+
+  const buildPlaceName = (data: any) => {
+    try {
+      const addr = data?.address || {};
+      const landmark = addr.amenity || addr.shop || addr.building || addr.office || addr.tourism || addr.leisure || addr.historic;
+      const road = addr.road || addr.street || addr.avenue || addr.boulevard || addr.highway || addr.path || addr.residential;
+      const area = addr.neighbourhood || addr.suburb || addr.quarter || addr.city_district || addr.residential || addr.hamlet;
+      const city = addr.city || addr.town || addr.village || addr.municipality;
+
+      if (landmark) return area ? `${landmark}, ${area}` : landmark;
+      if (road && area) return `${road}, ${area}`;
+      if (road && city) return `${road}, ${city}`;
+      if (area && city) return `${area}, ${city}`;
+      if (area) return area;
+      if (road) return road;
+      if (city) return city;
+
+      if (data?.display_name) {
+        const parts = String(data.display_name)
+          .split(',')
+          .map((p: string) => p.trim())
+          .filter((p: string) => p && !/^\d+$/.test(p) && p.length > 2);
+        if (parts.length >= 2) return `${parts[0]}, ${parts[1]}`;
+        if (parts.length === 1) return parts[0];
+      }
+    } catch (_) {}
+    return 'Selected Location';
+  };
   // Helper function to get the display university name
   const getUniversityDisplay = () => {
     if (university) {
@@ -61,36 +105,18 @@ export default function StopsViewer({
 
   const universityDisplay = getUniversityDisplay();
 
-  // ===== FIX: Deduplicate stops by name and filter out placeholders =====
+  // ===== Normalize stops: preserve all, dedupe only by coordinates =====
   const [stops, setStops] = useState<Stop[]>(() => {
-    // Remove placeholder names and consecutive duplicates
     const deduped: Stop[] = [];
-    let lastName = '';
-    const seenNames = new Set<string>();
-    
+    const seenCoords = new Set<string>();
+
     for (const stop of initialStops) {
-      const normalizedName = (stop.name || '').toLowerCase().trim();
-      
-      // Skip placeholder names like "Stop N", "Loading...", "Location N"
-      if (/^(stop|loading|location)\s*\d*\.?\.?\.?$/i.test(normalizedName)) {
-        continue;
-      }
-      
-      // Skip if we've already seen this exact name
-      if (seenNames.has(normalizedName)) {
-        continue;
-      }
-      
-      // Skip if consecutive duplicate
-      if (normalizedName === lastName) {
-        continue;
-      }
-      
+      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
+      if (seenCoords.has(key)) continue;
+      seenCoords.add(key);
       deduped.push(stop);
-      lastName = normalizedName;
-      seenNames.add(normalizedName);
     }
-    
+
     return deduped;
   });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -108,41 +134,84 @@ export default function StopsViewer({
   // Update stops when initialStops changes
   React.useEffect(() => {
     console.log('[STOPS_VIEWER] Initial stops changed, updating state:', initialStops.length, 'stops');
+
+    // Reset name lookup tracking so distance-based names can be re-resolved
+    requestedNameKeysRef.current = new Set();
+    resolvingNamesRef.current = false;
     
-    // Remove placeholder names and consecutive duplicates
+    // Dedupe by coordinate only (preserve placeholders and distance-based names)
     const deduped: Stop[] = [];
-    let lastName = '';
-    const seenNames = new Set<string>();
-    
+    const seenCoords = new Set<string>();
+
     for (const stop of initialStops) {
-      const normalizedName = (stop.name || '').toLowerCase().trim();
-      
-      // Skip placeholder names like "Stop N", "Loading...", "Location N"
-      if (/^(stop|loading|location)\s*\d*\.?\.?\.?$/i.test(normalizedName)) {
-        continue;
-      }
-      
-      // Skip if we've already seen this exact name
-      if (seenNames.has(normalizedName)) {
-        continue;
-      }
-      
-      // Skip if consecutive duplicate
-      if (normalizedName === lastName) {
-        continue;
-      }
-      
+      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
+      if (seenCoords.has(key)) continue;
+      seenCoords.add(key);
       deduped.push(stop);
-      lastName = normalizedName;
-      seenNames.add(normalizedName);
     }
-    
+
     // Re-number the order
     const renumbered = deduped.map((stop, idx) => ({ ...stop, order: idx }));
     
     setStops(renumbered);
     setIsFetchingNames(false); // Reset fetching state
   }, [initialStops]);
+
+  // Resolve placeholder/distance-based names to real places
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (resolvingNamesRef.current) return;
+
+    const unresolved = stops
+      .map((stop, index) => ({ stop, index, key: getStopKey(stop, index) }))
+      .filter(({ stop }) => needsNameLookup(stop.name));
+
+    if (unresolved.length === 0) return;
+
+    resolvingNamesRef.current = true;
+    setIsFetchingNames(true);
+
+    (async () => {
+      try {
+        const updated = [...stops];
+        const headers: HeadersInit = { 'Content-Type': 'application/json' };
+        if (getAuthToken) {
+          try {
+            const token = await getAuthToken();
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+          } catch (_) {}
+        }
+
+        const tasks = unresolved.map(async (item) => {
+          if (requestedNameKeysRef.current.has(item.key)) return null;
+          requestedNameKeysRef.current.add(item.key);
+          try {
+            const res = await fetch(`/api/nominatim/reverse?lat=${item.stop.lat}&lon=${item.stop.lng}`, {
+              headers,
+              signal: AbortSignal.timeout(12000)
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            const placeName = buildPlaceName(data);
+            return { index: item.index, name: placeName };
+          } catch {
+            return null;
+          }
+        });
+
+        const results = await Promise.all(tasks);
+        results.forEach((r) => {
+          if (!r) return;
+          updated[r.index] = { ...updated[r.index], name: r.name };
+        });
+
+        setStops(updated);
+      } finally {
+        resolvingNamesRef.current = false;
+        setIsFetchingNames(false);
+      }
+    })();
+  }, [stops, getAuthToken]);
 
   const handleRemoveStop = (id: string) => {
     setStops(stops.filter((s) => s.id !== id));
@@ -161,7 +230,14 @@ export default function StopsViewer({
 
     try {
       // Reverse geocode to get the name
-      const response = await fetch(`/api/nominatim/reverse?lat=${lat}&lon=${lng}`);
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (getAuthToken) {
+        try {
+          const token = await getAuthToken();
+          if (token) headers['Authorization'] = `Bearer ${token}`;
+        } catch (_) {}
+      }
+      const response = await fetch(`/api/nominatim/reverse?lat=${lat}&lon=${lng}`, { headers });
       const data = await response.json();
 
       const displayName = data.display_name || 'Custom Stop';
@@ -353,7 +429,14 @@ export default function StopsViewer({
           
           // Fetch place name
           try {
-            const response = await fetch(`/api/nominatim/reverse?lat=${clickedPoint.lat}&lon=${clickedPoint.lng}`);
+            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            if (getAuthToken) {
+              try {
+                const token = await getAuthToken();
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+              } catch (_) {}
+            }
+            const response = await fetch(`/api/nominatim/reverse?lat=${clickedPoint.lat}&lon=${clickedPoint.lng}`, { headers });
             const data = await response.json();
             const displayName = data.display_name || 'Unknown location';
             
@@ -405,7 +488,7 @@ export default function StopsViewer({
                 
                 return (
                 <div
-                  key={stop.id}
+                  key={getStopKey(stop, index)}
                   className={`p-3 border rounded-lg flex items-center gap-3 ${isFixedStop ? 'bg-muted/30' : ''}`}
                 >
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
@@ -437,7 +520,7 @@ export default function StopsViewer({
                     ) : (
                       <div>
                         <div className="font-semibold text-sm flex items-center gap-2">
-                          {/^(loading|stop|location)\s*\d*\.?\.?\.?$/i.test(stop.name) ? (
+                          {needsNameLookup(stop.name) ? (
                             <span className="text-muted-foreground flex items-center gap-1">
                               <Loader2 className="w-3 h-3 animate-spin" />
                               Fetching name...
@@ -825,7 +908,7 @@ export default function StopsViewer({
                 
                 return (
                   <div
-                    key={stop.id}
+                    key={getStopKey(stop, index)}
                     className={`p-3 border rounded-lg flex items-center gap-3 ${isFixedStop ? 'bg-muted/30' : ''}`}
                   >
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
@@ -857,7 +940,7 @@ export default function StopsViewer({
                     ) : (
                       <div>
                         <div className="font-semibold text-sm flex items-center gap-2">
-                          {/^(loading|stop|location)\s*\d*\.?\.?\.?$/i.test(stop.name) ? (
+                          {needsNameLookup(stop.name) ? (
                             <span className="text-muted-foreground flex items-center gap-1">
                               <Loader2 className="w-3 h-3 animate-spin" />
                               Fetching name...

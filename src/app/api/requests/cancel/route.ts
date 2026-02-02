@@ -18,6 +18,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
+import { notifyRideCancelled } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -144,6 +145,61 @@ export async function POST(req: NextRequest) {
         driverId: request.driverId 
       };
     });
+
+    // ===== SEND NOTIFICATIONS: After successful cancellation =====
+    try {
+      // Get ride info for notification
+      const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+      const rideData = rideSnap.data() as any;
+      
+      // Get canceller name
+      const cancellerSnap = await adminDb.collection('users').doc(authenticatedUserId).get();
+      const cancellerData = cancellerSnap.data() as any;
+      const cancellerName = cancellerData?.fullName || 'User';
+      
+      // Determine who cancelled
+      const isPassenger = result.passengerId === authenticatedUserId;
+      
+      // Notify the OTHER party (passenger if driver cancelled, driver if passenger cancelled)
+      if (isPassenger) {
+        // Passenger cancelled - notify driver
+        if (result.driverId) {
+          await notifyRideCancelled(
+            adminDb,
+            validUniversity,
+            result.driverId,
+            rideId,
+            requestId,
+            cancellerName,
+            {
+              from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+              to: rideData?.dropoffLocation || rideData?.to || 'Destination'
+            },
+            result.isLateCancellation
+          );
+        }
+      } else {
+        // Driver cancelled - notify passenger
+        if (result.passengerId) {
+          await notifyRideCancelled(
+            adminDb,
+            validUniversity,
+            result.passengerId,
+            rideId,
+            requestId,
+            cancellerName,
+            {
+              from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+              to: rideData?.dropoffLocation || rideData?.to || 'Destination'
+            },
+            result.isLateCancellation
+          );
+        }
+      }
+    } catch (notifError) {
+      // Log notification error but don't fail the request
+      console.error('[CancelRequest] Notification error (non-critical):', notifError);
+    }
 
     return successResponse({ ok: true, data: result });
   } catch (e: any) {

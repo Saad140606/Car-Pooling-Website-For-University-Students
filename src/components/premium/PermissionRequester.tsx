@@ -15,6 +15,22 @@ export const PermissionRequester: React.FC = () => {
   const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
   const [showPrompt, setShowPrompt] = useState(false);
   const [currentPermission, setCurrentPermission] = useState<PermissionRequest | null>(null);
+  const [isRequesting, setIsRequesting] = useState(false);
+
+  const getSkipKey = (type: PermissionRequest['type']) => `permission_skip_${type}`;
+  const isSkipped = (type: PermissionRequest['type']) => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(getSkipKey(type)) === '1';
+  };
+  const setSkipped = (type: PermissionRequest['type'], value: boolean) => {
+    if (typeof window === 'undefined') return;
+    const key = getSkipKey(type);
+    if (value) {
+      window.localStorage.setItem(key, '1');
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  };
 
   useEffect(() => {
     checkPermissions();
@@ -29,8 +45,15 @@ export const PermissionRequester: React.FC = () => {
     if ('Notification' in window) {
       const status = Notification.permission as any;
       if (status === 'default') {
-        needed.push({ type: 'notifications', status: 'not-determined' });
+        if (isSkipped('notifications')) {
+          needed.push({ type: 'notifications', status: 'denied' });
+        } else {
+          needed.push({ type: 'notifications', status: 'not-determined' });
+        }
       } else {
+        if (status === 'granted') {
+          setSkipped('notifications', false);
+        }
         needed.push({ type: 'notifications', status });
       }
     }
@@ -39,7 +62,15 @@ export const PermissionRequester: React.FC = () => {
     try {
       if (navigator.permissions && navigator.permissions.query) {
         const micStatus = await navigator.permissions.query({ name: 'microphone' as any });
-        needed.push({ type: 'microphone', status: micStatus.state as any });
+        const micState = micStatus.state === 'prompt' ? 'not-determined' : micStatus.state;
+        if (micState === 'not-determined' && isSkipped('microphone')) {
+          needed.push({ type: 'microphone', status: 'denied' });
+        } else {
+          if (micState === 'granted') {
+            setSkipped('microphone', false);
+          }
+          needed.push({ type: 'microphone', status: micState as any });
+        }
       }
     } catch (error) {
       console.error('[Permission] Microphone check failed:', error);
@@ -49,7 +80,15 @@ export const PermissionRequester: React.FC = () => {
     try {
       if (navigator.permissions && navigator.permissions.query) {
         const cameraStatus = await navigator.permissions.query({ name: 'camera' as any });
-        needed.push({ type: 'camera', status: cameraStatus.state as any });
+        const cameraState = cameraStatus.state === 'prompt' ? 'not-determined' : cameraStatus.state;
+        if (cameraState === 'not-determined' && isSkipped('camera')) {
+          needed.push({ type: 'camera', status: 'denied' });
+        } else {
+          if (cameraState === 'granted') {
+            setSkipped('camera', false);
+          }
+          needed.push({ type: 'camera', status: cameraState as any });
+        }
       }
     } catch (error) {
       console.error('[Permission] Camera check failed:', error);
@@ -62,18 +101,23 @@ export const PermissionRequester: React.FC = () => {
     if (pending) {
       setCurrentPermission(pending);
       setShowPrompt(true);
+    } else {
+      setShowPrompt(false);
+      setCurrentPermission(null);
     }
   };
 
   const handleRequestPermission = async () => {
-    if (!currentPermission) return;
+    if (!currentPermission || isRequesting) return;
+    setIsRequesting(true);
 
     try {
       switch (currentPermission.type) {
         case 'notifications':
-          if ('Notification' in window && Notification.permission === 'default') {
+          if ('Notification' in window) {
             const permission = await Notification.requestPermission();
             console.log('[Permission] Notification permission:', permission);
+            setSkipped('notifications', false);
             updatePermission('notifications', permission as any);
           }
           break;
@@ -83,6 +127,7 @@ export const PermissionRequester: React.FC = () => {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             stream.getTracks().forEach(track => track.stop());
             console.log('[Permission] Microphone permission granted');
+            setSkipped('microphone', false);
             updatePermission('microphone', 'granted');
           } catch (error: any) {
             console.error('[Permission] Microphone permission denied:', error);
@@ -95,6 +140,7 @@ export const PermissionRequester: React.FC = () => {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(track => track.stop());
             console.log('[Permission] Camera permission granted');
+            setSkipped('camera', false);
             updatePermission('camera', 'granted');
           } catch (error: any) {
             console.error('[Permission] Camera permission denied:', error);
@@ -104,31 +150,20 @@ export const PermissionRequester: React.FC = () => {
       }
     } catch (error) {
       console.error('[Permission] Request failed:', error);
+    } finally {
+      setIsRequesting(false);
     }
 
-    // Move to next permission
-    const remaining = permissions.find(p => p.status === 'not-determined' || p.status === 'pending');
-    if (remaining && remaining.type !== currentPermission.type) {
-      setCurrentPermission(remaining);
-    } else {
-      setShowPrompt(false);
-      setCurrentPermission(null);
-    }
+    // Re-check actual browser permissions after the request
+    await checkPermissions();
   };
 
   const handleSkip = () => {
     if (currentPermission) {
+      setSkipped(currentPermission.type, true);
       updatePermission(currentPermission.type, 'denied');
     }
-
-    // Move to next permission
-    const remaining = permissions.find(p => p.status === 'not-determined' || p.status === 'pending');
-    if (remaining && remaining.type !== currentPermission?.type) {
-      setCurrentPermission(remaining);
-    } else {
-      setShowPrompt(false);
-      setCurrentPermission(null);
-    }
+    void checkPermissions();
   };
 
   const updatePermission = (type: string, status: string) => {

@@ -87,7 +87,7 @@ const FilterDropdown = memo(function FilterDropdown({
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'flex items-center gap-2 px-3 py-2 rounded-lg border transition-all',
+          'flex items-center gap-2 px-3 py-2 rounded-lg border transition-all w-full sm:w-auto justify-between',
           'bg-slate-900/50 border-slate-700/50 hover:border-slate-600',
           selected.length > 0 && 'border-primary/50 bg-primary/10'
         )}
@@ -564,7 +564,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -572,7 +572,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
                 placeholder="Search routes..."
                 value={searchQuery}
                 onChange={handleSearchChange}
-                className="pl-9 w-[200px] bg-slate-900/50 border-slate-700/50 focus:border-primary"
+                className="pl-9 w-full sm:w-[200px] bg-slate-900/50 border-slate-700/50 focus:border-primary"
               />
             </div>
 

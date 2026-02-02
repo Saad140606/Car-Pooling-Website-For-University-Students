@@ -18,6 +18,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
+import { notifyRequestRejected } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -62,8 +63,9 @@ export async function POST(req: NextRequest) {
 
     const db = adminDb;
     const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
+    const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
 
-    await db.runTransaction(async (tx) => {
+    const result = await db.runTransaction(async (tx) => {
       const reqSnap = await tx.get(requestRef);
       if (!reqSnap.exists) {
         throw new Error('Request not found');
@@ -85,7 +87,33 @@ export async function POST(req: NextRequest) {
         rejectedAt: now,
         rejectionReason: sanitizedReason,
       });
+      
+      return { passengerId: request.passengerId };
     });
+
+    // ===== SEND NOTIFICATION: After successful rejection =====
+    try {
+      // Get ride info for notification
+      const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+      const rideData = rideSnap.data() as any;
+      
+      if (result.passengerId) {
+        await notifyRequestRejected(
+          adminDb,
+          validUniversity,
+          result.passengerId,
+          rideId,
+          requestId,
+          {
+            from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+            to: rideData?.dropoffLocation || rideData?.to || 'Destination'
+          }
+        );
+      }
+    } catch (notifError) {
+      // Log notification error but don't fail the request
+      console.error('[RejectRequest] Notification error (non-critical):', notifError);
+    }
 
     return successResponse({ ok: true });
   } catch (e: any) {

@@ -36,7 +36,6 @@ export function PWAServiceWorkerRegistration() {
     }
 
     registerServiceWorker();
-    requestNotificationPermission();
   }, []);
 
   /**
@@ -136,27 +135,7 @@ export function PWAServiceWorkerRegistration() {
     });
   };
 
-  /**
-   * Request notification permission
-   * Needed for push notifications to work
-   */
-  const requestNotificationPermission = async () => {
-    if (typeof window === 'undefined') return;
-    if (!('Notification' in window)) {
-      console.log('[PWA] This browser does not support notifications');
-      return;
-    }
-
-    // Only request if not already granted or denied
-    if (Notification.permission === 'default') {
-      try {
-        const permission = await Notification.requestPermission();
-        console.log('[PWA] Notification permission:', permission);
-      } catch (error) {
-        console.error('[PWA] Notification permission request failed:', error);
-      }
-    }
-  };
+  // Notification permission requests should be initiated via explicit user action.
 
   /**
    * Manually handle updates when PWA is installed

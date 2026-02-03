@@ -183,7 +183,18 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         setPickupPlaceName(null);
       }
       try {
-        const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(pickupPoint.lat)}&lon=${encodeURIComponent(pickupPoint.lng)}`);
+        // Get auth token for API call
+        let headers: HeadersInit = {};
+        if (user) {
+          try {
+            const token = await user.getIdToken();
+            if (token) headers = { 'Authorization': `Bearer ${token}` };
+          } catch (e) {
+            console.warn('Could not get auth token for reverse geocode', e);
+          }
+        }
+        
+        const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(pickupPoint.lat)}&lon=${encodeURIComponent(pickupPoint.lng)}`, { headers });
         if (!mounted) return;
         if (res.ok) {
           const data = await res.json();
@@ -200,7 +211,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
       }
     })();
     return () => { mounted = false; };
-  }, [pickupPoint]);
+  }, [pickupPoint, user]);
 
   const handleBook = async (pt?: LatLng) => {
     if (!user || !firestore) {

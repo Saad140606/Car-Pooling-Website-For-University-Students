@@ -262,7 +262,48 @@ export function AuthForm({ university, action }: AuthFormProps) {
           if (uniUserSnap.exists()) {
             userExistsInSelectedUni = true;
             const profile = uniUserSnap.data() as any;
-            emailVerifiedFlag = Boolean(profile?.emailVerified);
+            emailVerifiedFlag = Boolean(profile?.universityEmailVerified ?? profile?.emailVerified);
+          }
+
+          // If user does NOT have a university profile yet, force verification flow
+          if (!userExistsInSelectedUni && !isAdminAccount) {
+            try {
+              await signOut(auth);
+            } catch (_) {}
+
+            try {
+              const otpResponse = await fetch('/api/send-signup-otp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uid: u.uid, email: values.email, university: selectedUni }),
+              });
+              const otpData = await otpResponse.json().catch(() => ({}));
+              if (otpResponse.ok) {
+                toast({
+                  variant: 'destructive',
+                  title: 'Email Verification Required',
+                  description: otpData?.otp
+                    ? `Dev: OTP ${otpData.otp} - Check your email to verify your account.`
+                    : `Please verify your email before signing in. We've sent a new code to ${values.email}.`
+                });
+              } else {
+                toast({
+                  variant: 'destructive',
+                  title: 'Email Verification Required',
+                  description: 'Your email is not verified. Please check your inbox for the verification code.'
+                });
+              }
+            } catch (_) {
+              toast({
+                variant: 'destructive',
+                title: 'Email Verification Required',
+                description: 'You must verify your email before signing in. Please check your inbox.'
+              });
+            }
+
+            router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${selectedUni}&uid=${u.uid}`);
+            setLoading(false);
+            return;
           }
 
           // CRITICAL: If user EXISTS but email is NOT verified, BLOCK login completely

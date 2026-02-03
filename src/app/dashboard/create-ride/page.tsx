@@ -7,7 +7,6 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
-import { Timestamp as FirestoreTimestamp } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
@@ -755,11 +754,6 @@ export default function CreateRidePage() {
   const [fromCoords, setFromCoords] = useState<LatLngLiteral | null>(null);
   const [toCoords, setToCoords] = useState<LatLngLiteral | null>(null);
   
-  // Debug: Log when coordinates change
-  useEffect(() => {
-    console.log('[COORDS] State updated - fromCoords:', fromCoords ? `${fromCoords.lat.toFixed(4)}, ${fromCoords.lng.toFixed(4)}` : 'null');
-    console.log('[COORDS] State updated - toCoords:', toCoords ? `${toCoords.lat.toFixed(4)}, ${toCoords.lng.toFixed(4)}` : 'null');
-  }, [fromCoords, toCoords]);
   const [routePolyline, setRoutePolyline] = useState<string | null>(null);
   const [routeBounds, setRouteBounds] = useState<any | null>(null);
   const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
@@ -972,10 +966,8 @@ export default function CreateRidePage() {
 
         form.setValue(activeMapSelect!, name, { shouldValidate: true, shouldDirty: true });
         if (activeMapSelect === 'from') {
-          console.log('[CONFIRM] Setting FROM coordinates from map:', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
           setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
         } else {
-          console.log('[CONFIRM] Setting TO coordinates from map:', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
           setToCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name });
         }
       } catch (e) {
@@ -984,10 +976,8 @@ export default function CreateRidePage() {
         const fallbackName = 'Selected Location';
         form.setValue(activeMapSelect!, fallbackName, { shouldValidate: true, shouldDirty: true });
         if (activeMapSelect === 'from') {
-          console.log('[CONFIRM] Setting FROM coordinates from map (fallback):', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
           setFromCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
         } else {
-          console.log('[CONFIRM] Setting TO coordinates from map (fallback):', { lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
           setToCoords({ lat: chosenLatLng.lat, lng: chosenLatLng.lng, name: fallbackName });
         }
       } finally {
@@ -1005,8 +995,6 @@ export default function CreateRidePage() {
   const handleMapClick = (lat: number, lng: number, name: string) => {
     if (!activeMapSelect) return;
 
-    console.log('[MAP_CLICK] Map clicked:', { lat, lng, name, activeMapSelect });
-
     // Prefer canonical university names when the clicked point lies within a university radius
     const ned = NED_UNI;
     const fast = FAST_UNI;
@@ -1018,11 +1006,9 @@ export default function CreateRidePage() {
 
     // Apply immediately and exit selection mode
     if (activeMapSelect === 'from') {
-      console.log('[MAP_CLICK] Setting FROM coordinates:', { lat, lng, name: finalName });
       form.setValue('from', finalName, { shouldValidate: true, shouldDirty: true });
       setFromCoords({ lat, lng, name: finalName });
     } else {
-      console.log('[MAP_CLICK] Setting TO coordinates:', { lat, lng, name: finalName });
       form.setValue('to', finalName, { shouldValidate: true, shouldDirty: true });
       setToCoords({ lat, lng, name: finalName });
     }
@@ -1077,7 +1063,16 @@ export default function CreateRidePage() {
       try {
         // Dynamic stop count based on route distance
         const routeDistanceKm = data.distanceMeters ? data.distanceMeters / 1000 : 0;
-        const maxStops = Math.max(3, Math.min(12, Math.ceil(routeDistanceKm / 2))); // 1 stop per 2km, min 3, max 12
+        const getTargetStopCount = (distanceKm: number) => {
+          if (distanceKm < 5) return 5;
+          if (distanceKm < 10) return 6;
+          if (distanceKm < 20) return 8;
+          if (distanceKm < 30) return 10;
+          if (distanceKm < 50) return 12;
+          return 15;
+        };
+        const targetStopCount = getTargetStopCount(routeDistanceKm);
+        const maxStops = Math.max(targetStopCount, Math.min(20, Math.ceil(routeDistanceKm / 1.5))); // scale for larger routes
         
         let stops: any[] = [];
         
@@ -1197,14 +1192,15 @@ export default function CreateRidePage() {
                         
                         if (data.address) {
                           const addr = data.address;
-                          const landmark = addr.amenity || addr.shop || addr.building || addr.office || 
-                                          addr.tourism || addr.leisure || addr.historic;
+                          const landmark = addr.amenity || addr.shop || addr.building || addr.office ||
+                                          addr.tourism || addr.leisure || addr.historic || addr.university ||
+                                          addr.hospital || addr.school || addr.college || addr.mosque || addr.church;
                           const road = addr.road || addr.street || addr.avenue || addr.boulevard ||
                                       addr.highway || addr.path || addr.residential;
-                          const area = addr.neighbourhood || addr.suburb || addr.quarter || 
+                          const area = addr.neighbourhood || addr.suburb || addr.quarter ||
                                       addr.city_district || addr.hamlet;
                           const city = addr.city || addr.town || addr.village || addr.municipality;
-                          
+
                           if (landmark) {
                             placeName = area ? `${landmark}, ${area}` : landmark;
                           } else if (road && area) {
@@ -1221,12 +1217,17 @@ export default function CreateRidePage() {
                             placeName = city;
                           }
                         }
-                        
+
+                        if (!placeName && data.display_name) {
+                          const meaningful = extractMeaningfulStopName(data.display_name);
+                          placeName = meaningful || placeName;
+                        }
+
                         if (!placeName && data.display_name) {
                           const parts = data.display_name.split(',')
                             .map((p: string) => p.trim())
                             .filter((p: string) => p && !/^\d+$/.test(p) && p.length > 2);
-                          
+
                           if (parts.length >= 2) {
                             placeName = `${parts[0]}, ${parts[1]}`;
                           } else if (parts.length === 1) {
@@ -1240,7 +1241,7 @@ export default function CreateRidePage() {
                         }
                       } else if (res.status === 429) {
                         console.warn(`[STOPS] Stop ${idx + 1}: Rate limited`);
-                        await new Promise(r => setTimeout(r, 1500));
+                        await new Promise(r => setTimeout(r, 2000));
                       }
                     } catch (fetchErr: any) {
                       console.error(`[STOPS] Stop ${idx + 1}: Fetch error`, fetchErr.message);
@@ -1292,21 +1293,73 @@ export default function CreateRidePage() {
                 }
               };
               
-              // Process ALL stops in PARALLEL
-              console.log('[STOPS] Geocoding', finalStops.length, 'stops in parallel...');
-              const stopsWithNames = await Promise.all(
-                finalStops.map((stop, idx) => geocodeStop(stop, idx))
-              );
+              const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+              const runInChunks = async <T,>(items: T[], size: number, fn: (item: T, idx: number) => Promise<any>) => {
+                const results: any[] = [];
+                for (let i = 0; i < items.length; i += size) {
+                  const chunk = items.slice(i, i + size);
+                  const chunkResults = await Promise.all(
+                    chunk.map((item, idx) => fn(item, i + idx))
+                  );
+                  results.push(...chunkResults);
+                  if (i + size < items.length) {
+                    await sleep(350);
+                  }
+                }
+                return results;
+              };
+
+              // Process stops in small chunks to avoid rate limits
+              console.log('[STOPS] Geocoding', finalStops.length, 'stops in chunks...');
+              const stopsWithNames = await runInChunks(finalStops, 3, geocodeStop);
               
               console.log('[STOPS] All names resolved:', stopsWithNames.map((s, i) => `${i+1}:"${s.name}"`).join(', '));
               
               // Deduplicate
               const deduped = deduplicateByName(stopsWithNames);
               console.log('[STOPS] After dedup:', deduped.length, 'stops:', deduped.map(s => s.name).join(' → '));
-              
+
+              const ensureMinStops = (baseStops: any[], allStops: any[], minCount: number) => {
+                if (baseStops.length >= minCount) return baseStops;
+
+                const result = [...baseStops];
+                const used = new Set(result.map((s) => `${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
+                const isPlaceholder = (name: string) => {
+                  const normalized = (name || '').trim();
+                  if (!normalized) return true;
+                  return /^(stop|loading|location|main stop|route stop)\s*\d*\.?\.?\.?$/i.test(normalized);
+                };
+
+                const candidates = allStops
+                  .filter((s) => !used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`))
+                  .sort((a, b) => (a.distanceFromStart || 0) - (b.distanceFromStart || 0));
+
+                for (const c of candidates) {
+                  if (result.length >= minCount) break;
+                  const nextName = c.name && !isPlaceholder(c.name) ? c.name : `Main Stop ${result.length + 1}`;
+                  result.push({ ...c, name: nextName });
+                  used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
+                }
+
+                if (result.length < minCount) {
+                  const fallback = allStops
+                    .sort((a, b) => (a.distanceFromStart || 0) - (b.distanceFromStart || 0))
+                    .filter((s) => !used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
+                  for (const c of fallback) {
+                    if (result.length >= minCount) break;
+                    result.push({ ...c, name: `Route Stop ${result.length + 1}` });
+                    used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
+                  }
+                }
+
+                return result.map((stop, idx) => ({ ...stop, order: idx }));
+              };
+
+              const finalStopsWithMin = ensureMinStops(deduped, stopsWithNames, targetStopCount);
+
               // UPDATE STATE ONLY ONCE with complete array
-              console.log('[STOPS] FINAL RENDER:', deduped.length, 'stops');
-              setGeneratedStops([...deduped]);
+              console.log('[STOPS] FINAL RENDER:', finalStopsWithMin.length, 'stops');
+              setGeneratedStops([...finalStopsWithMin]);
             } catch (e) {
               console.error('[STOPS] Fatal error:', e);
               const fallbackStops = finalStops.map((s: any, idx: number) => ({
@@ -1488,10 +1541,8 @@ export default function CreateRidePage() {
     
     form.setValue(field, name, { shouldValidate: true, shouldDirty: true });
     if (field === 'from') {
-        console.log('[SEARCH] Setting FROM coords:', { lat, lng, name });
         setFromCoords({ lat, lng, name });
     } else {
-        console.log('[SEARCH] Setting TO coords:', { lat, lng, name });
         setToCoords({ lat, lng, name });
     }
     
@@ -1587,7 +1638,7 @@ export default function CreateRidePage() {
     setIsSubmitting(true);
 
     // Debugging: log key values that affect the submission flow
-    console.debug('Create ride submit started', { fromCoords, toCoords, userId: user?.uid, university: userData?.university });
+    console.debug('Create ride submit started', { userId: user?.uid, university: userData?.university });
 
     // Reset abort marker — we'll use a timed wrapper around the Firestore write to detect hangs
     submissionAbortedRef.current = false;
@@ -1630,7 +1681,7 @@ export default function CreateRidePage() {
       routePolyline: routePolyline || null,
       routeBounds: routeBounds || null,
       waypoints: routeWaypoints || null,
-      createdAt: serverTimestamp(),
+      createdAt: new Date(),
       driverInfo: {
         ...(ud.fullName && { fullName: ud.fullName }),
         ...(ud.gender && { gender: ud.gender }),

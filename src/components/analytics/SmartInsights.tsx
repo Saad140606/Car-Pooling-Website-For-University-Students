@@ -343,18 +343,18 @@ export const QuickStatsBar = memo(function QuickStatsBar({ stats }: QuickStatsBa
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-wrap items-center gap-4 p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl backdrop-blur-md"
+      className="flex flex-wrap items-center gap-4 p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl backdrop-blur-md [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3"
     >
       {stats.map((stat, index) => {
         const IconComponent = iconMap[stat.icon] || Zap;
         return (
           <div
             key={index}
-            className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 rounded-lg"
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 rounded-lg [@media(max-height:700px)]:px-2 [@media(max-height:700px)]:py-1"
           >
-            <IconComponent className="w-4 h-4 text-primary" />
-            <span className="text-sm text-slate-400">{stat.label}:</span>
-            <span className="text-sm font-semibold text-white">{stat.value}</span>
+            <IconComponent className="w-4 h-4 text-primary [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
+            <span className="text-sm text-slate-400 [@media(max-height:700px)]:text-xs">{stat.label}:</span>
+            <span className="text-sm font-semibold text-white [@media(max-height:700px)]:text-xs">{stat.value}</span>
           </div>
         );
       })}

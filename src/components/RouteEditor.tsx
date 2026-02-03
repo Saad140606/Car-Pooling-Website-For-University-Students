@@ -383,7 +383,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
               <div key={`${w.lat}-${w.lng}-${i}`} className="flex items-center gap-2 p-3 bg-slate-800/50 border border-slate-700 rounded">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-slate-100 truncate">{w.name || `Stop ${i + 1}`}</div>
-                  <div className="text-xs text-muted-foreground">{w.lat.toFixed(4)}, {w.lng.toFixed(4)}</div>
+                  <div className="text-xs text-muted-foreground">Route point added</div>
                 </div>
                 <div className="flex gap-1 flex-shrink-0">
                   <Button size="sm" variant="ghost" onClick={() => moveWaypoint(i, -1)} disabled={i === 0} className="h-8 w-8">↑</Button>

@@ -13,7 +13,7 @@ export default function Home() {
     {
       icon: <Car className="h-10 w-10 text-accent" />,
       title: 'University-Only Rides',
-      description: 'Share rides exclusively with verified students and faculty from your university.',
+      description: 'Share rides exclusively with students and faculty from your university.',
     },
     {
       icon: <ShieldCheck className="h-10 w-10 text-accent" />,
@@ -170,9 +170,9 @@ export default function Home() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 max-w-4xl mx-auto">
               {[
-                { icon: <ShieldCheck className="h-8 w-8" />, title: "Verified Students", desc: "University email verification ensures only students access the platform" },
+                { icon: <ShieldCheck className="h-8 w-8" />, title: "Verified Students", desc: "University students can verify their official email to receive a trusted verification badge that highlights authentic student profiles." },
                 { icon: <Heart className="h-8 w-8" />, title: "Community First", desc: "Built by students, for students. Your safety and comfort matter most" },
-                { icon: <MapPin className="h-8 w-8" />, title: "Campus Routes", desc: "Optimized for university locations with real-time tracking" }
+                { icon: <MapPin className="h-8 w-8" />, title: "Campus Routes", desc: "Optimized for university locations with smooth and reliable route navigation." }
               ].map((item, idx) => (
                 <AnimatedCard
                   key={item.title}

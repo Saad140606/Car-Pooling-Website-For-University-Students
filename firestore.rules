@@ -48,8 +48,8 @@ service cloud.firestore {
 
     // Universities and nested collections
     match /universities/{univId} {
-      // Allow admins and authenticated users to read/list universities and nested collections
-      allow get, list: if isAdmin() || isAuth();
+      // Allow anyone to read/list universities and their collections (for public ride listings)
+      allow get, list: if true;
 
       // University-scoped user profiles
       match /users/{userId} {
@@ -80,9 +80,9 @@ service cloud.firestore {
           && request.resource.data.university == univId
           && request.resource.data.from is string
           && request.resource.data.to is string
-          && request.resource.data.departureTime is timestamp
+          && (request.resource.data.departureTime is timestamp || request.resource.data.time is timestamp)
           && request.resource.data.availableSeats is int
-          && request.resource.data.createdAt is timestamp;
+          && (request.resource.data.createdAt is timestamp || request.resource.data.createdAt == request.time);
 
         // Allow full update/delete for creators and admins
         allow update, delete: if isAdmin() || (isAuth() && resource.data.createdBy == request.auth.uid);

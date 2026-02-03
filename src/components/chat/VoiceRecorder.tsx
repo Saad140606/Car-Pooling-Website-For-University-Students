@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Trash2, Send } from 'lucide-react';
+import { Mic, Square, Trash2, Send, AlertCircle } from 'lucide-react';
 import { voiceMessageService } from '@/lib/voiceMessageService';
 
 export default function VoiceRecorder({ onSend }: { onSend: (url: string) => void }) {
@@ -7,8 +7,13 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [duration, setDuration] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const timerRef = useRef<number | null>(null);
   const recordingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const MAX_RETRIES = 3;
 
   useEffect(() => {
     recordingRef.current = recording;
@@ -22,13 +27,17 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
           voiceMessageService.abortRecording();
         } catch (_) {}
       }
+      abortControllerRef.current?.abort();
     };
   }, []);
 
   const startRecording = async () => {
     try {
+      setError(null);
+      setRetryCount(0);
+      
       if (!voiceMessageService.isSupported()) {
-        alert('Voice recording is not supported in your browser. Please use Chrome, Firefox, or Edge.');
+        setError('Voice recording is not supported. Please use Chrome, Firefox, or Edge.');
         return;
       }
 
@@ -42,11 +51,11 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
     } catch (err: any) {
       console.error('[VoiceRecorder] Failed to start recording:', err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        alert('Microphone permission denied. Please allow microphone access in your browser settings to record voice messages.');
+        setError('Microphone permission denied. Please enable microphone access.');
       } else if (err.name === 'NotFoundError') {
-        alert('No microphone found. Please connect a microphone and try again.');
+        setError('No microphone found. Please connect one and try again.');
       } else {
-        alert('Failed to start recording. Please check your microphone and browser permissions.');
+        setError(err.message || 'Failed to start recording. Please check your microphone.');
       }
     }
   };
@@ -62,32 +71,100 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
       }
     } catch (err) {
       console.error('[VoiceRecorder] Failed to stop recording:', err);
-      alert('Failed to stop recording. Please try again.');
+      setError('Failed to stop recording. Please try again.');
     }
   };
 
   const cancelRecording = () => {
     setAudioBlob(null);
     setDuration(0);
+    setError(null);
+    setUploadProgress(0);
   };
 
+  const uploadWithRetry = async (
+    audioBlob: Blob,
+    attempt: number = 0
+  ): Promise<any> => {
+    try {
+      abortControllerRef.current = new AbortController();
+      
+      console.debug('[VoiceRecorder] Upload attempt:', attempt + 1);
+      
+      const voiceData = await voiceMessageService.uploadVoiceMessage(
+        audioBlob,
+        '',
+        (progress) => setUploadProgress(Math.min(progress, 99))
+      );
+      
+      setUploadProgress(100);
+      console.debug('[VoiceRecorder] Upload successful:', voiceData);
+      return voiceData;
+    } catch (err: any) {
+      console.error(`[VoiceRecorder] Upload attempt ${attempt + 1} failed:`, err);
+      
+      if (attempt < MAX_RETRIES) {
+        const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+        setError(`Upload failed. Retrying in ${delay / 1000}s...`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        setRetryCount(attempt + 1);
+        return uploadWithRetry(audioBlob, attempt + 1);
+      }
+      
+      throw new Error(
+        err?.message || 
+        'Failed to upload voice message after multiple attempts. Check your connection.'
+      );
+    }
+  };
 
   const sendVoice = async () => {
     if (!audioBlob) return;
+    
     setUploading(true);
+    setError(null);
+    setUploadProgress(0);
+    
     try {
-      const voiceData = await voiceMessageService.uploadVoiceMessage(audioBlob, '');
+      const voiceData = await uploadWithRetry(audioBlob);
+      
+      console.debug('[VoiceRecorder] Sending voice message:', voiceData);
+      
+      // Ensure callback completes before cleanup
       await onSend(voiceData.url);
+      
+      // Clear state after successful send
       setAudioBlob(null);
       setDuration(0);
+      setUploadProgress(0);
     } catch (err: any) {
-      console.error('[VoiceRecorder] Failed to upload voice:', err);
-      const errorMessage = err?.message || 'Failed to send voice message. Please try again.';
-      alert(errorMessage);
+      console.error('[VoiceRecorder] Failed to send voice:', err);
+      setError(err.message || 'Failed to send voice message. Please try again.');
+      // Leave audioBlob intact so user can retry
     } finally {
       setUploading(false);
     }
   };
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-2 p-2 bg-red-500/10 rounded-full border border-red-500/30">
+        <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+        <span className="text-xs text-red-300 flex-1 truncate">{error}</span>
+        <button
+          onClick={() => {
+            setError(null);
+            setAudioBlob(null);
+            setDuration(0);
+          }}
+          className="text-xs px-2 py-1 rounded bg-red-600/50 hover:bg-red-600 text-white transition-colors whitespace-nowrap flex-shrink-0"
+        >
+          Clear
+        </button>
+      </div>
+    );
+  }
 
   if (audioBlob) {
     return (
@@ -96,6 +173,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
           onClick={cancelRecording}
           className="p-2 rounded-full hover:bg-red-600/20 text-red-400 transition-colors"
           disabled={uploading}
+          title="Cancel"
         >
           <Trash2 className="h-4 w-4" />
         </button>
@@ -111,12 +189,20 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
               ))}
             </div>
           </div>
-          <span className="text-xs text-slate-400">{voiceMessageService.formatDuration(duration)}</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">
+            {voiceMessageService.formatDuration(duration)}
+          </span>
         </div>
+        {uploading && uploadProgress > 0 && (
+          <span className="text-xs text-slate-300 min-w-[35px] text-right">
+            {Math.round(uploadProgress)}%
+          </span>
+        )}
         <button
           onClick={sendVoice}
           disabled={uploading}
-          className="p-2 rounded-full bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-50"
+          className="p-2 rounded-full bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+          title="Send voice message"
         >
           {uploading ? (
             <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -138,7 +224,8 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
         </div>
         <button
           onClick={stopRecording}
-          className="p-2.5 rounded-full bg-red-600 hover:bg-red-700 text-white transition-colors"
+          className="p-2.5 rounded-full bg-red-600 hover:bg-red-700 text-white transition-colors flex-shrink-0"
+          title="Stop recording"
         >
           <Square className="h-4 w-4" />
         </button>

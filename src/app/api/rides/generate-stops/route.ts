@@ -126,9 +126,10 @@ async function generateStops(
   coordinates: Array<{ lat: number; lng: number; index: number }>,
   totalDistance: number
 ): Promise<any[]> {
-  // Determine optimal stop spacing
-  const stopSpacing = getOptimalSpacing(totalDistance);
-  const numStops = Math.ceil(totalDistance / stopSpacing);
+  // Determine target stop count with enforced minimums
+  const targetStopCount = getTargetStopCount(totalDistance);
+  const stopSpacing = Math.max(1000, Math.floor(totalDistance / Math.max(1, targetStopCount)));
+  const numStops = Math.max(targetStopCount, Math.ceil(totalDistance / stopSpacing));
 
   // Sample points along the route
   const sampleIndices = calculateSampleIndices(coordinates.length, numStops);
@@ -149,13 +150,14 @@ async function generateStops(
       if (nearbyPlaces.length === 0) continue;
 
       // Filter for major locations
-      const filtered = nearbyPlaces.filter((place: any) => {
-        const importance = getImportance(place.type);
-        return importance >= 0.6;
-      });
+      const filtered = nearbyPlaces.filter((place: any) => getImportance(place.type) >= 0.6);
 
-      if (filtered.length > 0) {
-        const best = selectBestPlace(filtered);
+      const candidatePool = filtered.length > 0
+        ? filtered
+        : nearbyPlaces.filter((place: any) => getImportance(place.type) >= 0.4);
+
+      if (candidatePool.length > 0) {
+        const best = selectBestPlace(candidatePool);
         const locationKey = `${Math.round(best.lat * 1000)},${Math.round(best.lon * 1000)}`;
 
         // Skip if we've already added this location
@@ -176,6 +178,7 @@ async function generateStops(
           order: stops.length,
         });
       }
+      if (stops.length >= targetStopCount + 2) break;
     } catch (error) {
       console.warn(`Failed to fetch nearby places for ${point.lat}, ${point.lng}:`, error);
     }
@@ -187,11 +190,13 @@ async function generateStops(
 /**
  * Determine optimal stop spacing based on route distance
  */
-function getOptimalSpacing(distanceMeters: number): number {
-  if (distanceMeters < 5000) return 5000; // 1 stop
-  if (distanceMeters < 10000) return 4000; // 2-3 stops
-  if (distanceMeters < 20000) return 5000; // 3-5 stops
-  return 4000; // more stops
+function getTargetStopCount(distanceMeters: number): number {
+  if (distanceMeters < 5000) return 5; // minimum stops for short routes
+  if (distanceMeters < 10000) return 6;
+  if (distanceMeters < 20000) return 8;
+  if (distanceMeters < 30000) return 10;
+  if (distanceMeters < 50000) return 12;
+  return 15; // larger routes
 }
 
 /**
@@ -199,9 +204,10 @@ function getOptimalSpacing(distanceMeters: number): number {
  */
 function calculateSampleIndices(totalPoints: number, numSamples: number): number[] {
   const indices: number[] = [];
-  const step = Math.floor(totalPoints / (numSamples + 1));
+  const safeSamples = Math.max(1, Math.min(numSamples, Math.max(1, totalPoints - 2)));
+  const step = Math.max(1, Math.floor(totalPoints / (safeSamples + 1)));
 
-  for (let i = 1; i <= numSamples; i++) {
+  for (let i = 1; i <= safeSamples; i++) {
     const idx = Math.min(i * step, totalPoints - 1);
     indices.push(idx);
   }
@@ -285,7 +291,18 @@ async function fetchNearbyPlaces(
 
     if (!poiResponse.ok) return [];
 
-    return await poiResponse.json();
+    const poiResults = await poiResponse.json();
+    const reverseResult = data?.display_name
+      ? [{
+          ...data,
+          type: data?.type || data?.addresstype || 'landmark',
+          name: data?.name || data?.display_name,
+          lat: String(data?.lat ?? lat),
+          lon: String(data?.lon ?? lng),
+        }]
+      : [];
+
+    return [...reverseResult, ...poiResults];
   } catch (error) {
     console.error('Nominatim API error:', error);
     return [];

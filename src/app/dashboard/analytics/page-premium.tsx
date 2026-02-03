@@ -59,29 +59,29 @@ const RoleToggle = memo(function RoleToggle({
   if (role !== 'both') return null;
 
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg w-full sm:w-auto">
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg w-full sm:w-auto [@media(max-height:700px)]:gap-1 [@media(max-height:700px)]:p-0.5">
       <button
         onClick={() => onViewChange('driver')}
         className={cn(
-          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
+          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1.5 [@media(max-height:700px)]:text-xs',
           activeView === 'driver'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
         )}
       >
-        <Car className="w-4 h-4" />
+        <Car className="w-4 h-4 [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
         Ride Provider View
       </button>
       <button
         onClick={() => onViewChange('passenger')}
         className={cn(
-          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
+          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1.5 [@media(max-height:700px)]:text-xs',
           activeView === 'passenger'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
         )}
       >
-        <User className="w-4 h-4" />
+        <User className="w-4 h-4 [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
         Passenger View
       </button>
     </div>
@@ -106,17 +106,17 @@ const SectionHeader = memo(function SectionHeader({
   action,
 }: SectionHeaderProps) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 [@media(max-height:700px)]:mb-3">
       <div className="flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-primary/15">
+        <div className="p-2 rounded-lg bg-primary/15 [@media(max-height:700px)]:p-1.5">
           {icon}
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-white">{title}</h2>
-          {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+          <h2 className="text-xl font-semibold text-white [@media(max-height:700px)]:text-base">{title}</h2>
+          {subtitle && <p className="text-sm text-slate-500 [@media(max-height:700px)]:text-xs">{subtitle}</p>}
         </div>
       </div>
-      <div className="sm:mt-0 mt-1">{action}</div>
+      <div className="sm:mt-0 mt-1 [@media(max-height:700px)]:mt-0">{action}</div>
     </div>
   );
 });
@@ -127,7 +127,7 @@ const SectionHeader = memo(function SectionHeader({
 
 const AnalyticsSkeleton = memo(function AnalyticsSkeleton() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 [@media(max-height:700px)]:space-y-4">
       {/* Header skeleton */}
       <div className="flex items-center justify-between">
         <div className="space-y-2">
@@ -145,7 +145,7 @@ const AnalyticsSkeleton = memo(function AnalyticsSkeleton() {
       </div>
 
       {/* Charts skeleton */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
         <Skeleton className="h-[350px] rounded-xl" />
         <Skeleton className="h-[350px] rounded-xl" />
       </div>
@@ -217,7 +217,7 @@ interface DriverAnalyticsProps {
 
 const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: DriverAnalyticsProps) {
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 [@media(max-height:700px)]:space-y-4">
       {/* Quick Stats Bar */}
       <QuickStatsBar
         stats={[
@@ -256,7 +256,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
       </motion.div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
         <RidesLineChart
           data={metrics.ridesOverTime}
           title="Rides Over Time"
@@ -270,7 +270,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
       </div>
 
       {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 [@media(max-height:700px)]:gap-3">
         <WeeklyActivityChart
           data={metrics.weeklyActivity}
           title="Weekly Activity"
@@ -291,7 +291,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
         className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6"
       >
         <h3 className="text-lg font-semibold text-white mb-6">Performance Metrics</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 [@media(max-height:700px)]:gap-3">
           <ProgressCircle
             percentage={metrics.seatEfficiencyPercent}
             label="Seat Efficiency"
@@ -402,7 +402,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
       </motion.div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
         <RidesLineChart
           data={metrics.ridesOverTime}
           title="Rides Over Time"
@@ -416,7 +416,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
       </div>
 
       {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 [@media(max-height:700px)]:gap-3">
         <WeeklyActivityChart
           data={metrics.weeklyActivity}
           title="Weekly Activity"
@@ -434,10 +434,10 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6"
+        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6 [@media(max-height:700px)]:p-4"
       >
-        <h3 className="text-lg font-semibold text-white mb-6">Booking Performance</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+        <h3 className="text-lg font-semibold text-white mb-6 [@media(max-height:700px)]:mb-3 [@media(max-height:700px)]:text-base">Booking Performance</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-6 [@media(max-height:700px)]:gap-3">
           <ProgressCircle
             percentage={metrics.requestToConfirmRate}
             label="Booking Success"
@@ -566,27 +566,27 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 overflow-x-hidden [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
+    <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 overflow-x-hidden [@media(max-height:700px)]:p-2 [@media(max-height:700px)]:pb-3">
       <div className="max-w-7xl mx-auto">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8 [@media(max-height:700px)]:mb-4"
+          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8 [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:mb-3"
         >
           <div>
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
-              <BarChart3 className="w-7 h-7 sm:w-8 sm:h-8 text-primary" />
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3 [@media(max-height:700px)]:text-lg [@media(max-height:700px)]:gap-2">
+              <BarChart3 className="w-7 h-7 sm:w-8 sm:h-8 text-primary [@media(max-height:700px)]:w-5 [@media(max-height:700px)]:h-5" />
               Analytics Dashboard
             </h1>
-            <p className="text-sm text-slate-500 mt-1">
+            <p className="text-sm text-slate-500 mt-1 [@media(max-height:700px)]:text-xs [@media(max-height:700px)]:mt-0.5">
               {lastUpdated && (
                 <>Last updated: {lastUpdated.toLocaleTimeString()}</>
               )}
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto [@media(max-height:700px)]:gap-2">
             {/* Role Toggle */}
             <RoleToggle
               role={analytics.userRole}
@@ -600,9 +600,9 @@ export default function AnalyticsPage() {
               size="sm"
               onClick={fetchAnalytics}
               disabled={isLoading}
-              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto"
+              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto [@media(max-height:700px)]:h-8 [@media(max-height:700px)]:text-xs"
             >
-              <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
+              <RefreshCw className={cn('w-4 h-4 [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5', isLoading && 'animate-spin')} />
               Refresh
             </Button>
           </div>
@@ -613,9 +613,9 @@ export default function AnalyticsPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mb-6 [@media(max-height:700px)]:mb-4"
+            className="mb-6 [@media(max-height:700px)]:mb-3"
           >
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-full text-sm font-medium text-primary">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-full text-sm font-medium text-primary [@media(max-height:700px)]:text-xs [@media(max-height:700px)]:py-1">
               {userData.university.toUpperCase()} University
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             </span>
@@ -643,7 +643,7 @@ export default function AnalyticsPage() {
 
             {/* Status Pie Chart */}
             {analytics.rideStatusBreakdown.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
                 <StatusPieChart
                   data={analytics.rideStatusBreakdown}
                   title="Ride Status Breakdown"

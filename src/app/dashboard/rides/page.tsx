@@ -807,6 +807,8 @@ export default function RidesPage() {
   useEffect(() => {
     console.log('[RidesPage] User:', user?.uid || 'NOT LOGGED IN', 'UserData:', userData?.university || 'N/A', 'UserLoading:', userLoading);
   }, [user, userData, userLoading]);
+  
+  
   const searchParams = useSearchParams();
 
   // --- Filters UI state (must be declared unconditionally to preserve Hooks order) ---
@@ -821,6 +823,15 @@ export default function RidesPage() {
     direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
   });
 
+  // Debug filter state changes (placed after `filters` is initialized)
+  useEffect(() => {
+    try {
+      console.log('[RidesPage] Filter University:', filters?.university || 'EMPTY', 'Should Lock:', user && userData?.university ? userData.university : 'NO');
+    } catch (e) {
+      // defensive: don't throw in render if filters is unexpectedly undefined
+    }
+  }, [filters?.university, user, userData?.university]);
+
   // Current time state that updates every minute to trigger re-filtering
   const [currentTime, setCurrentTime] = useState(() => new Date());
   
@@ -833,32 +844,64 @@ export default function RidesPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const selectedUniversity = (filters.university || userData?.university || 'fast').toLowerCase();
+  // Determine which universities to query
+  // CRITICAL: Logged-in users must ONLY see their own university's rides
+  // Logged-out users can see both universities
+  const universitiesToQuery = (() => {
+    // If user is logged in with a university, lock to that university ONLY
+    if (user && userData && userData.university) {
+      return [userData.university.toLowerCase()];
+    }
+    
+    // For logged-out users, check filter
+    const filterValue = filters.university || '';
+    if (filterValue === 'any' || filterValue === '') {
+      // Query both universities for "any" filter (logged-out only)
+      return ['fast', 'ned'];
+    }
+    return [filterValue.toLowerCase()];
+  })();
 
-  // Note: Firestore does not allow range filters on multiple different fields in a single query.
-  // We intentionally avoid applying gender filters at query time so users see all available rides.
-  // Gender (and other) filters are applied client-side only when the user toggles them.
-  const ridesQuery = firestore && selectedUniversity ? query(
-    safeCollection(firestore, 'universities', selectedUniversity, 'rides'),
+  // Build queries for each university
+  const fastRidesQuery = firestore ? query(
+    safeCollection(firestore, 'universities', 'fast', 'rides'),
     where('status', '==', 'active'),
     where('departureTime', '>', new Date()),
     orderBy('departureTime', 'asc')
   ) : null;
 
-  const { data: rides, loading: ridesLoading } = useCollection<RideType>(ridesQuery);
+  const nedRidesQuery = firestore ? query(
+    safeCollection(firestore, 'universities', 'ned', 'rides'),
+    where('status', '==', 'active'),
+    where('departureTime', '>', new Date()),
+    orderBy('departureTime', 'asc')
+  ) : null;
+
+  // Only query the universities we need
+  const fastRidesQueryToUse = universitiesToQuery.includes('fast') ? fastRidesQuery : null;
+  const nedRidesQueryToUse = universitiesToQuery.includes('ned') ? nedRidesQuery : null;
+
+  const { data: fastRides, loading: fastRidesLoading } = useCollection<RideType>(fastRidesQueryToUse);
+  const { data: nedRides, loading: nedRidesLoading } = useCollection<RideType>(nedRidesQueryToUse);
+
+  // Merge rides from both universities
+  const rides = [
+    ...(fastRides || []).map(r => ({ ...r, university: 'fast' })),
+    ...(nedRides || []).map(r => ({ ...r, university: 'ned' }))
+  ];
+  const ridesLoading = fastRidesLoading || nedRidesLoading;
   
   // Debug: log the rides data and query status
   useEffect(() => {
     console.log('🔍 Rides Debug:', {
-      selectedUniversity,
+      universitiesToQuery,
       ridesLoading,
       ridesCount: rides?.length || 0,
-      ridesData: rides,
-      ridesQuery: ridesQuery ? 'defined' : 'null',
-      firestore: firestore ? 'defined' : 'null',
+      fastRidesCount: fastRides?.length || 0,
+      nedRidesCount: nedRides?.length || 0,
       timestamp: new Date().toISOString(),
     });
-  }, [rides, ridesLoading, ridesQuery, selectedUniversity, firestore]);
+  }, [rides, ridesLoading, fastRides, nedRides, universitiesToQuery]);
   
   const isLoading = userLoading || ridesLoading;
 
@@ -899,21 +942,29 @@ export default function RidesPage() {
         maxPrice: params.maxPrice || '',
         pointInput: params.pointInput || '',
         point: params.pointInput ? parsePointInput(params.pointInput) : null,
-        university: params.university || '',
+        // CRITICAL: Never override university from URL params for logged-in users
+        university: (user && userData?.university) ? userData.university : (params.university || ''),
         direction: (params.direction as any) || 'any',
       };
       setFilters(f => ({ ...f, ...newFilters }));
     } catch (e) {
       // ignore malformed query params
     }
-  }, [searchParams]);
+  }, [searchParams, user, userData?.university]);
 
   // If the user is logged in and has a university, lock the university filter to it
+  // This effect MUST run after URL params to enforce the lock
   useEffect(() => {
     if (user && userData && userData.university) {
-      setFilters(f => ({ ...f, university: userData.university }));
+      setFilters(f => {
+        // Only update if different to avoid infinite loops
+        if (f.university !== userData.university) {
+          return { ...f, university: userData.university };
+        }
+        return f;
+      });
     }
-  }, [user, userData]);
+  }, [user, userData, userData?.university]);
 
   if (isLoading) {
     return (
@@ -1108,16 +1159,16 @@ export default function RidesPage() {
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm mb-1">University</label>
-                  {user && userData && userData.university ? (
+                  {user && userData?.university ? (
                     <div className="flex items-center gap-2">
                       <Input value={getUniversityShortLabel(userData.university) || userData.university} disabled />
                       <Badge>Locked</Badge>
                     </div>
                   ) : (
                     <Select value={filters.university || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, university: v }))}>
-                      <SelectTrigger className="w-full"><SelectValue>{filters.university && filters.university !== 'any' ? getUniversityShortLabel(filters.university) || filters.university : 'Select'}</SelectValue></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue>{!filters.university || filters.university === 'any' ? 'Any (Both)' : getUniversityShortLabel(filters.university) || filters.university}</SelectValue></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="any">Any</SelectItem>
+                        <SelectItem value="any">Any (Both Universities)</SelectItem>
                         <SelectItem value="fast">FAST</SelectItem>
                         <SelectItem value="ned">NED</SelectItem>
                       </SelectContent>
@@ -1260,7 +1311,7 @@ export default function RidesPage() {
             const pendingBookingId = searchParams ? searchParams.get('pendingBooking') : null;
             const openBooking = pendingBookingId && pendingBookingId === ride.id;
             return (
-              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} hasActiveBooking={hasActiveBookingForOther} myBookings={myBookings} openBookingOnMount={openBooking} selectedUniversity={selectedUniversity} />
+              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} hasActiveBooking={hasActiveBookingForOther} myBookings={myBookings} openBookingOnMount={openBooking} />
             );
           })}
         </div>

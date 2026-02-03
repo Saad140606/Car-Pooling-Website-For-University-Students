@@ -43,8 +43,15 @@ function truncateChars(s?: string | null, n = 30) {
   return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
+function formatPickupLabel(booking: { pickupPlaceName?: string | null; pickupPoint?: { lat: number; lng: number } | null }) {
+  if (booking?.pickupPlaceName) return booking.pickupPlaceName;
+  if (booking?.pickupPoint) return 'Pickup location selected';
+  return 'Pickup not set';
+}
+
 function BookingRequests({ ride, university, onProcessed }: { ride: RideType, university: string, onProcessed?: (bookingId: string, status: 'accepted' | 'rejected') => void }) {
   const firestore = useFirestore();
+  const { user } = useUser();
   const { toast } = useToast();
 
   // Read requests from the ride-scoped `requests` subcollection so ride owners
@@ -81,9 +88,18 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     try {
       // Use API endpoint for accept to ensure idempotency and proper seat management
       if (newStatus === 'accepted') {
+        // Get auth token for API call
+        if (!user) {
+          throw new Error('User not authenticated');
+        }
+        const token = await user.getIdToken();
+        
         const res = await fetch('/api/requests/accept', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({
             university,
             rideId: booking.rideId,
@@ -211,15 +227,9 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             {booking.passengerDetails?.phone ? (
               <p className="text-sm text-slate-300">{booking.passengerDetails.phone}</p>
             ) : null}
-             {booking.pickupPlaceName ? (
-              <p className="text-xs text-accent flex items-center mt-1">
-                <MapPin className="h-3 w-3 mr-1"/> {booking.pickupPlaceName}
-              </p>
-             ) : booking.pickupPoint ? (
-              <p className="text-xs text-accent flex items-center mt-1">
-                <MapPin className="h-3 w-3 mr-1"/> {((booking.pickupPoint as any).lat || '').toFixed ? `${(booking.pickupPoint as any).lat.toFixed(5)}, ${(booking.pickupPoint as any).lng.toFixed(5)}` : 'Pickup Requested'}
-              </p>
-             ) : null}
+             <p className="text-xs text-accent flex items-center mt-1">
+               <MapPin className="h-3 w-3 mr-1"/> {formatPickupLabel(booking)}
+             </p>
           </div>
           <div className="flex gap-2">
             <Button size="icon" variant="outline" className="h-8 w-8 bg-green-500/10 text-green-500 hover:bg-green-500/20" onClick={() => handleBooking(booking, 'accepted')} disabled={processingIds.includes(booking.id)}>
@@ -425,13 +435,12 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                             <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
                             <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
                             <InlineVerifiedBadge verified={b.passengerDetails?.universityEmailVerified || (b.passengerDetails as any)?.verified} />
-                            <Badge className="bg-green-600/80 text-white text-[10px] py-0 px-1.5">Confirmed</Badge>
                           </div>
                           <div className="space-y-2 text-xs text-slate-400">
                             <div className="flex items-start gap-2">
                               <MapPin className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
                               <span className="text-slate-300 line-clamp-2">
-                                {(b as any).pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
+                                {formatPickupLabel(b as any)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 ml-5">
@@ -488,7 +497,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                             <div className="flex items-start gap-2">
                               <MapPin className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
                               <span className="text-slate-300 line-clamp-2">
-                                {(b as any).pickupPlaceName || (b.pickupPoint ? `${(b.pickupPoint as any).lat?.toFixed?.(4) || ''}, ${(b.pickupPoint as any).lng?.toFixed?.(4) || ''}` : 'Pickup not set')}
+                                {formatPickupLabel(b as any)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 ml-5">

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Check, CheckCheck, Play, Pause } from 'lucide-react';
+import { Check, CheckCheck, Play, Pause, Download, FileText, Music } from 'lucide-react';
 import { InlineVerifiedBadge } from '@/components/VerificationBadge';
 
 export default function MessageBubble({ message, isOwn, senderName, senderInitials, senderVerified }: { message: any, isOwn: boolean, senderName?: string, senderInitials?: string, senderVerified?: boolean }) {
@@ -7,6 +7,7 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
   const isSeen = message.seenBy && Array.isArray(message.seenBy) && message.seenBy.length > 1;
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [downloading, setDownloading] = useState(false);
   
   const togglePlay = () => {
     if (!audioRef.current) return;
@@ -20,6 +21,65 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
 
   const handleAudioEnd = () => {
     setPlaying(false);
+  };
+
+  const getFileNameFromUrl = (url: string): string => {
+    try {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      const filename = pathname.substring(pathname.lastIndexOf('/') + 1);
+      // Remove timestamp and underscores prefix
+      return decodeURIComponent(filename.replace(/^[0-9]+_/, ''));
+    } catch {
+      return 'Download';
+    }
+  };
+
+  const getFileExtension = (fileName: string): string => {
+    const match = fileName.match(/\.([^.]+)$/);
+    return match ? match[1].toUpperCase() : 'FILE';
+  };
+
+  const handleDownload = async () => {
+    if (!message.mediaUrl) return;
+    setDownloading(true);
+    try {
+      const response = await fetch(message.mediaUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = getFileNameFromUrl(message.mediaUrl);
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Failed to download file');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const isImageType = (type: string): boolean => {
+    return type === 'image' || (message.mediaUrl && 
+      /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(message.mediaUrl));
+  };
+
+  const isVideoType = (type: string): boolean => {
+    return type === 'video' || (message.mediaUrl && 
+      /\.(mp4|webm|ogg|mov|avi)$/i.test(message.mediaUrl));
+  };
+
+  const isAudioType = (type: string): boolean => {
+    return type === 'audio' || (message.mediaUrl && 
+      /\.(mp3|wav|ogg|webm|m4a|aac|flac)$/i.test(message.mediaUrl));
+  };
+
+  const isFileType = (type: string): boolean => {
+    return type === 'file' || (message.mediaUrl && 
+      /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar)$/i.test(message.mediaUrl));
   };
   
   return (
@@ -53,14 +113,15 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
                 <div className="whitespace-pre-wrap break-words text-sm sm:text-base leading-relaxed">{message.content}</div>
               )}
               
-              {/* Voice message */}
-              {message.type === 'audio' && message.mediaUrl && (
+              {/* Voice message / Audio */}
+              {isAudioType(message.type) && message.mediaUrl && (
                 <div className="flex items-center gap-3">
                   <button
                     onClick={togglePlay}
-                    className={`p-2 rounded-full transition-colors ${
+                    className={`p-2 rounded-full transition-colors flex-shrink-0 ${
                       isOwn ? 'bg-white/20 hover:bg-white/30' : 'bg-primary/20 hover:bg-primary/30'
                     }`}
+                    title={playing ? 'Pause' : 'Play'}
                   >
                     {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
                   </button>
@@ -88,7 +149,7 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
               )}
               
               {/* Image message */}
-              {message.type === 'image' && message.mediaUrl && (
+              {isImageType(message.type) && message.mediaUrl && (
                 <div className="mt-1">
                   <img 
                     src={message.mediaUrl} 
@@ -96,19 +157,96 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
                     className="max-h-48 sm:max-h-64 rounded-xl w-full object-cover cursor-pointer transition-transform hover:scale-[1.02]" 
                     loading="lazy"
                     onClick={() => window.open(message.mediaUrl, '_blank')}
+                    onError={(e) => console.error('Image load error:', e)}
                   />
                 </div>
               )}
               
               {/* Video message */}
-              {message.type === 'video' && message.mediaUrl && (
+              {isVideoType(message.type) && message.mediaUrl && (
                 <div className="mt-1">
                   <video 
                     src={message.mediaUrl} 
                     controls 
-                    className="max-h-48 sm:max-h-64 rounded-xl w-full"
+                    className="max-h-48 sm:max-h-64 rounded-xl w-full object-cover"
                     preload="metadata"
+                    onError={(e) => console.error('Video load error:', e)}
                   />
+                </div>
+              )}
+              
+              {/* File attachment */}
+              {isFileType(message.type) && message.mediaUrl && (
+                <div className={`flex items-center gap-3 p-3 rounded-lg ${
+                  isOwn ? 'bg-white/10' : 'bg-slate-600/30'
+                }`}>
+                  <div className={`h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    isOwn ? 'bg-white/20' : 'bg-primary/20'
+                  }`}>
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {getFileNameFromUrl(message.mediaUrl)}
+                    </p>
+                    <p className={`text-xs ${isOwn ? 'text-white/70' : 'text-slate-400'}`}>
+                      {getFileExtension(getFileNameFromUrl(message.mediaUrl))}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleDownload}
+                    disabled={downloading}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                      isOwn 
+                        ? 'hover:bg-white/20 text-white' 
+                        : 'hover:bg-primary/30 text-primary'
+                    } disabled:opacity-50`}
+                    title="Download"
+                  >
+                    {downloading ? (
+                      <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Generic file message (if type doesn't match known types but has mediaUrl) */}
+              {message.mediaUrl && !isImageType(message.type) && !isVideoType(message.type) && 
+               !isAudioType(message.type) && !isFileType(message.type) && message.type !== 'text' && (
+                <div className={`flex items-center gap-3 p-3 rounded-lg ${
+                  isOwn ? 'bg-white/10' : 'bg-slate-600/30'
+                }`}>
+                  <div className={`h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    isOwn ? 'bg-white/20' : 'bg-primary/20'
+                  }`}>
+                    <Music className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {getFileNameFromUrl(message.mediaUrl)}
+                    </p>
+                    <p className={`text-xs ${isOwn ? 'text-white/70' : 'text-slate-400'}`}>
+                      {message.type || 'Media'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleDownload}
+                    disabled={downloading}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                      isOwn 
+                        ? 'hover:bg-white/20 text-white' 
+                        : 'hover:bg-primary/30 text-primary'
+                    } disabled:opacity-50`}
+                    title="Download"
+                  >
+                    {downloading ? (
+                      <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                  </button>
                 </div>
               )}
               

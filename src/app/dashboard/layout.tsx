@@ -86,7 +86,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }
 
         const profile = userDoc.data();
-        const emailVerified = Boolean(profile?.emailVerified);
+        const emailVerified = Boolean(profile?.universityEmailVerified ?? profile?.emailVerified);
 
         if (!emailVerified) {
           console.log('[Dashboard] Unverified user detected, redirecting to verification');
@@ -195,13 +195,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   // Ensure children arrays have stable keys to avoid React missing-key warnings
-  const safeChildren = React.Children.toArray(children).map((child, idx) => {
-    if (React.isValidElement(child)) {
-      // React.Children.toArray already assigns keys, but we ensure they're preserved
-      return child;
-    }
-    return child;
-  });
+  // React.Children.toArray will normalize children and assign stable keys when needed.
+  const safeChildren = React.Children.toArray(children);
 
   return (
     <div className="flex min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise relative">

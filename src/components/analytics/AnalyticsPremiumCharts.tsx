@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   LineChart,
@@ -47,6 +47,23 @@ const PIE_COLORS = [
   '#EF4444', // Cancelled - red
   '#8B5CF6', // Other - purple
 ];
+
+const useCompactHeight = (height: number, compactHeight: number) => {
+  const [resolvedHeight, setResolvedHeight] = useState(height);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const compute = () => {
+      const isCompact = window.innerHeight <= 700;
+      setResolvedHeight(isCompact ? Math.min(height, compactHeight) : height);
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, [height, compactHeight]);
+
+  return resolvedHeight;
+};
 
 // ============================================================================
 // CUSTOM TOOLTIP
@@ -117,14 +134,14 @@ export const ChartWrapper = memo(function ChartWrapper({
       className={cn(
         'relative overflow-hidden rounded-xl border border-slate-800/50',
         'bg-gradient-to-br from-slate-900/80 via-slate-900/60 to-slate-950/80',
-        'backdrop-blur-md p-4 sm:p-6',
+        'backdrop-blur-md p-4 sm:p-6 [@media(max-height:700px)]:p-3',
         className
       )}
     >
       {/* Header */}
-      <div className="mb-4">
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
-        {subtitle && <p className="text-sm text-slate-400 mt-1">{subtitle}</p>}
+      <div className="mb-4 [@media(max-height:700px)]:mb-2">
+        <h3 className="text-lg font-semibold text-white [@media(max-height:700px)]:text-base">{title}</h3>
+        {subtitle && <p className="text-sm text-slate-400 mt-1 [@media(max-height:700px)]:text-xs">{subtitle}</p>}
       </div>
 
       {/* Chart content */}
@@ -155,6 +172,7 @@ export const RidesLineChart = memo(function RidesLineChart({
   showArea = true,
   height = 300,
 }: RidesLineChartProps) {
+  const resolvedHeight = useCompactHeight(height, 220);
   const chartData = useMemo(() => {
     return data.map(d => ({
       name: d.label || d.date,
@@ -165,7 +183,7 @@ export const RidesLineChart = memo(function RidesLineChart({
   if (data.length === 0) {
     return (
       <ChartWrapper title={title}>
-        <div className="h-[300px] flex items-center justify-center text-slate-500">
+        <div className="flex items-center justify-center text-slate-500" style={{ height: resolvedHeight }}>
           No data available
         </div>
       </ChartWrapper>
@@ -174,7 +192,7 @@ export const RidesLineChart = memo(function RidesLineChart({
 
   return (
     <ChartWrapper title={title} subtitle="Last 30 days activity">
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height={resolvedHeight}>
         {showArea ? (
           <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
             <defs>
@@ -263,6 +281,7 @@ export const EarningsChart = memo(function EarningsChart({
   isSpending = false,
   height = 300,
 }: EarningsChartProps) {
+  const resolvedHeight = useCompactHeight(height, 220);
   const chartData = useMemo(() => {
     return data.map(d => ({
       name: d.label || d.date,
@@ -276,7 +295,7 @@ export const EarningsChart = memo(function EarningsChart({
   if (data.length === 0) {
     return (
       <ChartWrapper title={title}>
-        <div className="h-[300px] flex items-center justify-center text-slate-500">
+        <div className="flex items-center justify-center text-slate-500" style={{ height: resolvedHeight }}>
           No data available
         </div>
       </ChartWrapper>
@@ -285,7 +304,7 @@ export const EarningsChart = memo(function EarningsChart({
 
   return (
     <ChartWrapper title={title} subtitle="Financial trends over time">
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height={resolvedHeight}>
         <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -341,6 +360,7 @@ export const WeeklyActivityChart = memo(function WeeklyActivityChart({
   title = 'Weekly Activity',
   height = 250,
 }: WeeklyActivityChartProps) {
+  const resolvedHeight = useCompactHeight(height, 190);
   const chartData = useMemo(() => {
     return data.map(d => ({
       name: d.label || d.date,
@@ -351,7 +371,7 @@ export const WeeklyActivityChart = memo(function WeeklyActivityChart({
   if (data.length === 0) {
     return (
       <ChartWrapper title={title}>
-        <div className="h-[250px] flex items-center justify-center text-slate-500">
+        <div className="flex items-center justify-center text-slate-500" style={{ height: resolvedHeight }}>
           No data available
         </div>
       </ChartWrapper>
@@ -360,7 +380,7 @@ export const WeeklyActivityChart = memo(function WeeklyActivityChart({
 
   return (
     <ChartWrapper title={title} subtitle="Rides by day of week">
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height={resolvedHeight}>
         <BarChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
           <XAxis
@@ -416,12 +436,13 @@ export const StatusPieChart = memo(function StatusPieChart({
   title = 'Ride Status Breakdown',
   height = 300,
 }: StatusPieChartProps) {
+  const resolvedHeight = useCompactHeight(height, 220);
   const total = useMemo(() => data.reduce((sum, d) => sum + d.value, 0), [data]);
 
   if (data.length === 0 || total === 0) {
     return (
       <ChartWrapper title={title}>
-        <div className="h-[300px] flex items-center justify-center text-slate-500">
+        <div className="flex items-center justify-center text-slate-500" style={{ height: resolvedHeight }}>
           No data available
         </div>
       </ChartWrapper>
@@ -431,7 +452,7 @@ export const StatusPieChart = memo(function StatusPieChart({
   return (
     <ChartWrapper title={title} subtitle={`Total: ${total} rides`}>
       <div className="flex flex-col lg:flex-row items-center gap-6">
-        <ResponsiveContainer width="100%" height={height}>
+        <ResponsiveContainer width="100%" height={resolvedHeight}>
           <PieChart>
             <Pie
               data={data}
@@ -533,13 +554,13 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
   return (
     <ChartWrapper title={title} subtitle="Activity by day and hour">
       <div className="overflow-x-auto">
-        <div className="min-w-[600px]">
+        <div className="min-w-[600px] [@media(max-height:700px)]:min-w-[520px]">
           {/* Hour labels */}
-          <div className="flex gap-1 mb-1 pl-12">
+          <div className="flex gap-1 mb-1 pl-12 [@media(max-height:700px)]:pl-10">
             {[0, 6, 12, 18, 23].map(hour => (
               <div
                 key={hour}
-                className="text-xs text-slate-500"
+                className="text-xs text-slate-500 [@media(max-height:700px)]:text-[10px]"
                 style={{ width: '28px', marginLeft: hour === 0 ? 0 : 'auto' }}
               >
                 {hour}h
@@ -556,14 +577,14 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
               transition={{ delay: dayIdx * 0.05 }}
               className="flex items-center gap-1 mb-1"
             >
-              <div className="w-10 text-xs text-slate-500 text-right pr-2">{day}</div>
+              <div className="w-10 text-xs text-slate-500 text-right pr-2 [@media(max-height:700px)]:text-[10px] [@media(max-height:700px)]:w-8">{day}</div>
               {hours.map(hour => {
                 const value = getValue(day, hour);
                 return (
                   <div
                     key={`${day}-${hour}`}
                     className={cn(
-                      'w-5 h-5 rounded-sm transition-all duration-200 hover:scale-125 cursor-pointer relative group',
+                      'w-5 h-5 rounded-sm transition-all duration-200 hover:scale-125 cursor-pointer relative group [@media(max-height:700px)]:w-4 [@media(max-height:700px)]:h-4',
                       getColor(value)
                     )}
                     title={`${day} ${hour}:00 - ${value} rides`}

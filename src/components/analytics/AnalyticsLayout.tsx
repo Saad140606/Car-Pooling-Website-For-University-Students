@@ -25,7 +25,7 @@ export interface FilterOption {
 interface AnalyticsLayoutProps {
   children: React.ReactNode;
   title: string;
-  portalName: "FAST" | "NED";
+  portalName: "FAST" | "NED" | "Karachi";
   dateRange: DateRange;
   onDateRangeChange: (range: DateRange) => void;
   onRefresh?: () => void;

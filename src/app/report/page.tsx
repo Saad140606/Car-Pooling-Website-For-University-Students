@@ -218,6 +218,7 @@ export default function ReportPage() {
                         <SelectContent className="bg-slate-900">
                           <SelectItem value="fast">FAST-NUCES</SelectItem>
                           <SelectItem value="ned">NED University</SelectItem>
+                          <SelectItem value="karachi">Karachi University</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

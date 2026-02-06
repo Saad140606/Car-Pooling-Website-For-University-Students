@@ -345,11 +345,11 @@ export default function AboutPage() {
         
         <Reveal className="space-y-4 text-center mb-8 relative z-10">
           <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Universities We Serve</p>
-          <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Active at FAST & NED University Karachi</h2>
-          <p className="text-slate-300 max-w-2xl mx-auto">Campus Ride is officially active and serving students at both FAST University Karachi and NED University Karachi with equal focus and dedication.</p>
+          <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Active at FAST, NED & Karachi University</h2>
+          <p className="text-slate-300 max-w-2xl mx-auto">Campus Ride is officially active and serving students at FAST University, NED University, and Karachi University with equal focus and dedication.</p>
         </Reveal>
 
-        <div className="grid md:grid-cols-2 gap-6 max-w-5xl mx-auto relative z-10">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto relative z-10">
           <Reveal delay={100}>
             <AnimatedCard 
               animation="scale-up"
@@ -446,12 +446,61 @@ export default function AboutPage() {
               </div>
             </AnimatedCard>
           </Reveal>
+
+          <Reveal delay={300}>
+            <AnimatedCard 
+              animation="scale-up"
+              hover="lift"
+              delay={2}
+              className="group relative overflow-hidden border-2 border-purple-500/30 bg-gradient-to-br from-purple-500/10 via-card/80 to-card/70 p-8 hover:border-purple-500/50 hover:shadow-xl hover:shadow-purple-500/30 transition-all duration-500"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+              <div className="relative">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-500/20 text-purple-400 font-bold text-3xl shadow-lg">
+                    K
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-semibold text-slate-50">Karachi University</h3>
+                    <p className="text-slate-400">Karachi Campus</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2 mb-6 text-emerald-400">
+                  <span className="h-3 w-3 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-sm font-semibold">Active & Verified</span>
+                </div>
+
+                <div className="space-y-3 text-slate-300">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-purple-400" />
+                    <span className="text-sm">University email verification required</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-purple-400" />
+                    <span className="text-sm">Exclusive student community</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-purple-400" />
+                    <span className="text-sm">Optimized for Karachi University routes</span>
+                  </div>
+                </div>
+
+                <AnimatedButton asChild className="mt-6 w-full rounded-full" size="lg" variant="outline">
+                  <Link href="/auth/karachi/register" className="inline-flex items-center justify-center gap-2 border-purple-500/40 text-slate-200 hover:border-purple-500 hover:bg-purple-500/10">
+                    Join Karachi Portal
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </AnimatedButton>
+              </div>
+            </AnimatedCard>
+          </Reveal>
         </div>
 
-        <Reveal delay={300} className="mt-8 text-center relative z-10">
+        <Reveal delay={400} className="mt-8 text-center relative z-10">
           <div className="inline-block rounded-2xl border border-primary/20 bg-gradient-to-br from-card/90 to-card/70 px-8 py-6 backdrop-blur-sm">
             <p className="text-slate-300">
-              <span className="font-semibold text-slate-50">Equal Focus, Equal Service:</span> Both universities receive the same level of attention, features, and support from Campus Ride.
+              <span className="font-semibold text-slate-50">Equal Focus, Equal Service:</span> All three universities receive the same level of attention, features, and support from Campus Ride.
             </p>
           </div>
         </Reveal>

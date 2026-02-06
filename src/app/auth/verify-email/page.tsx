@@ -81,7 +81,7 @@ function VerifyEmailContent() {
       const response = await fetch('/api/verify-signup-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid, otp }),
+        body: JSON.stringify({ uid, otp, university }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
@@ -109,6 +109,28 @@ function VerifyEmailContent() {
           return;
         }
         // ===== END CRITICAL CLEANUP =====
+        
+        // ===== CRITICAL: Handle portal mismatch (403) =====
+        if (response.status === 403) {
+          console.error('Portal mismatch detected - user tried to verify on wrong university portal');
+          // Delete Firebase user since they started signup on a different portal
+          try {
+            if (auth?.currentUser) {
+              await auth.currentUser.delete();
+              console.log('Firebase user deleted due to portal mismatch');
+            }
+          } catch (deleteErr: any) {
+            console.warn('Could not delete Firebase user:', deleteErr);
+          }
+          
+          toast({ variant: 'destructive', title: 'Wrong Portal', description: msg });
+          setTimeout(() => {
+            router.push('/auth/select-university');
+          }, 2000);
+          setVerifying(false);
+          return;
+        }
+        // ===== END CRITICAL PORTAL MISMATCH HANDLING =====
         
         // For 401 (Invalid OTP): show simple error and clear input
         if (response.status === 401) {

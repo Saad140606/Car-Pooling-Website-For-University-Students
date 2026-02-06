@@ -14,6 +14,8 @@ import {
   ChevronDown,
   Loader2,
   AlertCircle,
+  DollarSign,
+  Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUser, useFirestore } from '@/firebase';
@@ -40,6 +42,10 @@ import {
 } from '@/components/analytics/AnalyticsPremiumCharts';
 import { RideHistoryTable } from '@/components/analytics/RideHistoryTable';
 import { InsightsSection, QuickStatsBar } from '@/components/analytics/SmartInsights';
+
+// Import new post-ride analytics components
+import DriverEarningsCard from '@/components/analytics/DriverEarningsCard';
+import PassengerSpendingCard from '@/components/analytics/PassengerSpendingCard';
 
 // ============================================================================
 // ROLE TOGGLE TABS
@@ -218,6 +224,20 @@ interface DriverAnalyticsProps {
 const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: DriverAnalyticsProps) {
   return (
     <div className="space-y-8 [@media(max-height:700px)]:space-y-4">
+      {/* Post-Ride Earnings & Ratings Card */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+      >
+        <SectionHeader
+          title="Earnings & Ratings"
+          subtitle="Real earnings from completed rides"
+          icon={<DollarSign className="w-5 h-5 text-emerald-400" />}
+        />
+        <DriverEarningsCard />
+      </motion.div>
+
       {/* Quick Stats Bar */}
       <QuickStatsBar
         stats={[
@@ -364,6 +384,20 @@ interface PassengerAnalyticsProps {
 const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }: PassengerAnalyticsProps) {
   return (
     <div className="space-y-8">
+      {/* Post-Ride Spending Card */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+      >
+        <SectionHeader
+          title="Spending Analytics"
+          subtitle="Track your ride expenses"
+          icon={<Wallet className="w-5 h-5 text-blue-400" />}
+        />
+        <PassengerSpendingCard />
+      </motion.div>
+
       {/* Quick Stats Bar */}
       <QuickStatsBar
         stats={[

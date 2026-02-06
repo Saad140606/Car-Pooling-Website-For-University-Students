@@ -14,16 +14,22 @@ function hashOtp(otp: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    let { uid, otp } = await request.json();
+    let { uid, otp, university } = await request.json();
 
     // Sanitize and trim OTP
     if (otp) {
       otp = String(otp).trim().replace(/\s/g, '');
     }
 
-    if (!uid || !otp) {
+    if (!uid || !otp || !university) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+
+    // ===== CRITICAL SECURITY: Validate university parameter =====
+    if (!['fast', 'ned'].includes(university)) {
+      return NextResponse.json({ error: 'Invalid university' }, { status: 400 });
+    }
+    // ===== END CRITICAL VALIDATION =====
 
     // SECURITY: Removed verbose logging to prevent information leakage
 
@@ -41,6 +47,19 @@ export async function POST(request: NextRequest) {
       console.warn('Invalid OTP data for uid:', uid);
       return NextResponse.json({ error: 'Invalid verification data' }, { status: 400 });
     }
+
+    // ===== CRITICAL SECURITY: Enforce portal consistency =====
+    // OTP must be verified on the SAME portal where signup started
+    if (otpData.university !== university) {
+      console.error(`SECURITY: Portal mismatch! OTP started on ${otpData.university}, verification attempted on ${university}`);
+      return NextResponse.json(
+        { 
+          error: `You started signup on ${otpData.university === 'fast' ? 'FAST' : 'NED'} University portal. Please verify your code on the same portal.`
+        },
+        { status: 403 } // Forbidden - trying to use OTP on wrong portal
+      );
+    }
+    // ===== END CRITICAL SECURITY CHECK =====
 
     const now = Date.now();
 

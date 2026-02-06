@@ -1,6 +1,7 @@
 declare module 'firebase/app' {
   export function initializeApp(...args: any[]): any;
   export function getApps(...args: any[]): any;
+  export function getApp(...args: any[]): any;
   export type FirebaseOptions = any;
 }
 
@@ -27,6 +28,7 @@ declare module 'firebase/firestore' {
   export function getFirestore(...args: any[]): any;
   export function doc(...args: any[]): any;
   export function collection(...args: any[]): any;
+  export function collectionGroup(...args: any[]): any;
   export function addDoc(...args: any[]): any;
   export function setDoc(...args: any[]): any;
   export function getDoc(...args: any[]): any;
@@ -41,6 +43,7 @@ declare module 'firebase/firestore' {
   export function updateDoc(...args: any[]): any;
   export function deleteDoc(...args: any[]): any;
   export function serverTimestamp(...args: any[]): any;
+  export const Timestamp: any;
   export type Timestamp = any;
 }
 

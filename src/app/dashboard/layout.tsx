@@ -3,12 +3,12 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, Shield, AlertTriangle, BarChart3 } from 'lucide-react';
+import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, AlertTriangle, BarChart3 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import Logo from '@/components/logo';
-import { useAuth, useUser, useIsAdmin, useFirestore } from '@/firebase';
+import { useAuth, useUser, useFirestore } from '@/firebase';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -18,6 +18,7 @@ import NotificationBadge from '@/components/NotificationBadge';
 import { ErrorState } from '@/components/StateComponents';
 import { useToast } from '@/hooks/use-toast';
 import { EnableNotificationsBanner } from '@/components/notifications/EnableNotificationsBanner';
+import RatingPopup from '@/components/post-ride/RatingPopup';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -32,7 +33,6 @@ const navItems = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, loading: userLoading, data: userData, initialized } = useUser();
-  const { isAdmin, loading: adminLoading } = useIsAdmin();
   const { unreadCount } = useNotifications();
   const auth = useAuth();
   const firestore = useFirestore();
@@ -41,12 +41,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [verificationChecked, setVerificationChecked] = useState(false);
 
-  // Check if current route is an admin route
-  const isAdminRoute = pathname?.startsWith('/dashboard/admin');
-  
-  // CRITICAL: All hooks must be called before any conditional returns
-  // Store redirect intent in state instead of returning early
-
   // ===== CRITICAL SECURITY: Verify email verification status =====
   // This is a safety check to ensure unverified users can't access dashboard
   // even if they somehow bypass the login flow
@@ -54,16 +48,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     // Skip check until user data is loaded
     if (!user || !userData || !initialized || !firestore || verificationChecked) return;
 
-    // Skip for admins
-    const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
     
-    if (user.email && adminEmails.includes(user.email.toLowerCase())) {
-      setVerificationChecked(true);
-      return;
-    }
 
     // Check if email is verified
     const checkVerification = async () => {
@@ -118,31 +103,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [user, userData, initialized, firestore, verificationChecked, auth, router, toast]);
   // ===== END CRITICAL SECURITY CHECK =====
 
-  // Auth redirect logic - only redirect unauthenticated users to login
+  // Auth redirect logic - only redirect unauthenticated users to login for certain pages
   useEffect(() => {
     // Don't redirect until everything is initialized
     if (!initialized) return;
     
-    // For admin routes: wait for admin check to complete
-    if (isAdminRoute && adminLoading) return;
+    // Allow logged-out users to access /dashboard/rides (public rides viewing)
+    // But redirect from other dashboard pages that require authentication
+    const isRidesPage = pathname === '/dashboard/rides' || pathname?.startsWith('/dashboard/rides?');
     
-    // For admin routes: if user is confirmed admin, allow access
-    if (isAdminRoute && isAdmin && user) {
-      return;
-    }
-    
-    // For admin routes: if not admin and check is complete, redirect to unauthorized
-    if (isAdminRoute && !adminLoading && !isAdmin) {
-      router.replace('/unauthorized');
-      return;
-    }
-    
-    // For non-admin routes: if no user at all, redirect to select university
-    if (!isAdminRoute && !user && !userLoading && initialized) {
+    // If no user and on a non-public dashboard page, redirect to select university
+    if (!user && !userLoading && initialized && !isRidesPage) {
       router.replace('/auth/select-university');
       return;
     }
-  }, [initialized, user, userLoading, isAdmin, adminLoading, isAdminRoute, router]);
+  }, [initialized, user, userLoading, router, pathname]);
 
   // ALL CONDITIONAL REDIRECTS REMOVED
   // Users always stay on dashboard after login - no redirects to select-university or complete-profile
@@ -172,8 +147,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
-  // Loading state
-  if (userLoading || !user) {
+  // For public rides page, allow rendering without user
+  const isRidesPage = pathname === '/dashboard/rides' || pathname?.startsWith('/dashboard/rides?');
+  
+  // Loading state for non-public pages OR if initializing
+  if ((userLoading && !isRidesPage) || (!initialized)) {
     return (
       <div className="flex min-h-screen">
         <aside className="hidden md:flex w-64 flex-col p-4 space-y-4">
@@ -206,7 +184,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
         <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '2s' }} />
       </div>
-      {/* Desktop Sidebar */}
+      {/* Desktop Sidebar - Only show if user is logged in */}
+      {user && (
       <aside className="hidden md:flex w-64 flex-col bg-gradient-to-b from-slate-950/80 via-slate-900/60 to-slate-950/80 backdrop-blur-md sticky top-0 h-screen shadow-lg shadow-primary/5">
         <div className="p-4 animate-slide-in-down">
           <Logo />
@@ -242,24 +221,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </li>
               );
             })}
-            {isAdmin && (
-              <li key="admin-panel" className="animate-slide-in-left" style={{ animationDelay: `${navItems.length * 50}ms` }}>
-                <Button
-                  asChild
-                  variant={pathname?.startsWith('/dashboard/admin') ? 'secondary' : 'ghost'}
-                  className={cn(
-                    'w-full justify-start gap-3 rounded-lg transition-all duration-200 group',
-                    pathname?.startsWith('/dashboard/admin') && 'bg-gradient-to-r from-primary/25 to-accent/10 shadow-lg shadow-primary/15 text-primary',
-                    !pathname?.startsWith('/dashboard/admin') && 'text-slate-300 hover:text-slate-100 hover:bg-slate-800/40'
-                  )}
-                >
-                  <Link href="/dashboard/admin" className="flex items-center gap-3 w-full">
-                    <Shield className="h-5 w-5 text-slate-400 group-hover:text-primary transition-all duration-300" />
-                    <span className="font-medium">Admin Panel</span>
-                  </Link>
-                </Button>
-              </li>
-            )}
           </ul>
         </nav>
 
@@ -299,12 +260,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </DropdownMenu>
         </div>
       </aside>
+      )}
 
       {/* Main Content */}
       <div className="flex flex-1 flex-col">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between p-4 bg-gradient-to-r from-slate-950/80 via-slate-900/60 to-slate-950/80 backdrop-blur-md sticky top-0 z-40 animate-slide-down shadow-lg shadow-primary/5">
           <Logo />
+          {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Avatar className="h-10 w-10 cursor-pointer border-2 border-primary/40 hover:border-primary/60 transition-all duration-200">
@@ -339,14 +302,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </Link>
                 </DropdownMenuItem>
               ))}
-              {isAdmin && (
-                <DropdownMenuItem key="admin-panel" asChild className="rounded-lg">
-                  <Link href="/dashboard/admin" className={cn("cursor-pointer", pathname?.startsWith('/dashboard/admin') && "bg-muted")}>
-                    <Shield className="mr-2 h-4 w-4" />
-                    Admin
-                  </Link>
-                </DropdownMenuItem>
-              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="rounded-lg text-destructive focus:text-destructive cursor-pointer">
                 <LogOut className="mr-2 h-4 w-4" />
@@ -354,13 +309,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
         </header>
 
         {/* Main Content Area */}
         <main className="flex-1 px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8 bg-transparent overflow-x-hidden">
           <EnableNotificationsBanner />
-          {safeChildren}
+          {safeChildren.map((child, idx) => (
+            <React.Fragment key={
+              // preserve existing element key when available, fallback to index
+              (child && typeof child === 'object' && 'key' in child && (child as any).key) ? String((child as any).key) : `dashboard-child-${idx}`
+            }>
+              {child}
+            </React.Fragment>
+          ))}
         </main>
+        
+        {/* Rating Popup - appears when user has completed rides to rate */}
+        <RatingPopup />
       </div>
     </div>
   );

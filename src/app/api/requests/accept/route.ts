@@ -20,17 +20,29 @@ import {
 import { notifyRequestAccepted } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
+  console.log('[API /api/requests/accept] Received request');
+  console.log('[API] Headers:', {
+    authorization: req.headers.get('Authorization'),
+    contentType: req.headers.get('Content-Type'),
+    hasAuthHeader: req.headers.has('Authorization'),
+    allHeaders: Array.from(req.headers.keys())
+  });
+  
   // Check if Firebase Admin is initialized
   if (!adminDb) {
+    console.error('[API] Firebase Admin not initialized');
     return errorResponse('Server configuration error', 500);
   }
 
   // ===== AUTHENTICATION =====
+  console.log('[API] Checking authentication...');
   const authResult = await requireAuth(req);
   if (authResult instanceof NextResponse) {
+    console.error('[API] Authentication failed');
     return authResult;
   }
   const authenticatedUserId = authResult.uid;
+  console.log('[API] Authenticated user:', authenticatedUserId);
 
   // ===== RATE LIMITING =====
   const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);

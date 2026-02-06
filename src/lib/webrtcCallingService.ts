@@ -3,7 +3,7 @@
  * Handles audio and video calls with signaling
  */
 
-import { Firestore, collection, addDoc, query, where, onSnapshot, updateDoc, doc, deleteDoc, serverTimestamp, DocumentReference, arrayUnion, getDoc } from 'firebase/firestore';
+import { Firestore, collection, addDoc, query, where, onSnapshot, updateDoc, doc, deleteDoc, serverTimestamp, DocumentReference, getDoc } from 'firebase/firestore';
 import { ringtoneManager } from './ringtoneManager';
 
 export type CallType = 'audio' | 'video';

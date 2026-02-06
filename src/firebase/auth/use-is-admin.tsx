@@ -2,75 +2,29 @@
 import { useEffect, useState } from 'react';
 import { useUser } from './use-user';
 
-// Secure admin check: verify ID token on server and check admins/{uid}
+/**
+ * IMPORTANT: This hook should ONLY be used in admin-specific pages
+ * NOT in regular user dashboard or user flows
+ * 
+ * For security: Returns false immediately to prevent accidental admin checks in user flows
+ */
 export function useIsAdmin() {
   const { user } = useUser();
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // DISABLED: Do not use this hook in user flows
+  // Admin checks should only happen in /admin-login and /admin-dashboard
+  // Regular users should never trigger admin verification
+  
   useEffect(() => {
-    let mounted = true;
+    // Immediately return false - this hook should not be used in user flows
+    setIsAdmin(false);
+    setLoading(false);
     
-    async function check() {
-      setLoading(true);
-      setError(null);
-      
-      if (!user) {
-        if (mounted) {
-          setIsAdmin(false);
-          setLoading(false);
-        }
-        return;
-      }
-
-      try {
-        // Get ID token from Firebase user
-        const token = await user.getIdToken(true); // Force refresh to get latest claims
-        if (!mounted) return;
-        
-        // Call API to verify admin status server-side
-        const res = await fetch('/api/admin/isAdmin', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!mounted) return;
-
-        if (res.ok) {
-          const body = await res.json();
-          const verified = Boolean(body?.isAdmin);
-          setIsAdmin(verified);
-          if (verified) {
-            console.log('[useIsAdmin] Admin verified successfully');
-          }
-        } else {
-          console.warn('[useIsAdmin] API returned error status:', res.status);
-          setIsAdmin(false);
-          setError(`API returned ${res.status}`);
-        }
-      } catch (err) {
-        if (mounted) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error('[useIsAdmin] Error checking admin status:', msg);
-          setIsAdmin(false);
-          setError(msg);
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    }
-
-    check();
-    
-    return () => {
-      mounted = false;
-    };
+    // If you need admin checks, use them directly in admin pages with fetch('/api/admin/isAdmin')
+    // Do NOT use this hook in dashboard layout or user components
   }, [user]);
 
   return { isAdmin, loading, error };

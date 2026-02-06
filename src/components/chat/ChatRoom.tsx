@@ -256,7 +256,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         setCallError('Call timeout - recipient did not answer in 60 seconds');
         cleanupCall().catch(() => {});
       }
-    }, 60000);
+    }, 60000) as any;
 
     // local stream
     let stream: MediaStream | null = null;
@@ -373,8 +373,8 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     // create offer
     try {
-      if (pc.connectionState === 'closed' || pc.signalingState === 'closed') {
-        console.error('[ChatRoom] PC closed before creating offer');
+      if (pc.connectionState === 'failed' || pc.signalingState === 'closed' as any) {
+        console.error('[ChatRoom] PC failed/closed before creating offer');
         setInCall(false);
         await cleanupCall();
         return;

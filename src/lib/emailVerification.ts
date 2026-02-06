@@ -37,18 +37,7 @@ export async function checkEmailVerification(
     };
   }
 
-  // Check if user is admin (admins bypass verification)
-  const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  
-  if (user.email && adminEmails.includes(user.email.toLowerCase())) {
-    return {
-      isVerified: true,
-      requiresVerification: false,
-    };
-  }
+  // Always require verification; do not bypass for admin emails.
 
   // Try both universities if target not specified
   const universitiesToCheck: Array<'ned' | 'fast'> = targetUniversity 

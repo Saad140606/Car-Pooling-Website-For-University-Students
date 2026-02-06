@@ -32,16 +32,10 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
 
       // If user is authenticated, handle email verification before routing to dashboard
       if (user) {
-        const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
-          .split(',')
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean);
-
-        const isAdmin = !!(user.email && adminEmails.includes(user.email.toLowerCase()));
         const isVerified = Boolean((userData as any)?.universityEmailVerified ?? (userData as any)?.emailVerified);
         const university = (userData as any)?.university || null;
 
-        if (!isAdmin && university && !isVerified && !verificationHandledRef.current) {
+        if (university && !isVerified && !verificationHandledRef.current) {
           verificationHandledRef.current = true;
           setIsRedirecting(true);
           // Send OTP for verification

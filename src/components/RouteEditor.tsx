@@ -218,11 +218,32 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
   // Recalculate route when origin/destination/waypoints change
   useEffect(() => {
     const doGenerate = async () => {
-      if (!origin || !destination) return;
+      if (!origin || !destination) {
+        console.log('[ROUTE_EDITOR] Missing origin or destination, skipping route generation');
+        return;
+      }
+      
+      // Validate coordinates are valid numbers
+      if (!isFinite(origin.lat) || !isFinite(origin.lng) || !isFinite(destination.lat) || !isFinite(destination.lng)) {
+        console.error('[ROUTE_EDITOR] Invalid coordinates:', { origin, destination });
+        setRouteError('Invalid location coordinates. Please select valid locations.');
+        setGenerating(false);
+        return;
+      }
+      
+      console.log('[ROUTE_EDITOR] Generating route from', origin, 'to', destination, 'with', waypoints.length, 'waypoints');
       setGenerating(true);
+      setRouteError(null);
       let coords: [number, number][] = [];
       try {
         coords = [ [origin.lng, origin.lat] as [number, number], ...waypoints.map(w => [w.lng, w.lat] as [number, number]), [destination.lng, destination.lat] as [number, number] ];
+        
+        // Validate all coordinates
+        for (const [lng, lat] of coords) {
+          if (!isFinite(lat) || !isFinite(lng)) {
+            throw new Error('Invalid coordinate values detected');
+          }
+        }
         
         let lastErr: any = null;
         
@@ -244,31 +265,54 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
               let parsed: any = null;
               try { bodyText = await resp.text(); } catch (e) { /* ignore */ }
               try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch (e) { parsed = bodyText; }
-              const friendly = 'No route found between these locations. Try different points or adjust the route.';
+              const friendly = 'Unable to find a route. Try selecting different locations or check that they are accessible by car.';
+              
+              console.warn(`[ROUTE_EDITOR] Route service error on attempt ${attempt}/${2}`, { status: resp.status, body: parsed });
+              
               if (resp.status >= 400 && resp.status < 500) {
-                console.warn('Route service returned client error (no route/bad request)', { status: resp.status });
-                setRouteError(friendly);
+                // Client error - no route available
+                console.warn('[ROUTE_EDITOR] Client error (no route available)', { status: resp.status });
+                setRouteError('No route found. Please select different locations that are connected by roads.');
                 setGenerating(false);
                 return;
               }
               if (attempt < 2) {
-                await new Promise(r => setTimeout(r, 150)); // Faster retry: 150ms
+                console.log(`[ROUTE_EDITOR] Retrying route generation (attempt ${attempt + 1}/2)`);
+                await new Promise(r => setTimeout(r, 300)); // 300ms retry delay
                 continue;
               }
-              console.warn('Route service error', { status: resp.status });
+              console.error('[ROUTE_EDITOR] Route generation failed after all retries');
               setRouteError(friendly);
               setGenerating(false);
               return;
             }
             const data = await resp.json();
-            setRouteError(null);
+            
+            // Validate response data
+            if (!data || !data.features || data.features.length === 0) {
+              throw new Error('Empty route response from server');
+            }
+            
             const coordsRes: any[] = (data?.features?.[0]?.geometry?.coordinates) || (data?.geometry?.coordinates) || [];
+            
+            if (coordsRes.length === 0) {
+              throw new Error('No route coordinates in response');
+            }
+            
             const latlngs: LatLng[] = coordsRes.map((c: any) => ({ lat: c[1], lng: c[0] }));
             const polyline = encodePolyline(latlngs);
             const bounds = computeBounds(latlngs);
             const summary = (data?.features && data.features[0] && data.features[0].properties && data.features[0].properties.summary) || null;
             const distanceMeters = summary?.distance ?? null;
             const durationSeconds = summary?.duration ?? null;
+            
+            console.log('[ROUTE_EDITOR] ✓ Route generated successfully:', { 
+              points: latlngs.length, 
+              distance: distanceMeters ? `${(distanceMeters/1000).toFixed(1)}km` : 'unknown',
+              duration: durationSeconds ? `${Math.round(durationSeconds/60)}min` : 'unknown'
+            });
+            
+            setRouteError(null);
             onRouteGenerated?.({ waypoints, polyline, bounds, distanceMeters, durationSeconds });
             setGenerating(false);
             return; // Success
@@ -283,11 +327,14 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
         }
         
         // All retries failed
-        console.warn('Route generation failed after retries', lastErr);
-        setRouteError('No route found between these locations. Try different points or adjust the route.');
+        console.error('[ROUTE_EDITOR] Route generation failed after all retries:', lastErr?.message || lastErr);
+        const errorMsg = lastErr?.name === 'AbortError' 
+          ? 'Request timed out. Please try selecting your locations again or check your internet connection.'
+          : 'Unable to find a route. Please select different locations that are connected by roads.';
+        setRouteError(errorMsg);
       } catch (e: any) {
-        console.warn('Route generation failed', e);
-        setRouteError('No route found between these locations. Try different points or adjust the route.');
+        console.error('[ROUTE_EDITOR] Route generation error:', e?.message || e);
+        setRouteError('Unable to generate route. Please select different locations and try again.');
       } finally { setGenerating(false); }
     };
     doGenerate();
@@ -310,6 +357,51 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
             className="pr-10"
           />
           {searchLoading && <Loader2 className="absolute right-3 top-3 w-4 h-4 animate-spin text-muted-foreground" />}
+
+          {suggestions.length > 0 && (
+            <div className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700 p-2 rounded max-h-72 overflow-y-auto z-50 shadow-lg">
+              {suggestions.map((s, idx) => {
+                const primaryName = extractPlaceName(s);
+                const a = s.address || {};
+                const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
+                const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
+                const city = a.city || a.town || a.village;
+                const secondary = [road, hood, city].filter(Boolean).join(', ');
+                
+                return (
+                  <div 
+                    key={s.place_id || idx}
+                    className="p-2 hover:bg-slate-700 cursor-pointer rounded transition" 
+                    onClick={() => { 
+                      addWaypoint({ name: primaryName, lat: Number(s.lat), lng: Number(s.lon) }); 
+                      setQuery(''); 
+                      setSuggestions([]);
+                    }}
+                  >
+                    <div className="text-sm font-medium text-slate-100 truncate">
+                      {highlightMatch(primaryName, query)}
+                    </div>
+                    {secondary && (
+                      <div className="text-xs text-muted-foreground truncate">
+                        {highlightMatch(secondary, query)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {suggestions.length >= suggestLimit && (
+                <div className="p-2 border-t border-slate-700">
+                  <button 
+                    type="button" 
+                    className="text-xs text-accent hover:underline" 
+                    onClick={() => setSuggestLimit((v) => Math.min(100, v + 25))}
+                  >
+                    Show more results
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <Button 
           onClick={() => { 
@@ -325,51 +417,6 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
           Add
         </Button>
       </div>
-
-      {suggestions.length > 0 && (
-        <div className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700 p-2 rounded max-h-72 overflow-y-auto z-50 shadow-lg">
-          {suggestions.map((s, idx) => {
-            const primaryName = extractPlaceName(s);
-            const a = s.address || {};
-            const road = a.road || a.residential || a.pedestrian || a.path || a.cycleway;
-            const hood = a.neighbourhood || a.suburb || a.quarter || a.city_district;
-            const city = a.city || a.town || a.village;
-            const secondary = [road, hood, city].filter(Boolean).join(', ');
-            
-            return (
-              <div 
-                key={s.place_id || idx}
-                className="p-2 hover:bg-slate-700 cursor-pointer rounded transition" 
-                onClick={() => { 
-                  addWaypoint({ name: primaryName, lat: Number(s.lat), lng: Number(s.lon) }); 
-                  setQuery(''); 
-                  setSuggestions([]);
-                }}
-              >
-                <div className="text-sm font-medium text-slate-100 truncate">
-                  {highlightMatch(primaryName, query)}
-                </div>
-                {secondary && (
-                  <div className="text-xs text-muted-foreground truncate">
-                    {highlightMatch(secondary, query)}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {suggestions.length >= suggestLimit && (
-            <div className="p-2 border-t border-slate-700">
-              <button 
-                type="button" 
-                className="text-xs text-accent hover:underline" 
-                onClick={() => setSuggestLimit((v) => Math.min(100, v + 25))}
-              >
-                Show more results
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="space-y-2 mt-4">
         {waypoints.length === 0 ? (

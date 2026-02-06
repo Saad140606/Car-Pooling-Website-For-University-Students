@@ -22,6 +22,11 @@ const universities = [
     slug: "fast",
     image: PlaceHolderImages.find(img => img.id === "fast-university-campus"),
   },
+  {
+    name: "Karachi University",
+    slug: "karachi",
+    image: PlaceHolderImages.find(img => img.id === "karachi-university-campus"),
+  },
 ];
 
 export default function SelectUniversityPage() {
@@ -46,7 +51,7 @@ export default function SelectUniversityPage() {
               <p className="max-w-2xl text-slate-300">Choose your university to sign in or create an account.</p>
             </Reveal>
 
-            <div className="mt-10 grid w-full grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="mt-10 grid w-full grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
         {universities.map((uni, idx) => (
           <Reveal key={uni.slug} delay={idx * 90} className="group">
             <button onClick={() => goToUniversity(uni.slug)} className="w-full text-left">

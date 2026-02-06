@@ -40,16 +40,23 @@ export interface RateLimitResult {
 /**
  * Verify Firebase ID token from Authorization header
  * Returns the authenticated user or null if invalid
+ * @param req - The request object
+ * @param silent - If true, suppress logging for missing auth (useful for optional auth endpoints)
  */
-export async function verifyAuthToken(req: NextRequest): Promise<AuthResult> {
+export async function verifyAuthToken(req: NextRequest, silent: boolean = false): Promise<AuthResult> {
   try {
     const authHeader = req.headers.get('Authorization');
     
     if (!authHeader) {
+      // Don't log as error when auth is optional
+      if (!silent) {
+        console.log('[verifyAuthToken] No authorization header found');
+      }
       return { success: false, error: 'Missing authorization header', status: 401 };
     }
     
     if (!authHeader.startsWith('Bearer ')) {
+      console.error('[verifyAuthToken] Invalid authorization format');
       return { success: false, error: 'Invalid authorization format', status: 401 };
     }
     
@@ -234,8 +241,8 @@ export async function applyRateLimit(
   req: NextRequest,
   config: RateLimitConfig
 ): Promise<RateLimitResult | NextResponse> {
-  // Get identifier: authenticated user ID or IP address
-  const authResult = await verifyAuthToken(req);
+  // Get identifier: authenticated user ID or IP address (silent mode to avoid logging)
+  const authResult = await verifyAuthToken(req, true);
   const identifier = authResult.success && authResult.user
     ? `user:${authResult.user.uid}`
     : `ip:${getClientIP(req)}`;

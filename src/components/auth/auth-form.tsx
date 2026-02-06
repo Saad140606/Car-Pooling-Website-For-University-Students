@@ -35,13 +35,14 @@ import { FirestorePermissionError } from "@/firebase/errors";
 import { errorEmitter } from "@/firebase/error-emitter";
 
 type AuthFormProps = {
-  university: "ned" | "fast";
+  university: "ned" | "fast" | "karachi";
   action: "login" | "register";
 };
 
 const universityConfig = {
   ned: { name: "NED University", domain: "neduet.edu.pk" },
   fast: { name: "FAST University", domain: "nu.edu.pk" },
+  karachi: { name: "Karachi University", domain: "uok.edu.pk" },
 };
 
 export function AuthForm({ university, action }: AuthFormProps) {
@@ -90,6 +91,23 @@ export function AuthForm({ university, action }: AuthFormProps) {
     }
 
     try {
+      // ===== BLOCK ADMIN EMAILS from university login pages =====
+      const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
+        .split(',')
+        .map(e => e.trim().toLowerCase())
+        .filter(Boolean);
+      
+      if (adminEmails.includes(values.email.toLowerCase())) {
+        toast({
+          variant: 'destructive',
+          title: 'Access Denied',
+          description: 'Admin accounts cannot login through university pages. Please contact support.',
+        });
+        setLoading(false);
+        return;
+      }
+      // ===== END ADMIN EMAIL BLOCK =====
+
       if (action === "register") {
         // ===== CRITICAL: Check email availability across all universities BEFORE creating user =====
         try {
@@ -108,7 +126,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
             toast({
               variant: 'destructive',
               title: 'Email Already Registered',
-              description: emailCheckData.message || `This email is already registered with another university. Please use a different email or sign in to your existing account.`,
+              description: emailCheckData.message || `This email is already registered with another university portal. Please use a different email or sign in to your existing account.`,
             });
             setLoading(false);
             return;
@@ -200,7 +218,6 @@ export function AuthForm({ university, action }: AuthFormProps) {
         }
 
         const selectedUni = university; // form prop
-        const otherUni = selectedUni === 'ned' ? 'fast' : 'ned';
 
         // Check if this account is a server-registered admin. Admins are
         // allowed to sign in from any portal and — by design — may bypass
@@ -221,7 +238,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
         }
         
         // ===== CRITICAL: Check university membership FIRST before any other checks =====
-        // This prevents sending OTP to users from wrong university
+        // This prevents login from wrong university portal
         let serverResult: any = null;
         try {
           const idToken = await u.getIdToken();
@@ -233,24 +250,27 @@ export function AuthForm({ university, action }: AuthFormProps) {
               isAdminAccount = true;
             }
           }
-        } catch (e) {
-          console.warn('Server membership check failed:', e);
+        } catch (err) {
+          console.error('Error checking admin status:', err);
         }
 
+        // ===== CRITICAL: Validate university consistency during login =====
         // If user is registered under a DIFFERENT university, block immediately
         // Do NOT proceed to email verification or OTP - just show error and stay on login page
         if (serverResult && serverResult.isMember && serverResult.university !== selectedUni) {
+          console.error(`SECURITY: University mismatch during login! User belongs to ${serverResult.university}, attempted login on ${selectedUni}`);
           try { await signOut(auth); } catch (e) { /* ignore */ }
-          const registeredUni = serverResult.registeredIn || serverResult.university || otherUni;
-          const uniName = registeredUni === 'fast' ? 'FAST University' : 'NED University';
+          const registeredUni = serverResult.registeredIn || serverResult.university;
+          const uniName = registeredUni === 'fast' ? 'FAST University' : registeredUni === 'karachi' ? 'Karachi University' : 'NED University';
           toast({ 
             variant: 'destructive', 
             title: 'Wrong University Portal', 
-            description: `This email is registered with ${uniName}. Please sign in through the correct university portal.` 
+            description: `This email is registered with ${uniName} portal. Please sign in through the correct university portal.` 
           });
           setLoading(false);
           return; // CRITICAL: Stop here, do NOT redirect to verify page
         }
+        // ===== END CRITICAL UNIVERSITY VALIDATION =====
 
         // ===== CRITICAL SECURITY: ENFORCE EMAIL VERIFICATION =====
         // BLOCK ALL UNVERIFIED USERS FROM SIGNING IN (except admins)
@@ -409,12 +429,12 @@ export function AuthForm({ university, action }: AuthFormProps) {
             // Member exists but under the other university
             if (!isAdminAccount) {
               try { await signOut(auth); } catch (e) { /* ignore */ }
-              const registeredUni = serverResult.registeredIn || otherUni;
-              const uniName = registeredUni === 'fast' ? 'FAST University' : 'NED University';
+              const registeredUni = serverResult.registeredIn || serverResult.university;
+              const uniName = registeredUni === 'fast' ? 'FAST University' : registeredUni === 'karachi' ? 'Karachi University' : 'NED University';
               toast({ 
                 variant: 'destructive', 
                 title: 'Account Already Exists', 
-                description: `This email is registered with ${uniName}. Please sign in to the correct university portal or use a different email.` 
+                description: `This email is registered with ${uniName} portal. Please sign in to the correct university portal or use a different email.` 
               });
               return;
             }
@@ -563,6 +583,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
                   <FormControl>
                     <Input placeholder={`yourname@example.com`} {...field} />
                   </FormControl>
+                
                   <FormMessage />
                 </FormItem>
               )}

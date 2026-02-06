@@ -43,9 +43,18 @@ function truncateChars(s?: string | null, n = 30) {
   return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
-function formatPickupLabel(booking: { pickupPlaceName?: string | null; pickupPoint?: { lat: number; lng: number } | null }) {
-  if (booking?.pickupPlaceName) return booking.pickupPlaceName;
-  if (booking?.pickupPoint) return 'Pickup location selected';
+function formatPickupLabel(booking: { id?: string; pickupPlaceName?: string | null; pickupPoint?: { lat: number; lng: number } | null }, fetchedNames?: Record<string, string>) {
+  // First check if we have a place name
+  if (booking?.pickupPlaceName) return truncateChars(booking.pickupPlaceName, 45);
+  
+  // Then check if we fetched one
+  if (booking?.id && fetchedNames?.[booking.id]) return truncateChars(fetchedNames[booking.id], 45);
+  
+  // Fall back to coordinates if available
+  if (booking?.pickupPoint) {
+    const { lat, lng } = booking.pickupPoint;
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  }
   return 'Pickup not set';
 }
 
@@ -53,6 +62,12 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const firestore = useFirestore();
   const { user } = useUser();
   const { toast } = useToast();
+
+  console.log('[BookingRequests] Component mounted with ride:', { 
+    rideId: ride?.id, 
+    university, 
+    rideFull: ride 
+  });
 
   // Read requests from the ride-scoped `requests` subcollection so ride owners
   // can safely list only requests for their ride (rules allow listing here).
@@ -64,6 +79,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId' });
   const [processingIds, setProcessingIds] = React.useState<string[]>([]);
   const [shownBookings, setShownBookings] = React.useState<BookingType[]>([]);
+  const [placeNames, setPlaceNames] = React.useState<Record<string, string>>({});
 
   // Keep local shown list in sync with upstream bookings, but allow optimistic
   // removal immediately after an accept/reject so the UI does not permit
@@ -72,13 +88,62 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     if (!bookings) return setShownBookings([]);
     setShownBookings(bookings);
   }, [bookings]);
+  
+  // Fetch place names for bookings that have coordinates but no place name
+  React.useEffect(() => {
+    if (!bookings) return;
+    bookings.forEach(async (booking) => {
+      if (!booking.pickupPlaceName && booking.pickupPoint && !placeNames[booking.id]) {
+        try {
+          const res = await fetch(`/api/nominatim/reverse?lat=${booking.pickupPoint.lat}&lon=${booking.pickupPoint.lng}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.display_name) {
+              setPlaceNames(prev => ({ ...prev, [booking.id]: data.display_name }));
+            }
+          }
+        } catch (e) {
+          console.debug('Failed to fetch place name:', e);
+        }
+      }
+    });
+  }, [bookings, placeNames]);
 
   const handleBooking = async (booking: BookingType, newStatus: 'accepted' | 'rejected') => {
-    if (!firestore) return;
-    if (!booking?.id) return;
+    console.log('[handleBooking] Starting with:', { 
+      bookingId: booking?.id, 
+      status: newStatus, 
+      user: user?.uid,
+      booking_rideId: booking?.rideId,
+      component_ride_id: ride?.id,
+      booking_full: booking
+    });
+    
+    if (!firestore) {
+      console.error('[handleBooking] Firestore not available');
+      return;
+    }
+    if (!booking?.id) {
+      console.error('[handleBooking] No booking ID');
+      return;
+    }
 
     // Prevent duplicate clicks
-    if (processingIds.includes(booking.id)) return;
+    if (processingIds.includes(booking.id)) {
+      console.log('[handleBooking] Already processing this booking');
+      return;
+    }
+    
+    // Check if booking is already accepted/rejected
+    if (booking.status && booking.status !== 'pending') {
+      toast({
+        variant: 'destructive',
+        title: 'Request Already Processed',
+        description: 'This request has already been handled.'
+      });
+      return;
+    }
+    
     setProcessingIds((s) => [...s, booking.id]);
     // Optimistically remove the booking from the shown list so the provider
     // sees immediate feedback and cannot accept/reject the same request twice.
@@ -88,34 +153,139 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     try {
       // Use API endpoint for accept to ensure idempotency and proper seat management
       if (newStatus === 'accepted') {
+        console.log('[handleBooking] Processing acceptance...');
+        
         // Get auth token for API call
         if (!user) {
+          console.error('[handleBooking] User not authenticated');
           throw new Error('User not authenticated');
         }
-        const token = await user.getIdToken();
         
+        console.log('[handleBooking] Getting auth token...');
+        // Force refresh to get a valid token
+        let token: string;
+        try {
+          token = await user.getIdToken(true);
+          console.log('[handleBooking] Token retrieved successfully, length:', token?.length);
+          
+          if (!token) {
+            throw new Error('Token is null or undefined');
+          }
+          
+          if (typeof token !== 'string') {
+            throw new Error(`Token is not a string: ${typeof token}`);
+          }
+          
+          if (token.length < 100) {
+            throw new Error(`Token too short: ${token.length} characters`);
+          }
+        } catch (tokenError) {
+          console.error('[handleBooking] Failed to get token:', tokenError);
+          throw new Error('Failed to retrieve authentication token');
+        }
+        
+        // Ensure we have rideId - use ride.id since requests are nested under rides/{rideId}/requests
+        // The booking document might not have rideId field since it's implicit in the path
+        const rideId = ride.id;
+        
+        if (!rideId) {
+          console.error('[handleBooking] No rideId available');
+          throw new Error('Ride ID not found');
+        }
+        
+        console.log('[handleBooking] Making API call with:', { 
+          university, 
+          rideId, 
+          requestId: booking.id,
+          hasToken: !!token,
+          tokenLength: token?.length,
+          tokenPreview: token.substring(0, 20) + '...',
+          verifyingRideId: 'Using ride.id from component prop, not booking.rideId',
+          rideFromProp: {
+            id: ride.id,
+            driverId: ride.driverId,
+            from: ride.from,
+            to: ride.to
+          },
+          fullPath: `universities/${university}/rides/${rideId}`
+        });
+        
+        const requestBody = {
+          university,
+          rideId,
+          requestId: booking.id
+        };
+        
+        const requestHeaders = { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        };
+        
+        console.log('[handleBooking] Request headers:', Object.keys(requestHeaders));
+        console.log('[handleBooking] Authorization header set:', requestHeaders.Authorization.substring(0, 30) + '...');
+        console.log('[handleBooking] Full Authorization header length:', requestHeaders.Authorization.length);
+        console.log('[handleBooking] Authorization starts with Bearer:', requestHeaders.Authorization.startsWith('Bearer '));
+        
+        // Test the token by decoding it to verify it's valid
+        try {
+          const tokenParts = token.split('.');
+          if (tokenParts.length === 3) {
+            const payload = JSON.parse(atob(tokenParts[1]));
+            console.log('[handleBooking] Token payload:', {
+              uid: payload.uid,
+              email: payload.email,
+              exp: payload.exp,
+              iat: payload.iat,
+              isExpired: payload.exp < Date.now() / 1000
+            });
+            
+            if (payload.exp < Date.now() / 1000) {
+              console.error('[handleBooking] TOKEN IS EXPIRED!');
+              throw new Error('Authentication token has expired. Please refresh the page.');
+            }
+          }
+        } catch (e) {
+          console.warn('[handleBooking] Could not decode token:', e);
+        }
+        
+        console.log('[handleBooking] Sending fetch request...');
         const res = await fetch('/api/requests/accept', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            university,
-            rideId: booking.rideId,
-            requestId: booking.id
-          })
+          headers: requestHeaders,
+          body: JSON.stringify(requestBody),
+          // Explicitly set credentials to include auth
+          credentials: 'same-origin',
+          // Bypass service worker cache for auth requests
+          cache: 'no-store',
         });
 
-        const data = await res.json();
+        console.log('[handleBooking] API response status:', res.status);
+        console.log('[handleBooking] API response headers:', {
+          contentType: res.headers.get('content-type'),
+          authorization: res.headers.get('authorization'),
+        });
+        
+        let data;
+        try {
+          data = await res.json();
+          console.log('[handleBooking] API response data:', data);
+        } catch (parseError) {
+          console.error('[handleBooking] Failed to parse response:', parseError);
+          const text = await res.text();
+          console.error('[handleBooking] Response text:', text);
+          throw new Error(`API returned ${res.status} but response is not JSON`);
+        }
+        
         if (!res.ok) {
+          console.error('[handleBooking] API error:', { status: res.status, data, booking });
           throw new Error(data.error || data.message || 'Failed to accept request');
         }
 
         // Update local request to accepted status
         await runTransaction(firestore, async (transaction) => {
-          const rideRef = doc(firestore, `universities/${university}/rides`, booking.rideId);
-          const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
+          const rideId = ride.id;
+          const rideRef = doc(firestore, `universities/${university}/rides`, rideId);
+          const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
           const rideDoc = await transaction.get(rideRef);
           
           if (rideDoc.exists()) {
@@ -138,7 +308,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             const chatRef2 = doc(firestore, `universities/${university}/chats`, chatId);
             const chatData = {
               bookingId: booking.id,
-              rideId: booking.rideId,
+              rideId: rideId,
               passengerId: booking.passengerId,
               providerId: currentRideData.driverId,
               participants: [booking.passengerId, currentRideData.driverId],
@@ -152,6 +322,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
               driverDetails,
               ride: rideSnapshot,
               chatId,
+              rideId: rideId, // Ensure rideId is explicitly set
             });
 
             transaction.set(chatRef2, chatData);
@@ -160,22 +331,27 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
         });
       } else {
         // For rejects: use API if available, otherwise direct update
+        console.log('[handleBooking] Processing rejection...');
+        
+        const rideId = ride.id;
+        
         const res = await fetch('/api/requests/cancel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             university,
-            rideId: booking.rideId,
+            rideId,
             requestId: booking.id,
-            cancelledBy: booking.driverId,
+            cancelledBy: booking.driverId || user?.uid,
             reason: 'Driver rejected request'
           })
         });
 
         if (!res.ok) {
+          console.log('[handleBooking] Cancel API failed, using fallback...');
           // Fallback: update directly
           await runTransaction(firestore, async (transaction) => {
-            const requestRef = doc(firestore, `universities/${university}/rides`, booking.rideId, 'requests', booking.id);
+            const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
             transaction.update(requestRef, { status: 'rejected' });
           });
         }
@@ -198,13 +374,23 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       });
 
     } catch (error) {
-      console.error(`Error ${newStatus} booking:`, error);
+      console.error('[handleBooking] Error:', error);
+      console.error('[handleBooking] Error details:', { 
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        bookingId: booking.id,
+        status: newStatus
+      });
+      
       // Roll back optimistic UI change so the provider can retry or see the request again
       setShownBookings(previousShown);
+      
+      const errorMessage = error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+      
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Something went wrong. Please try again.'
+        description: errorMessage
       });
     } finally {
       setProcessingIds((s) => s.filter((id) => id !== booking.id));
@@ -228,14 +414,28 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
               <p className="text-sm text-slate-300">{booking.passengerDetails.phone}</p>
             ) : null}
              <p className="text-xs text-accent flex items-center mt-1">
-               <MapPin className="h-3 w-3 mr-1"/> {formatPickupLabel(booking)}
+               <MapPin className="h-3 w-3 mr-1"/> {formatPickupLabel(booking, placeNames)}
              </p>
           </div>
           <div className="flex gap-2">
-            <Button size="icon" variant="outline" className="h-8 w-8 bg-green-500/10 text-green-500 hover:bg-green-500/20" onClick={() => handleBooking(booking, 'accepted')} disabled={processingIds.includes(booking.id)}>
+            <Button 
+              size="icon" 
+              variant="outline" 
+              className="h-8 w-8 bg-green-500/10 text-green-500 hover:bg-green-500/20" 
+              onClick={() => handleBooking(booking, 'accepted')} 
+              disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
+              title="Accept request"
+            >
               <Check className="h-4 w-4" />
             </Button>
-            <Button size="icon" variant="outline" className="h-8 w-8 bg-red-500/10 text-red-500 hover:bg-red-500/20" onClick={() => handleBooking(booking, 'rejected')} disabled={processingIds.includes(booking.id)}>
+            <Button 
+              size="icon" 
+              variant="outline" 
+              className="h-8 w-8 bg-red-500/10 text-red-500 hover:bg-red-500/20" 
+              onClick={() => handleBooking(booking, 'rejected')} 
+              disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
+              title="Reject request"
+            >
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -859,6 +1059,9 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
       <DialogContent className="max-w-3xl">
         <DialogHeader>
             <DialogTitle>Your Route & Passenger Pickups</DialogTitle>
+            <DialogDescription>
+              View the route for your ride and see where passengers will be picked up along the way.
+            </DialogDescription>
         </DialogHeader>
         <div className="h-[60vh] w-full relative" ref={wrapperRef}>
           {showMap && (

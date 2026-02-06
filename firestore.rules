@@ -31,7 +31,7 @@ service cloud.firestore {
       allow get, list, update, delete: if isAdmin();
     }
 
-    // Reports: only authenticated users can create
+    // Reports: only authenticated users can create, admins can manage
     match /reports/{reportId} {
       allow create: if isAuth()
         && request.resource.data.reportedBy.uid == request.auth.uid
@@ -45,13 +45,24 @@ service cloud.firestore {
         && request.resource.data.status in ['pending','reviewed','action_taken'];
       allow get, list, update, delete: if isAdmin();
     }
+    
+    // Chats (all) - admins can read
+    match /chats/{document=**} {
+      allow get, list: if isAdmin();
+    }
 
     // Universities and nested collections
     match /universities/{univId} {
-      // Allow anyone to read/list universities and their collections (for public ride listings)
+      // Allow anyone to read/list universities (for public ride listings)
       allow get, list: if true;
+      
+      // Admin can read everything in universities
+      match /{document=**} {
+        allow get, list: if isAdmin();
+      }
 
       // University-scoped user profiles
+      // ===== CRITICAL: University field is immutable - prevents cross-university account takeover =====
       match /users/{userId} {
         allow create: if isAuth()
           && request.auth.uid == userId
@@ -64,7 +75,9 @@ service cloud.firestore {
 
         allow update, delete: if isAuth() && request.auth.uid == userId
           && request.resource.data.email == resource.data.email
-          && request.resource.data.university == resource.data.university;
+          && request.resource.data.university == resource.data.university
+          && request.resource.data.university == univId;
+          // ===== CRITICAL: University can NEVER change after creation =====
       }
 
       // Rides under a university
@@ -144,10 +157,10 @@ service cloud.firestore {
           || (request.resource.data.passengerId is string && request.resource.data.providerId is string && (request.auth.uid == request.resource.data.passengerId || request.auth.uid == request.resource.data.providerId))
         );
 
-        allow list, get: if isAuth() && (
+        allow list, get: if isAdmin() || (isAuth() && (
           (resource.data.participants is list && request.auth.uid in resource.data.participants)
           || (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
-        );
+        ));
 
         allow update, delete: if isAdmin() || (isAuth() && (
           (resource.data.participants is list && request.auth.uid in resource.data.participants)
@@ -160,16 +173,16 @@ service cloud.firestore {
             || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
           ) && request.resource.data.timestamp is timestamp && (request.resource.data.type in ['text','image','video','emoji','voice']);
 
-          allow list, get: if isAuth() && (
+          allow list, get: if isAdmin() || (isAuth() && (
             (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
             || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
-          );
+          ));
 
           // Allow participants to update seenBy array only
-          allow update: if isAuth() && (
+          allow update: if isAdmin() || (isAuth() && (
             (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
             || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
-          ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenBy']);
+          ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenBy']));
 
           allow delete: if false;
         }
@@ -217,9 +230,10 @@ service cloud.firestore {
       allow list: if false;
     }
 
-    // Default deny for any other paths
+    // Admin fallback: allow read access to any document
     match /{document=**} {
-      allow read, write: if false;
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }

@@ -1,8 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useFirestore, useUser } from '@/firebase';
 import { subscribeMessages, sendMessage as sendMsg, chatRef } from '@/firebase/firestore/chats';
-import { getDoc, getDocs, query, collection, where, writeBatch } from 'firebase/firestore';
-import { doc, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import { getDoc, getDocs, query, collection, where, writeBatch, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useNotifications } from '@/contexts/NotificationContext';
 
 // Helper function to mark messages as seen
@@ -22,8 +21,9 @@ async function markMessagesAsSeen(firestore: any, universityId: string, chatId: 
     // Update each unseen message
     unseenMessages.forEach((msg: any) => {
       const msgRef = doc(messagesRef, msg.id);
+      const currentSeenBy = msg.seenBy || [];
       batch.update(msgRef, {
-        seenBy: arrayUnion(userId)
+        seenBy: [...currentSeenBy, userId]
       });
     });
     

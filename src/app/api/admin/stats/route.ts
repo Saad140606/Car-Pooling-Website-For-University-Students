@@ -1,52 +1,11 @@
 import admin from '@/firebase/firebaseAdmin';
 import { NextResponse } from 'next/server';
-import crypto from 'crypto';
-
-const COOKIE_NAME = 'admin_session';
-const SECRET = process.env.ADMIN_SESSION_SECRET || '';
-
-function verifyToken(token: string) {
-  if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const [data, sig] = parts;
-  const expected = crypto.createHmac('sha256', SECRET).update(data).digest('base64url');
-  try {
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return null;
-  } catch (e) {
-    return null;
-  }
-  try {
-    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
-    if (payload.exp && payload.exp < Date.now() / 1000) return null;
-    return payload;
-  } catch (e) {
-    return null;
-  }
-}
+import { requireAdmin } from '@/lib/adminApiAuth';
 
 export async function GET(req: Request) {
   try {
-    const cookie = req.headers.get('cookie') || '';
-    const m = cookie.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
-    const token = m ? decodeURIComponent(m[1]) : '';
-    const payload = verifyToken(token);
-    if (!payload) {
-      console.warn('[admin/stats] missing/invalid session token');
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
-
-    // verify admin existence server-side
-    try {
-      const snap = await admin.firestore().doc(`admins/${payload.uid}`).get();
-      if (!snap.exists) {
-        console.warn('[admin/stats] admin doc missing for uid', payload.uid);
-        return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-      }
-    } catch (e) {
-      console.error('[admin/stats] admin existence check failed', e);
-      return NextResponse.json({ error: 'server error' }, { status: 500 });
-    }
+    const auth = await requireAdmin(req);
+    if (!auth.ok) return auth.response;
 
     const db = admin.firestore();
     // Aggregations (production: use count() aggregation if available)

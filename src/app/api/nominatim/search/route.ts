@@ -8,7 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   verifyAuthToken,
-  applyRateLimit,
+  checkRateLimit,
+  getClientIP,
   sanitizeString,
   errorResponse,
 } from '@/lib/api-security';
@@ -21,16 +22,20 @@ const GEOCODING_RATE_LIMIT = {
 };
 
 export async function GET(req: NextRequest) {
-  // ===== AUTHENTICATION =====
-  const authResult = await verifyAuthToken(req);
-  if (!authResult.success) {
-    return errorResponse('Authentication required', 401);
-  }
+  // Authentication is optional for search. Allow anonymous access but enforce rate limits.
+  const authResult = await verifyAuthToken(req, true); // silent = true (don't log missing auth)
 
-  // ===== RATE LIMITING =====
-  const rateLimitResult = await applyRateLimit(req, GEOCODING_RATE_LIMIT);
-  if (rateLimitResult instanceof NextResponse) {
-    return rateLimitResult;
+  const rateConfig = authResult.success && authResult.user
+    ? { maxRequests: 60, windowMs: 60 * 1000, keyPrefix: 'geocoding-user' }
+    : { maxRequests: 30, windowMs: 60 * 1000, keyPrefix: 'geocoding-anon' };
+
+  const identifier = authResult.success && authResult.user
+    ? `user:${authResult.user.uid}`
+    : `ip:${getClientIP(req)}`;
+
+  const rateLimitResult = await checkRateLimit(identifier, rateConfig);
+  if (!rateLimitResult.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 });
   }
 
   try {
@@ -74,13 +79,18 @@ export async function GET(req: NextRequest) {
 
     const nomUrl = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 
+    const controller = new AbortController();
+    const timeoutMs = 5000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     const res = await fetch(nomUrl, {
       method: 'GET',
-      headers: { 
-        'User-Agent': 'CampusRide/1.0 (carpooling app)', 
-        'Accept-Language': 'en' 
+      headers: {
+        'User-Agent': 'CampusRide/1.0 (carpooling app)',
+        'Accept-Language': 'en'
       },
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
 
     if (!res.ok) {
       console.error('Nominatim search error:', res.status);
@@ -90,7 +100,11 @@ export async function GET(req: NextRequest) {
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err: any) {
-    console.error('Nominatim search proxy failed:', err.code || 'UNKNOWN');
+    if (err.name === 'AbortError') {
+      console.error('Nominatim search proxy timed out');
+      return errorResponse('Geocoding request timed out', 504);
+    }
+    console.error('Nominatim search proxy failed:', err.code || err.message || 'UNKNOWN');
     return errorResponse('Geocoding service error', 500);
   }
 }

@@ -11,6 +11,12 @@
       "description": "A picture of the FAST University campus.",
       "imageUrl": "/fast-university-campus.png",
       "imageHint": "university building"
+    },
+    {
+      "id": "karachi-university-campus",
+      "description": "A picture of the Karachi University campus.",
+      "imageUrl": "/karachi-university-campus.png",
+      "imageHint": "university campus"
     }
   ]
 }

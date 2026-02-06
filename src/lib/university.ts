@@ -1,4 +1,4 @@
-export type University = 'ned' | 'fast';
+export type University = 'ned' | 'fast' | 'karachi';
 
 const SELECTED_KEY = 'selected_university';
 const PENDING_KEY = 'pending_university';
@@ -15,7 +15,7 @@ export function getSelectedUniversity(): University | null {
   try {
     if (typeof window === 'undefined') return null;
     const v = localStorage.getItem(SELECTED_KEY);
-    return (v === 'ned' || v === 'fast') ? v : null;
+    return (v === 'ned' || v === 'fast' || v === 'karachi') ? v : null;
   } catch (e) {
     return null;
   }
@@ -33,7 +33,7 @@ export function getPendingUniversity(): University | null {
   try {
     if (typeof window === 'undefined') return null;
     const v = localStorage.getItem(PENDING_KEY);
-    return (v === 'ned' || v === 'fast') ? v : null;
+    return (v === 'ned' || v === 'fast' || v === 'karachi') ? v : null;
   } catch (e) {
     return null;
   }
@@ -68,5 +68,5 @@ export function clearPendingGender() {
 }
 
 export function isValidUniversity(u: unknown): u is University {
-  return u === 'ned' || u === 'fast';
+  return u === 'ned' || u === 'fast' || u === 'karachi';
 }

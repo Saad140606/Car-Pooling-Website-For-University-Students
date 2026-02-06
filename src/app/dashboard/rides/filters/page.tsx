@@ -57,7 +57,8 @@ export default function FiltersPage() {
 
   const { user, data: userData } = useUser();
 
-  // When a logged-in user has a university, lock the filters.university to it
+  // CRITICAL SECURITY: When a user logs in, their university is LOCKED to their profile
+  // They cannot select a different university under any circumstance
   useEffect(() => {
     if (user && userData && userData.university) {
       setFilters(f => ({ ...f, university: userData.university }));
@@ -108,19 +109,33 @@ export default function FiltersPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* University Filter */}
         <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.1s' }}>
-          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">University</div>
-          {user && userData && userData.university ? (
+          {/* Show a locked label only for valid logged-in universities */}
+          <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">
+            {(user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? 'University (Locked to Portal)' : 'University'}
+          </div>
+
+          {/* Lock only when the authenticated user has a valid university value */}
+          { (user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? (
             <div className="flex items-center gap-2">
-              <Input value={getUniversityShortLabel(userData.university) || userData.university} disabled className="bg-slate-800/50 backdrop-blur-sm text-slate-300 disabled:opacity-70" />
-              <Badge className="bg-primary/20 text-primary">Locked</Badge>
+              <Input
+                value={getUniversityShortLabel(userData.university) || userData.university}
+                disabled
+                title="Your university is locked based on your account. Contact support to change it."
+                className="bg-slate-800/50 backdrop-blur-sm text-slate-300 disabled:opacity-70 cursor-not-allowed"
+              />
+              <Badge className="bg-green-500/20 text-green-300 border-green-500/50">🔒 Locked</Badge>
             </div>
           ) : (
+            // For everyone else (including logged-out users and invalid data), show an unlocked dropdown
             <Select value={filters.university || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, university: v }))}>
-              <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary"><SelectValue>{filters.university && filters.university !== 'any' ? getUniversityShortLabel(filters.university) || filters.university : 'Select'}</SelectValue></SelectTrigger>
+              <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary">
+                <SelectValue>{filters.university === 'any' || !filters.university ? 'All Universities' : filters.university === 'fast' ? 'FAST University' : filters.university === 'karachi' ? 'Karachi University' : 'NED University'}</SelectValue>
+              </SelectTrigger>
               <SelectContent className="bg-slate-900">
-                <SelectItem value="any">Any</SelectItem>
-                <SelectItem value="fast">FAST</SelectItem>
-                <SelectItem value="ned">NED</SelectItem>
+                <SelectItem value="any">All Universities</SelectItem>
+                <SelectItem value="fast">FAST University</SelectItem>
+                <SelectItem value="ned">NED University</SelectItem>
+                <SelectItem value="karachi">Karachi University</SelectItem>
               </SelectContent>
             </Select>
           )}

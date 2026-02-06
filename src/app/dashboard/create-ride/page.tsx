@@ -18,6 +18,7 @@ import { decodePolyline } from '@/lib/route';
 import type { LatLng as RouteLatLng } from '@/lib/route';
 import { calculatePricing } from '@/lib/pricing';
 import { extractMeaningfulStopName, filterImportantStops, deduplicateNearbyStops, deduplicateByName } from '@/lib/stopFiltering';
+import { cleanLocationName, orderStopsCorrectly, cleanAndOrderStops, isPlaceholderName, removeDuplicateLocations, createFallbackStops } from '@/lib/stopOrdering';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -412,6 +413,20 @@ const MapComponent = forwardRef<MapComponentRef, {
   }, [props.universityLocation?.lat, props.universityLocation?.lng]);
 
   useEffect(() => {
+    // CLEANUP: Clear previous route immediately when coordinates change (before drawing new route)
+    const clearRoute = () => {
+      console.log('[ROUTE] Clearing previous route');
+      if (routeLayerRef.current && mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.removeLayer(routeLayerRef.current);
+        } catch (e) {
+          console.debug('[ROUTE] Error removing route layer:', e);
+        }
+        routeLayerRef.current = null;
+      }
+      props.onRouteUpdate(null, null);
+    };
+
     const drawRoute = async (start: LatLngLiteral, end: LatLngLiteral) => {
         // Wait up to 5 seconds for map to be initialized
         let mapReady = false;
@@ -428,6 +443,7 @@ const MapComponent = forwardRef<MapComponentRef, {
         }
         
         console.log('[ROUTE] Starting route generation from', start, 'to', end);
+        // Clear any previous route
         if (routeLayerRef.current) {
             mapInstanceRef.current.removeLayer(routeLayerRef.current);
             routeLayerRef.current = null;
@@ -493,11 +509,11 @@ const MapComponent = forwardRef<MapComponentRef, {
                     }
                     const short = errText ? (errText.length > 1000 ? errText.slice(0, 1000) + '…' : errText) : `Status ${response.status}`;
 
-                    // If ORS returns a client error (4xx), it's likely "no route found" or bad request — don't retry, surface friendly message.
+                    // If ORS returns a client error (4xx), it's likely "no route found" or bad request — don't retry
                     if (response.status >= 400 && response.status < 500) {
-                        console.warn('ORS returned client error (no route / bad request)', { status: response.status, short });
+                        console.warn('ORS returned client error (no route found)', { status: response.status, short });
                         props.onRouteUpdate(null, null);
-                        props.onRouteError?.(new Error(`No routable path found (ORS ${response.status}). ${short}`));
+                        props.onRouteError?.(new Error('No route found. Please select different locations that are connected by roads.'));
                         return;
                     }
 
@@ -516,7 +532,7 @@ const MapComponent = forwardRef<MapComponentRef, {
                 if (!routeData.features || routeData.features.length === 0) {
                     console.warn('[ROUTE] No features in response');
                     props.onRouteUpdate(null, null);
-                    props.onRouteError?.(new Error('No route found between these points'));
+                    props.onRouteError?.(new Error('No route found. Please select different locations and try again.'));
                     return;
                 }
 
@@ -524,7 +540,7 @@ const MapComponent = forwardRef<MapComponentRef, {
                 if (!feature.geometry || !feature.geometry.coordinates || feature.geometry.coordinates.length === 0) {
                     console.warn('[ROUTE] Invalid geometry in response:', feature);
                     props.onRouteUpdate(null, null);
-                    props.onRouteError?.(new Error('Invalid route geometry'));
+                    props.onRouteError?.(new Error('Invalid route data. Please select different locations and try again.'));
                     return;
                 }
 
@@ -573,16 +589,14 @@ const MapComponent = forwardRef<MapComponentRef, {
         }
 
         // If we reach here, all attempts failed
-        // Provide a clearer, user-friendly error for common causes
+        console.error('[ROUTE] All route attempts failed', lastErr);
         const isTimeoutFinal = lastErr instanceof Error && lastErr.name === 'AbortError';
         if (isTimeoutFinal) {
-          console.error('[ROUTE] All route attempts timed out');
           props.onRouteUpdate(null, null);
-          props.onRouteError?.(new Error('Route request timed out. Try again or move points closer.'));
+          props.onRouteError?.(new Error('Route request timed out. Please try selecting your locations again.'));
         } else {
-          console.error('[ROUTE] Error drawing route after retries:', lastErr);
           props.onRouteUpdate(null, null);
-          props.onRouteError?.(lastErr instanceof Error ? lastErr : new Error(String(lastErr)));
+          props.onRouteError?.(new Error('Unable to find a route. Please select different locations that are connected by roads.'));
         }
     };
     
@@ -592,10 +606,18 @@ const MapComponent = forwardRef<MapComponentRef, {
         console.log('[ROUTE]   TO:', props.to);
         drawRoute(props.from, props.to);
     } else {
-        console.log('[ROUTE] ✗ Effect triggered but coordinates missing');
+        // If either from or to is missing, clear the route
+        console.log('[ROUTE] ✗ Effect triggered but coordinates missing - clearing route');
         console.log('[ROUTE]   FROM:', props.from ? 'SET' : 'NULL');
         console.log('[ROUTE]   TO:', props.to ? 'SET' : 'NULL');
+        clearRoute();
     }
+
+    // Cleanup: Clear route when component unmounts or dependencies change
+    return () => {
+      // We don't clear the route here as it would cause flashing between route changes
+      // The cleanup happens at the start of the next effect run with clearRoute()
+    };
   // Use stringified values for proper deep comparison of coordinate objects
   }, [props.from?.lat, props.from?.lng, props.to?.lat, props.to?.lng]);
 
@@ -759,6 +781,7 @@ export default function CreateRidePage() {
   const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
   const [routeLatLngs, setRouteLatLngs] = useState<RouteLatLng[] | null>(null);
   const [generatedStops, setGeneratedStops] = useState<any[] | null>(null);
+  const [stopsLoading, setStopsLoading] = useState(false);
   const [recommendedPricePerSeat, setRecommendedPricePerSeat] = useState<number | null>(null);
   const [finalPricePerSeat, setFinalPricePerSeat] = useState<number | null>(null);
   const [pricingBreakdown, setPricingBreakdown] = useState<any | null>(null);
@@ -775,7 +798,12 @@ export default function CreateRidePage() {
   const NED_UNI: LatLngLiteral = {
     lat: 24.9302091,
     lng: 67.1148119,
-    name: 'NED UET, University Road, Sui Gas Company Karachi Society, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
+    name: 'NED UET, University Road, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
+  };
+  const KARACHI_UNI: LatLngLiteral = {
+    lat: 24.9401,
+    lng: 67.1200,
+    name: 'University of Karachi, Main University Road, Karachi, Sindh, 75270, Pakistan',
   };
 
   const UNI_MAX_RADIUS_METERS = 4000; // allow ~4km radius from campus center
@@ -783,12 +811,14 @@ export default function CreateRidePage() {
   const getUniversityShortName = () => {
     const uni = (userData?.university || '').toString().toLowerCase();
     if (uni === 'ned') return 'NED University';
+    if (uni === 'karachi') return 'Karachi University';
     return 'FAST University';
   };
 
   const getCurrentUniversity = () => {
     const uni = (userData?.university || '').toString().toLowerCase();
     if (uni === 'ned') return NED_UNI;
+    if (uni === 'karachi') return KARACHI_UNI;
     return FAST_UNI;
   };
 
@@ -998,11 +1028,13 @@ export default function CreateRidePage() {
     // Prefer canonical university names when the clicked point lies within a university radius
     const ned = NED_UNI;
     const fast = FAST_UNI;
+    const karachi = KARACHI_UNI;
     const clicked = { lat, lng };
     const nearNed = distanceInMeters(clicked, { lat: ned.lat, lng: ned.lng }) <= UNI_MAX_RADIUS_METERS;
     const nearFast = distanceInMeters(clicked, { lat: fast.lat, lng: fast.lng }) <= UNI_MAX_RADIUS_METERS;
+    const nearKarachi = distanceInMeters(clicked, { lat: karachi.lat, lng: karachi.lng }) <= UNI_MAX_RADIUS_METERS;
 
-    const finalName = nearNed ? ned.name : (nearFast ? fast.name : name);
+    const finalName = nearNed ? ned.name : (nearFast ? fast.name : (nearKarachi ? karachi.name : name));
 
     // Apply immediately and exit selection mode
     if (activeMapSelect === 'from') {
@@ -1061,18 +1093,16 @@ export default function CreateRidePage() {
       
       // Generate stops from waypoints or sample route points
       try {
-        // Dynamic stop count based on route distance
+        // Dynamic stop count based on route distance - REDUCED to prevent excessive API calls
         const routeDistanceKm = data.distanceMeters ? data.distanceMeters / 1000 : 0;
         const getTargetStopCount = (distanceKm: number) => {
           if (distanceKm < 5) return 5;
-          if (distanceKm < 10) return 6;
-          if (distanceKm < 20) return 8;
-          if (distanceKm < 30) return 10;
-          if (distanceKm < 50) return 12;
-          return 15;
+          if (distanceKm < 15) return 5;
+          if (distanceKm < 30) return 6;
+          return 7; // Maximum 7 stops for any route
         };
         const targetStopCount = getTargetStopCount(routeDistanceKm);
-        const maxStops = Math.max(targetStopCount, Math.min(20, Math.ceil(routeDistanceKm / 1.5))); // scale for larger routes
+        const maxStops = Math.min(7, targetStopCount); // Hard limit of 7 stops
         
         let stops: any[] = [];
         
@@ -1134,7 +1164,11 @@ export default function CreateRidePage() {
           
           console.log('[STOPS] Processing', finalStops.length, 'stops...');
           
-          // Fetch ALL place names in parallel and build complete array BEFORE rendering
+          // Set loading state
+          setStopsLoading(true);
+          setGeneratedStops(null);
+          
+          // Fetch place names with rate limiting to prevent API overload
           (async () => {
             try {
               // Get auth token for API calls
@@ -1146,6 +1180,10 @@ export default function CreateRidePage() {
               } catch (e) {
                 console.warn('[STOPS] Could not get auth token:', e);
               }
+              
+              // Process stops in small batches to avoid rate limiting
+              const BATCH_SIZE = 3;
+              const DELAY_BETWEEN_BATCHES = 500; // ms
               
               // Function to geocode a single stop
               const geocodeStop = async (stop: any, idx: number): Promise<any> => {
@@ -1167,90 +1205,76 @@ export default function CreateRidePage() {
                     return { ...stop, name: cachedName };
                   }
                   
-                  // Try to fetch from API with retries
-                  let retries = 3;
+                  // Single attempt geocoding - no retries to reduce API calls
                   let placeName = '';
                   
-                  while (retries > 0 && !placeName) {
-                    try {
-                      const fetchHeaders: HeadersInit = {
-                        'Content-Type': 'application/json'
-                      };
-                      
-                      if (authToken) {
-                        fetchHeaders['Authorization'] = `Bearer ${authToken}`;
-                      }
-                      
-                      const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`, {
-                        method: 'GET',
-                        headers: fetchHeaders,
-                        signal: AbortSignal.timeout(12000)
-                      });
-                      
-                      if (res.ok) {
-                        const data = await res.json();
-                        
-                        if (data.address) {
-                          const addr = data.address;
-                          const landmark = addr.amenity || addr.shop || addr.building || addr.office ||
-                                          addr.tourism || addr.leisure || addr.historic || addr.university ||
-                                          addr.hospital || addr.school || addr.college || addr.mosque || addr.church;
-                          const road = addr.road || addr.street || addr.avenue || addr.boulevard ||
-                                      addr.highway || addr.path || addr.residential;
-                          const area = addr.neighbourhood || addr.suburb || addr.quarter ||
-                                      addr.city_district || addr.hamlet;
-                          const city = addr.city || addr.town || addr.village || addr.municipality;
-
-                          if (landmark) {
-                            placeName = area ? `${landmark}, ${area}` : landmark;
-                          } else if (road && area) {
-                            placeName = `${road}, ${area}`;
-                          } else if (road && city) {
-                            placeName = `${road}, ${city}`;
-                          } else if (area && city) {
-                            placeName = `${area}, ${city}`;
-                          } else if (area) {
-                            placeName = area;
-                          } else if (road) {
-                            placeName = road;
-                          } else if (city) {
-                            placeName = city;
-                          }
-                        }
-
-                        if (!placeName && data.display_name) {
-                          const meaningful = extractMeaningfulStopName(data.display_name);
-                          placeName = meaningful || placeName;
-                        }
-
-                        if (!placeName && data.display_name) {
-                          const parts = data.display_name.split(',')
-                            .map((p: string) => p.trim())
-                            .filter((p: string) => p && !/^\d+$/.test(p) && p.length > 2);
-
-                          if (parts.length >= 2) {
-                            placeName = `${parts[0]}, ${parts[1]}`;
-                          } else if (parts.length === 1) {
-                            placeName = parts[0];
-                          }
-                        }
-                        
-                        if (placeName && placeName.length > 2 && 
-                            !placeName.match(/^\d+\.\d+/) && !placeName.match(/^-?\d+$/)) {
-                          break;
-                        }
-                      } else if (res.status === 429) {
-                        console.warn(`[STOPS] Stop ${idx + 1}: Rate limited`);
-                        await new Promise(r => setTimeout(r, 2000));
-                      }
-                    } catch (fetchErr: any) {
-                      console.error(`[STOPS] Stop ${idx + 1}: Fetch error`, fetchErr.message);
-                      if (retries > 1) {
-                        await new Promise(r => setTimeout(r, 800));
-                      }
+                  try {
+                    const fetchHeaders: HeadersInit = {
+                      'Content-Type': 'application/json'
+                    };
+                    
+                    if (authToken) {
+                      fetchHeaders['Authorization'] = `Bearer ${authToken}`;
                     }
                     
-                    retries--;
+                    const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`, {
+                      method: 'GET',
+                      headers: fetchHeaders,
+                      signal: AbortSignal.timeout(8000)
+                    });
+                      
+                    if (res.ok) {
+                      const data = await res.json();
+                      
+                      if (data.address) {
+                        const addr = data.address;
+                        const landmark = addr.amenity || addr.shop || addr.building || addr.office ||
+                                        addr.tourism || addr.leisure || addr.historic || addr.university ||
+                                        addr.hospital || addr.school || addr.college || addr.mosque || addr.church;
+                        const road = addr.road || addr.street || addr.avenue || addr.boulevard ||
+                                    addr.highway || addr.path || addr.residential;
+                        const area = addr.neighbourhood || addr.suburb || addr.quarter ||
+                                    addr.city_district || addr.hamlet;
+                        const city = addr.city || addr.town || addr.village || addr.municipality;
+
+                        if (landmark) {
+                          placeName = area ? `${landmark}, ${area}` : landmark;
+                        } else if (road && area) {
+                          placeName = `${road}, ${area}`;
+                        } else if (road && city) {
+                          placeName = `${road}, ${city}`;
+                        } else if (area && city) {
+                          placeName = `${area}, ${city}`;
+                        } else if (area) {
+                          placeName = area;
+                        } else if (road) {
+                          placeName = road;
+                        } else if (city) {
+                          placeName = city;
+                        }
+                      }
+
+                      if (!placeName && data.display_name) {
+                        const meaningful = extractMeaningfulStopName(data.display_name);
+                        placeName = meaningful || placeName;
+                      }
+
+                      if (!placeName && data.display_name) {
+                        const parts = data.display_name.split(',')
+                          .map((p: string) => p.trim())
+                          .filter((p: string) => p && !/^\d+$/.test(p) && p.length > 2);
+
+                        if (parts.length >= 2) {
+                          placeName = `${parts[0]}, ${parts[1]}`;
+                        } else if (parts.length === 1) {
+                          placeName = parts[0];
+                        }
+                      }
+                    } else if (res.status === 429) {
+                      console.warn(`[STOPS] Stop ${idx + 1}: Rate limited`);
+                    }
+                  } catch (fetchErr: any) {
+                    console.error(`[STOPS] Stop ${idx + 1}: Fetch error`, fetchErr.message);
                   }
                   
                   // Validate and store result
@@ -1260,63 +1284,77 @@ export default function CreateRidePage() {
                     console.log(`[STOPS] Stop ${idx + 1}: "${placeName}"`);
                     return { ...stop, name: placeName };
                   } else {
-                    // Fallback
-                    try {
-                      const fallbackHeaders: HeadersInit = { 'Content-Type': 'application/json' };
-                      if (authToken) fallbackHeaders['Authorization'] = `Bearer ${authToken}`;
-                      
-                      const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`, {
-                        headers: fallbackHeaders,
-                        signal: AbortSignal.timeout(8000)
-                      });
-                      
-                      if (res.ok) {
-                        const data = await res.json();
-                        const cityName = data.address?.city || data.address?.town || 
-                                        data.address?.village || data.address?.suburb || 
-                                        data.address?.neighbourhood || 'location';
-                        placeName = `Near ${cityName}`;
-                        geocodingCache.set(cacheKey, placeName);
-                      } else {
-                        placeName = `Stop ${idx + 1}`;
-                      }
-                    } catch {
-                      placeName = `Stop ${idx + 1}`;
-                    }
-                    
+                    // Simple fallback without additional API call
+                    const distKm = (stop.distanceFromStart / 1000).toFixed(1);
+                    placeName = idx === 0 ? 'Start' : idx === finalStops.length - 1 ? 'End' : `${distKm}km from start`;
                     console.warn(`[STOPS] Stop ${idx + 1}: Fallback "${placeName}"`);
                     return { ...stop, name: placeName };
                   }
                 } catch (e) {
                   console.error(`[STOPS] Stop ${idx + 1}: Error`, e);
-                  return { ...stop, name: `Stop ${idx + 1}` };
+                  const distKm = (stop.distanceFromStart / 1000).toFixed(1);
+                  return { ...stop, name: idx === 0 ? 'Start' : idx === finalStops.length - 1 ? 'End' : `${distKm}km from start` };
                 }
               };
               
               const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-              const runInChunks = async <T,>(items: T[], size: number, fn: (item: T, idx: number) => Promise<any>) => {
+              const runInChunks = async <T extends { distanceFromStart?: number },>(items: T[], size: number, fn: (item: T, idx: number) => Promise<any>) => {
                 const results: any[] = [];
                 for (let i = 0; i < items.length; i += size) {
                   const chunk = items.slice(i, i + size);
-                  const chunkResults = await Promise.all(
-                    chunk.map((item, idx) => fn(item, i + idx))
-                  );
-                  results.push(...chunkResults);
+                  try {
+                    const chunkResults = await Promise.all(
+                      chunk.map((item, idx) => fn(item, i + idx).catch(err => {
+                        console.warn(`[STOPS] Chunk item ${i + idx} failed:`, err);
+                        // Distance-based fallback instead of "Stop X"
+                        const distKm = ((item.distanceFromStart || 0) / 1000).toFixed(1);
+                        return { ...item, name: `Route Point (${distKm}km)` };
+                      }))
+                    );
+                    results.push(...chunkResults);
+                    
+                    // Progressive update: show stops as they load (with proper ordering)
+                    if (results.length > 0 && i === 0) {
+                      console.log('[STOPS] First chunk ready, updating UI...');
+                      const orderedResults = orderStopsCorrectly(results);
+                      setGeneratedStops([...orderedResults]);
+                    }
+                  } catch (chunkErr) {
+                    console.error(`[STOPS] Chunk ${i}-${i + size} failed:`, chunkErr);
+                    // Add distance-based fallback names for failed chunk
+                    const fallbacks = chunk.map((item, idx) => {
+                      const distKm = ((item.distanceFromStart || 0) / 1000).toFixed(1);
+                      return {
+                        ...item,
+                        name: `Route Point (${distKm}km)`
+                      };
+                    });
+                    results.push(...fallbacks);
+                  }
+                  
+                  // Add delay between batches to prevent rate limiting
                   if (i + size < items.length) {
-                    await sleep(350);
+                    await sleep(DELAY_BETWEEN_BATCHES);
                   }
                 }
                 return results;
               };
 
-              // Process stops in small chunks to avoid rate limits
-              console.log('[STOPS] Geocoding', finalStops.length, 'stops in chunks...');
-              const stopsWithNames = await runInChunks(finalStops, 3, geocodeStop);
+              // Process stops in batches with delay to prevent rate limiting
+              console.log('[STOPS] Geocoding', finalStops.length, 'stops in batches...');
+              const stopsWithNames = await runInChunks(finalStops, BATCH_SIZE, geocodeStop);
               
               console.log('[STOPS] All names resolved:', stopsWithNames.map((s, i) => `${i+1}:"${s.name}"`).join(', '));
               
-              // Deduplicate
-              const deduped = deduplicateByName(stopsWithNames);
+              // Clean location names (remove addresses, use clean names)
+              const cleanedStops = stopsWithNames.map(s => ({
+                ...s,
+                name: cleanLocationName(s.name)
+              }));
+              console.log('[STOPS] After cleaning names:', cleanedStops.map((s, i) => `${i+1}:"${s.name}"`).join(', '));
+              
+              // Remove duplicate locations (same lat/lng)
+              const deduped = removeDuplicateLocations(cleanedStops);
               console.log('[STOPS] After dedup:', deduped.length, 'stops:', deduped.map(s => s.name).join(' → '));
 
               const ensureMinStops = (baseStops: any[], allStops: any[], minCount: number) => {
@@ -1324,57 +1362,74 @@ export default function CreateRidePage() {
 
                 const result = [...baseStops];
                 const used = new Set(result.map((s) => `${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
-                const isPlaceholder = (name: string) => {
-                  const normalized = (name || '').trim();
-                  if (!normalized) return true;
-                  return /^(stop|loading|location|main stop|route stop)\s*\d*\.?\.?\.?$/i.test(normalized);
-                };
 
+                // Get candidates with valid names only (no placeholders)
                 const candidates = allStops
-                  .filter((s) => !used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`))
+                  .filter((s) => {
+                    if (used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`)) return false;
+                    // Only add stops with real names, not placeholders
+                    return !isPlaceholderName(s.name);
+                  })
                   .sort((a, b) => (a.distanceFromStart || 0) - (b.distanceFromStart || 0));
 
                 for (const c of candidates) {
                   if (result.length >= minCount) break;
-                  const nextName = c.name && !isPlaceholder(c.name) ? c.name : `Main Stop ${result.length + 1}`;
-                  result.push({ ...c, name: nextName });
+                  result.push({ ...c });
                   used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
                 }
 
+                // If still below minimum, only then use fallback (with cleaned names)
                 if (result.length < minCount) {
                   const fallback = allStops
                     .sort((a, b) => (a.distanceFromStart || 0) - (b.distanceFromStart || 0))
                     .filter((s) => !used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
                   for (const c of fallback) {
                     if (result.length >= minCount) break;
-                    result.push({ ...c, name: `Route Stop ${result.length + 1}` });
+                    // Use the cleaned name from the stop, not a placeholder
+                    result.push({ ...c, name: cleanLocationName(c.name) });
                     used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
                   }
                 }
 
-                return result.map((stop, idx) => ({ ...stop, order: idx }));
+                // Sort by distance and rebuild order
+                return orderStopsCorrectly(result);
               };
 
-              const finalStopsWithMin = ensureMinStops(deduped, stopsWithNames, targetStopCount);
+              const finalStopsWithMin = ensureMinStops(deduped, cleanedStops, targetStopCount);
 
-              // UPDATE STATE ONLY ONCE with complete array
-              console.log('[STOPS] FINAL RENDER:', finalStopsWithMin.length, 'stops');
-              setGeneratedStops([...finalStopsWithMin]);
+              // Final validation: ensure all stops have real names and proper ordering
+              const validatedStops = finalStopsWithMin.map(stop => ({
+                ...stop,
+                name: isPlaceholderName(stop.name) ? cleanLocationName(stop.name) : stop.name
+              }));
+
+              // CRITICAL: Apply final ordering to ensure START is first, END is last
+              const finalOrderedStops = orderStopsCorrectly(validatedStops);
+
+              // UPDATE STATE ONLY ONCE with complete, properly ordered array
+              console.log('[STOPS] FINAL RENDER:', finalOrderedStops.length, 'stops', finalOrderedStops.map((s, i) => `${i+1}:${s.type}:"${s.name}"`).join(', '));
+              setGeneratedStops([...finalOrderedStops]);
+              setStopsLoading(false);
             } catch (e) {
               console.error('[STOPS] Fatal error:', e);
               const fallbackStops = finalStops.map((s: any, idx: number) => ({
                 ...s,
-                name: `Stop ${idx + 1}`
+                name: cleanLocationName(s.name)
               }));
-              setGeneratedStops([...fallbackStops]);
+              // Ensure proper ordering even in fallback
+              const orderedFallback = orderStopsCorrectly(fallbackStops);
+              setGeneratedStops([...orderedFallback]);
+              setStopsLoading(false);
             }
           })();
         } else {
           setGeneratedStops(null);
+          setStopsLoading(false);
         }
       } catch (stopsErr) {
         console.warn('Failed to generate stops preview:', stopsErr);
         setGeneratedStops(null);
+        setStopsLoading(false);
       }
       
       // instruct the map to draw the generated route
@@ -2108,6 +2163,14 @@ export default function CreateRidePage() {
                   </div>
                 ) : (
                   <div className="mt-2 text-xs text-muted-foreground">No generated route yet. Add waypoints or ensure start/end are selected.</div>
+                )}
+                
+                {/* Loading indicator for stops */}
+                {stopsLoading && (
+                  <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Fetching stop names...</span>
+                  </div>
                 )}
                 
                 {/* Display and edit generated stops */}

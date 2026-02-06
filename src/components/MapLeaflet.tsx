@@ -126,6 +126,7 @@ export default function MapLeaflet({
 
     // Add initial route / polyline (outline + highlight for contrast)
     if (route && route.length) {
+      console.log('[MAP] Drawing initial route with', route.length, 'points');
       // Use SVG renderer explicitly to avoid canvas draw errors on teardown in Strict Mode
       const mainColor = '#3b82f6'; // Vibrant blue
       const outlineColor = '#1e3a8a'; // Dark blue outline for depth
@@ -134,11 +135,15 @@ export default function MapLeaflet({
         polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 10, opacity: 0.8, renderer: L.svg() }).addTo(map);
         // Draw main route with gradient-like effect
         polyRef.current = L.polyline(route, { color: mainColor, weight: 6, opacity: 0.95, renderer: L.svg(), lineCap: 'round', lineJoin: 'round' }).addTo(map);
+        console.log('[MAP] ✓ Route polyline rendered successfully');
       } catch (e) {
+        console.warn('[MAP] SVG renderer failed, using fallback:', e);
         // fallback to default if svg renderer isn't available
         polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 10, opacity: 0.8 }).addTo(map);
         polyRef.current = L.polyline(route, { color: mainColor, weight: 6, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map);
       }
+    } else {
+      console.log('[MAP] No route data to draw');
     }
 
     // Add initial markers (pickup pins) plus optional start/end pins
@@ -277,23 +282,32 @@ export default function MapLeaflet({
   // Update polyline when `route` changes (mutate existing layers)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map) {
+      console.log('[MAP] Route update skipped - map not ready');
+      return;
+    }
 
     if (route && route.length) {
+      console.log('[MAP] Updating route with', route.length, 'points');
       if (polyOutlineRef.current && polyRef.current) {
         polyOutlineRef.current.setLatLngs(route);
         polyRef.current.setLatLngs(route);
+        console.log('[MAP] ✓ Existing route polylines updated');
       } else {
+        console.log('[MAP] Creating new route polylines');
         try {
           polyOutlineRef.current = L.polyline(route, { color: '#0b1220', weight: 11, opacity: 0.95, renderer: L.svg() }).addTo(map);
           polyRef.current = L.polyline(route, { color: '#FFD166', weight: 5, renderer: L.svg() }).addTo(map);
+          console.log('[MAP] ✓ New route polylines created');
         } catch (e) {
+          console.warn('[MAP] SVG renderer failed, using fallback:', e);
           polyOutlineRef.current = L.polyline(route, { color: '#0b1220', weight: 11, opacity: 0.95 }).addTo(map);
           polyRef.current = L.polyline(route, { color: '#FFD166', weight: 5 }).addTo(map);
         }
       }
       // Intentionally do NOT auto-fit or center the map here — keep user-controlled view
     } else {
+      console.log('[MAP] Removing route polylines (no route data)');
       if (polyRef.current) { try { map.removeLayer(polyRef.current); } catch (_) {} polyRef.current = null; }
       if (polyOutlineRef.current) { try { map.removeLayer(polyOutlineRef.current); } catch (_) {} polyOutlineRef.current = null; }
     }

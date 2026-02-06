@@ -439,9 +439,10 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
   const hasBlockingRequest = existingBooking ? (existingRequestStatus && existingRequestStatus !== 'rejected') : false;
 
   const handleRequestSeat = async (pickupPoint: LatLng) => {
+    // CRITICAL: Logged-out users are redirected to university selection
     if (!user) {
-      toast({ variant: 'destructive', title: 'Sign in to book', description: 'Please sign in to request a seat.' });
-      router.push('/dashboard');
+      toast({ variant: 'destructive', title: 'Select Your University', description: 'Please select your university to book a ride.' });
+      router.push('/auth/select-university');
       return false;
     }
     if (!firestore) return false;
@@ -844,23 +845,11 @@ export default function RidesPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Determine which universities to query
-  // CRITICAL: Logged-in users must ONLY see their own university's rides
-  // Logged-out users can see both universities
-  const universitiesToQuery = (() => {
-    // If user is logged in with a university, lock to that university ONLY
-    if (user && userData && userData.university) {
-      return [userData.university.toLowerCase()];
-    }
-    
-    // For logged-out users, check filter
-    const filterValue = filters.university || '';
-    if (filterValue === 'any' || filterValue === '') {
-      // Query both universities for "any" filter (logged-out only)
-      return ['fast', 'ned'];
-    }
-    return [filterValue.toLowerCase()];
-  })();
+  // CRITICAL SECURITY: Query ALL rides (both universities) for everyone
+  // RULE 1: Everyone can SEE all public rides (no login required to browse)
+  // RULE 2: Display filter: Logged-in users see only their university (applied below)
+  // RULE 3: Booking: Logged-out users are redirected to /auth/select-university
+  const universitiesToQuery = ['fast', 'ned'];  // ✅ ALWAYS query both universities
 
   // Build queries for each university
   const fastRidesQuery = firestore ? query(
@@ -877,9 +866,9 @@ export default function RidesPage() {
     orderBy('departureTime', 'asc')
   ) : null;
 
-  // Only query the universities we need
-  const fastRidesQueryToUse = universitiesToQuery.includes('fast') ? fastRidesQuery : null;
-  const nedRidesQueryToUse = universitiesToQuery.includes('ned') ? nedRidesQuery : null;
+  // Query BOTH universities for everyone (always both)
+  const fastRidesQueryToUse = fastRidesQuery;
+  const nedRidesQueryToUse = nedRidesQuery;
 
   const { data: fastRides, loading: fastRidesLoading } = useCollection<RideType>(fastRidesQueryToUse);
   const { data: nedRides, loading: nedRidesLoading } = useCollection<RideType>(nedRidesQueryToUse);
@@ -894,14 +883,15 @@ export default function RidesPage() {
   // Debug: log the rides data and query status
   useEffect(() => {
     console.log('🔍 Rides Debug:', {
-      universitiesToQuery,
+      isUserLoggedIn: !!user,
+      userUniversity: userData?.university || 'NONE',
       ridesLoading,
       ridesCount: rides?.length || 0,
       fastRidesCount: fastRides?.length || 0,
       nedRidesCount: nedRides?.length || 0,
       timestamp: new Date().toISOString(),
     });
-  }, [rides, ridesLoading, fastRides, nedRides, universitiesToQuery]);
+  }, [rides, ridesLoading, fastRides, nedRides, user, userData?.university]);
   
   const isLoading = userLoading || ridesLoading;
 
@@ -974,9 +964,21 @@ export default function RidesPage() {
     );
   }
 
+  // IMPORTANT: Allow BOTH logged-out and logged-in users to view rides
+  // Everyone can SEE all rides from both universities
+  // Logged-in users will have university filter applied below
+  // Logged-out users who try to book are redirected to /auth/select-university
+
   // Show all rides but hide rides offered by the current user and filter out expired rides
   const availableRides = rides?.filter((ride: any) => {
-    if (ride.driverId === user?.uid) return false;
+    // Only filter out driver's own ride if user is logged in
+    if (user && ride.driverId === user.uid) return false;
+    
+    // CRITICAL: If user is logged in, ONLY show rides from their university
+    // If user is NOT logged in, show rides from ALL universities
+    if (user && userData?.university) {
+      if (ride.university !== userData.university) return false;
+    }
     
     // Filter out rides where departure time has passed
     if (ride.departureTime) {
@@ -1158,19 +1160,27 @@ export default function RidesPage() {
 
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm mb-1">University</label>
-                  {user && userData?.university ? (
+                  <label className="block text-sm mb-1 font-semibold">{(user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? 'University (Locked to Portal)' : 'University'}</label>
+                  {(user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? (
                     <div className="flex items-center gap-2">
-                      <Input value={getUniversityShortLabel(userData.university) || userData.university} disabled />
-                      <Badge>Locked</Badge>
+                      <Input 
+                        value={getUniversityShortLabel(userData.university) || userData.university} 
+                        disabled 
+                        title="Your university is locked based on your account. Contact support to change it."
+                        className="bg-slate-800/50 backdrop-blur-sm text-slate-300 disabled:opacity-70 cursor-not-allowed" 
+                      />
+                      <Badge className="bg-green-500/20 text-green-300 border-green-500/50">🔒 Locked</Badge>
                     </div>
                   ) : (
                     <Select value={filters.university || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, university: v }))}>
-                      <SelectTrigger className="w-full"><SelectValue>{!filters.university || filters.university === 'any' ? 'Any (Both)' : getUniversityShortLabel(filters.university) || filters.university}</SelectValue></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="any">Any (Both Universities)</SelectItem>
-                        <SelectItem value="fast">FAST</SelectItem>
-                        <SelectItem value="ned">NED</SelectItem>
+                      <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary">
+                        <SelectValue>{filters.university === 'any' || !filters.university ? 'All Universities' : filters.university === 'fast' ? 'FAST University' : filters.university === 'karachi' ? 'Karachi University' : 'NED University'}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent className="bg-slate-900">
+                        <SelectItem value="any">All Universities</SelectItem>
+                        <SelectItem value="fast">FAST University</SelectItem>
+                        <SelectItem value="ned">NED University</SelectItem>
+                        <SelectItem value="karachi">Karachi University</SelectItem>
                       </SelectContent>
                     </Select>
                   )}

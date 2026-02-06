@@ -22,7 +22,7 @@ export default function CompleteProfilePage() {
 
   const [fullName, setFullName] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "">("" as any);
-  const [university, setUniversity] = useState<"ned" | "fast" | "">("" as any);
+  const [university, setUniversity] = useState<"ned" | "fast" | "karachi" | "">("" as any);
   const [contactNumber, setContactNumber] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
   const [sendingVerification, setSendingVerification] = useState(false);
@@ -66,6 +66,7 @@ export default function CompleteProfilePage() {
     if (user && user.email && !university) {
       if (user.email.endsWith('@nu.edu.pk')) setUniversity('fast');
       if (user.email.endsWith('@neduet.edu.pk')) setUniversity('ned');
+      if (user.email.endsWith('@uok.edu.pk')) setUniversity('karachi');
     }
     if (user && user.displayName && !fullName) {
       setFullName(user.displayName);

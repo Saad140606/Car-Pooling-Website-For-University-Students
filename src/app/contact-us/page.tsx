@@ -133,6 +133,7 @@ export default function ContactUsPage() {
                           <SelectContent>
                             <SelectItem value="fast">FAST-NUCES</SelectItem>
                             <SelectItem value="ned">NED University</SelectItem>
+                            <SelectItem value="karachi">Karachi University</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

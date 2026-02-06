@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const selectedUni = body?.selectedUni || 'fast';
-    const otherUni = selectedUni === 'ned' ? 'fast' : 'ned';
+    const allUniversities = ['fast', 'ned', 'karachi'].filter(u => u !== selectedUni);
 
     // Check admin document first
     const adminSnap = await admin.firestore().doc(`admins/${uid}`).get().catch(() => null as any);
@@ -24,15 +24,20 @@ export async function POST(req: NextRequest) {
     const uniSnap = await admin.firestore().doc(`universities/${selectedUni}/users/${uid}`).get().catch(() => null as any);
     if (uniSnap && uniSnap.exists) return NextResponse.json({ isMember: true, isAdmin, university: selectedUni });
 
-    // Check other university - IMPORTANT: return which university the user belongs to
-    const otherSnap = await admin.firestore().doc(`universities/${otherUni}/users/${uid}`).get().catch(() => null as any);
-    if (otherSnap && otherSnap.exists) return NextResponse.json({ isMember: true, isAdmin, university: otherUni, registeredIn: otherUni });
+    // Check ALL other universities - IMPORTANT: return which university the user belongs to
+    for (const otherUni of allUniversities) {
+      const otherSnap = await admin.firestore().doc(`universities/${otherUni}/users/${uid}`).get().catch(() => null as any);
+      if (otherSnap && otherSnap.exists) return NextResponse.json({ isMember: true, isAdmin, university: otherUni, registeredIn: otherUni });
+    }
 
     // Check legacy top-level users/{univ}_{uid}
     const legacySelected = await admin.firestore().doc(`users/${selectedUni}_${uid}`).get().catch(() => null as any);
     if (legacySelected && legacySelected.exists) return NextResponse.json({ isMember: true, isAdmin, university: selectedUni, legacy: true });
-    const legacyOther = await admin.firestore().doc(`users/${otherUni}_${uid}`).get().catch(() => null as any);
-    if (legacyOther && legacyOther.exists) return NextResponse.json({ isMember: true, isAdmin, university: otherUni, legacy: true, registeredIn: otherUni });
+    
+    for (const otherUni of allUniversities) {
+      const legacyOther = await admin.firestore().doc(`users/${otherUni}_${uid}`).get().catch(() => null as any);
+      if (legacyOther && legacyOther.exists) return NextResponse.json({ isMember: true, isAdmin, university: otherUni, legacy: true, registeredIn: otherUni });
+    }
 
     return NextResponse.json({ isMember: false, isAdmin });
   } catch (err) {

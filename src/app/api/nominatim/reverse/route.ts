@@ -8,7 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   verifyAuthToken,
-  applyRateLimit,
+  checkRateLimit,
+  getClientIP,
   errorResponse,
 } from '@/lib/api-security';
 
@@ -20,16 +21,26 @@ const GEOCODING_RATE_LIMIT = {
 };
 
 export async function GET(req: NextRequest) {
-  // ===== AUTHENTICATION =====
-  const authResult = await verifyAuthToken(req);
-  if (!authResult.success) {
-    return errorResponse('Authentication required', 401);
-  }
+  // Authentication is optional for reverse geocoding.
+  // Allow anonymous access but enforce stricter per-IP rate limits.
+  const authResult = await verifyAuthToken(req, true); // silent = true (don't log missing auth)
 
-  // ===== RATE LIMITING =====
-  const rateLimitResult = await applyRateLimit(req, GEOCODING_RATE_LIMIT);
-  if (rateLimitResult instanceof NextResponse) {
-    return rateLimitResult;
+  // Choose rate limit config based on whether user is authenticated
+  const rateConfig = authResult.success && authResult.user
+    ? { maxRequests: 60, windowMs: 60 * 1000, keyPrefix: 'geocoding-reverse-user' }
+    : { maxRequests: 30, windowMs: 60 * 1000, keyPrefix: 'geocoding-reverse-anon' };
+
+  // Build identifier (user:UID or ip:IP)
+  const identifier = authResult.success && authResult.user
+    ? `user:${authResult.user.uid}`
+    : `ip:${getClientIP(req)}`;
+
+  const rateLimitResult = await checkRateLimit(identifier, rateConfig);
+  if (!rateLimitResult.allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please try again later.' },
+      { status: 429 }
+    );
   }
 
   try {
@@ -56,13 +67,19 @@ export async function GET(req: NextRequest) {
 
     const nomUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(latNum.toString())}&lon=${encodeURIComponent(lonNum.toString())}&addressdetails=1&zoom=18`;
 
+    // Use a short timeout to avoid long-running requests blocking route generation
+    const controller = new AbortController();
+    const timeoutMs = 5000; // 5 seconds
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     const res = await fetch(nomUrl, {
       method: 'GET',
       headers: {
         'User-Agent': 'CampusRide/1.0 (carpooling app)',
         'Accept-Language': 'en',
       },
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
 
     if (!res.ok) {
       console.error('Nominatim reverse error:', res.status);
@@ -72,7 +89,11 @@ export async function GET(req: NextRequest) {
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err: any) {
-    console.error('Nominatim reverse proxy failed:', err.code || 'UNKNOWN');
+    if (err.name === 'AbortError') {
+      console.error('Nominatim reverse proxy timed out');
+      return errorResponse('Geocoding request timed out', 504);
+    }
+    console.error('Nominatim reverse proxy failed:', err.code || err.message || 'UNKNOWN');
     return errorResponse('Geocoding service error', 500);
   }
 }

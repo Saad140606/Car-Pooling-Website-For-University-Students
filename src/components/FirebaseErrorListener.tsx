@@ -25,9 +25,11 @@ export function FirebaseErrorListener() {
             const firestore = getFirestore();
             const fastRef = doc(firestore, 'universities', 'fast', 'users', user.uid);
             const nedRef = doc(firestore, 'universities', 'ned', 'users', user.uid);
+            const karachiRef = doc(firestore, 'universities', 'karachi', 'users', user.uid);
             const fastSnap = await getDoc(fastRef);
             const nedSnap = await getDoc(nedRef);
-            if (!fastSnap.exists() && !nedSnap.exists()) {
+            const karachiSnap = await getDoc(karachiRef);
+            if (!fastSnap.exists() && !nedSnap.exists() && !karachiSnap.exists()) {
               // Build profile using pending values or selected portal
               let finalUniversity = getSelectedUniversity() || undefined;
               try { const pending = getPendingUniversity(); if (isValidUniversity(pending)) finalUniversity = pending; } catch (_) {}

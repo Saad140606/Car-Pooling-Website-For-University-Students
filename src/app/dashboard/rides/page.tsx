@@ -799,6 +799,80 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
   );
 }
 
+// Helper: Convert Firestore Timestamp to milliseconds, handling multiple formats with validation
+function getTimestampMs(ts: any): number | null {
+  if (!ts) {
+    console.debug('[Find Ride] getTimestampMs: null/undefined');
+    return null;
+  }
+  
+  // If it's already a number (milliseconds), validate and return
+  if (typeof ts === 'number') {
+    if (isFinite(ts)) {
+      console.debug('[Find Ride] getTimestampMs: number', ts);
+      return ts;
+    }
+    console.warn('[Find Ride] getTimestampMs: not finite number', ts);
+    return null;
+  }
+  
+  // If it's a Firestore Timestamp with .seconds property
+  if (ts && typeof ts === 'object' && typeof ts.seconds === 'number') {
+    try {
+      const ms = ts.seconds * 1000 + ((ts.nanoseconds || 0) / 1_000_000);
+      if (isFinite(ms)) {
+        console.debug('[Find Ride] getTimestampMs: Firestore Timestamp', { seconds: ts.seconds, nanoseconds: ts.nanoseconds });
+        return ms;
+      }
+      console.warn('[Find Ride] getTimestampMs: Firestore Timestamp not finite', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, ms });
+      return null;
+    } catch (e) {
+      console.warn('[Find Ride] getTimestampMs: Firestore Timestamp conversion failed', e);
+      return null;
+    }
+  }
+  
+  // Check for .toDate() method (Firebase SDK Timestamp)
+  if (ts && typeof ts === 'object' && typeof ts.toDate === 'function') {
+    try {
+      const d = ts.toDate();
+      if (d instanceof Date && !isNaN(d.getTime())) {
+        console.debug('[Find Ride] getTimestampMs: via toDate()', d.toISOString());
+        return d.getTime();
+      }
+    } catch (e) {
+      console.warn('[Find Ride] getTimestampMs: toDate() failed', e);
+    }
+  }
+  
+  // If it's a Date object
+  if (ts instanceof Date) {
+    if (!isNaN(ts.getTime())) {
+      console.debug('[Find Ride] getTimestampMs: Date object', ts.toISOString());
+      return ts.getTime();
+    }
+    console.warn('[Find Ride] getTimestampMs: Invalid Date object');
+    return null;
+  }
+  
+  // Try to convert string to date
+  if (typeof ts === 'string') {
+    try {
+      const d = new Date(ts);
+      if (!isNaN(d.getTime())) {
+        console.debug('[Find Ride] getTimestampMs: string', ts, '→', d.toISOString());
+        return d.getTime();
+      }
+      console.warn('[Find Ride] getTimestampMs: string resulted in invalid Date', ts);
+    } catch (e) {
+      console.warn('[Find Ride] getTimestampMs: string conversion failed', ts);
+    }
+  }
+  
+  console.warn('[Find Ride] getTimestampMs: could not parse type', typeof ts);
+  return null;
+}
+
 export default function RidesPage() {
     const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
@@ -813,16 +887,32 @@ export default function RidesPage() {
   const searchParams = useSearchParams();
 
   // --- Filters UI state (must be declared unconditionally to preserve Hooks order) ---
-  const [filters, setFilters] = useState({
-    transport: 'any' as 'any'|'car'|'bike',
-    gender: 'any' as 'any'|'male'|'female',
-    minPrice: '' as string,
-    maxPrice: '' as string,
-    pointInput: '' as string,
-    point: null as { lat:number; lng:number } | null,
-    university: '' as string,
-    direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
+  const [filters, setFilters] = useState(() => {
+    // For logged-in users, lock to their university
+    // For logged-out users, allow all universities
+    const baseFilters = {
+      transport: 'any' as 'any'|'car'|'bike',
+      gender: 'any' as 'any'|'male'|'female',
+      minPrice: '' as string,
+      maxPrice: '' as string,
+      pointInput: '' as string,
+      point: null as { lat:number; lng:number } | null,
+      university: '' as string,
+      direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
+    };
+    return baseFilters;
   });
+
+  // Auto-lock university filter for logged-in users
+  useEffect(() => {
+    if (user && userData?.university) {
+      // User is logged in - lock their university filter
+      setFilters(f => ({ ...f, university: userData.university }));
+    } else {
+      // User is logged out - allow free filtering
+      setFilters(f => ({ ...f, university: '' }));
+    }
+  }, [user?.uid, userData?.university]);
 
   // Debug filter state changes (placed after `filters` is initialized)
   useEffect(() => {
@@ -845,53 +935,109 @@ export default function RidesPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // CRITICAL SECURITY: Query ALL rides (both universities) for everyone
+  // CRITICAL SECURITY: Query ALL rides (all three universities) for everyone
   // RULE 1: Everyone can SEE all public rides (no login required to browse)
   // RULE 2: Display filter: Logged-in users see only their university (applied below)
   // RULE 3: Booking: Logged-out users are redirected to /auth/select-university
-  const universitiesToQuery = ['fast', 'ned'];  // ✅ ALWAYS query both universities
+  const universitiesToQuery = ['fast', 'ned', 'karachi'];  // ✅ ALWAYS query all universities
 
   // Build queries for each university
+  // NOTE: orderBy removed temporarily while Firestore indexes are building (client-side sort below)
+  // IMPORTANT: Query for active rides WITHOUT aggressive time filtering here
+  // We filter out past rides client-side with proper timestamp handling
+  // REMOVED: departureTime filter was too aggressive and incompatible with timestamp variants
+  
   const fastRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'fast', 'rides'),
-    where('status', '==', 'active'),
-    where('departureTime', '>', new Date()),
-    orderBy('departureTime', 'asc')
+    where('status', '==', 'active')
   ) : null;
 
   const nedRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'ned', 'rides'),
-    where('status', '==', 'active'),
-    where('departureTime', '>', new Date()),
-    orderBy('departureTime', 'asc')
+    where('status', '==', 'active')
   ) : null;
 
-  // Query BOTH universities for everyone (always both)
+  const karachiRidesQuery = firestore ? query(
+    safeCollection(firestore, 'universities', 'karachi', 'rides'),
+    where('status', '==', 'active')
+  ) : null;
+
+  // Query ALL universities for everyone (always all three)
   const fastRidesQueryToUse = fastRidesQuery;
   const nedRidesQueryToUse = nedRidesQuery;
+  const karachiRidesQueryToUse = karachiRidesQuery;
 
-  const { data: fastRides, loading: fastRidesLoading } = useCollection<RideType>(fastRidesQueryToUse);
-  const { data: nedRides, loading: nedRidesLoading } = useCollection<RideType>(nedRidesQueryToUse);
+  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQueryToUse);
+  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQueryToUse);
+  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQueryToUse);
 
-  // Merge rides from both universities
-  const rides = [
-    ...(fastRides || []).map(r => ({ ...r, university: 'fast' })),
-    ...(nedRides || []).map(r => ({ ...r, university: 'ned' }))
-  ];
-  const ridesLoading = fastRidesLoading || nedRidesLoading;
+  // Merge rides from all universities and sort client-side by departureTime (ascending)
+  // Client-side sorting while Firestore index builds
+  const ridesWithValidTimestamps = React.useMemo(() => {
+    const allRides = [
+      ...(fastRides || []).map(r => ({ ...r, university: 'fast' })),
+      ...(nedRides || []).map(r => ({ ...r, university: 'ned' })),
+      ...(karachiRides || []).map(r => ({ ...r, university: 'karachi' }))
+    ];
+    
+    // Filter and log rides with invalid timestamps
+    return allRides.filter(ride => {
+      const tsMs = getTimestampMs(ride.departureTime);
+      if (tsMs === null) {
+        console.warn(`[Find Ride] Ride ${ride.id} has invalid departureTime:`, ride.departureTime);
+        // Include anyway - let server handle deletion
+        return true;
+      }
+      return true;
+    });
+  }, [fastRides, nedRides, karachiRides]);
   
-  // Debug: log the rides data and query status
+  const rides = React.useMemo(() => {
+    return ridesWithValidTimestamps.sort((a, b) => {
+      const aTime = getTimestampMs(a.departureTime) || 0;
+      const bTime = getTimestampMs(b.departureTime) || 0;
+      return aTime - bTime; // ascending
+    });
+  }, [ridesWithValidTimestamps]);
+  
+  const ridesLoading = fastRidesLoading || nedRidesLoading || karachiRidesLoading;
+  
+  // Log query errors - CRITICAL for diagnosing issues
   useEffect(() => {
-    console.log('🔍 Rides Debug:', {
+    if (fastRidesError) console.error('❌ [Find Ride] FAST query error:', fastRidesError);
+    if (nedRidesError) console.error('❌ [Find Ride] NED query error:', nedRidesError);
+    if (karachiRidesError) console.error('❌ [Find Ride] Karachi query error:', karachiRidesError);
+  }, [fastRidesError, nedRidesError, karachiRidesError]);
+  
+  // Debug: log the rides data and query status - CRITICAL for diagnosing missing rides
+  useEffect(() => {
+    console.log('🔍 [Find Ride] Rides Query Debug:', {
       isUserLoggedIn: !!user,
       userUniversity: userData?.university || 'NONE',
+      firestore: !!firestore ? 'READY' : 'NOT_READY',
       ridesLoading,
       ridesCount: rides?.length || 0,
       fastRidesCount: fastRides?.length || 0,
       nedRidesCount: nedRides?.length || 0,
+      karachiRidesCount: karachiRides?.length || 0,
+      queriesBuild: {
+        fastRidesQuery: !!fastRidesQuery,
+        nedRidesQuery: !!nedRidesQuery,
+        karachiRidesQuery: !!karachiRidesQuery
+      },
+      sampleRides: rides?.slice(0, 5).map(r => ({
+        id: r.id,
+        from: r.from,
+        to: r.to,
+        driverId: r.driverId,
+        status: r.status,
+        departureTime: r.departureTime,
+        departureTimeMs: getTimestampMs(r.departureTime),
+        university: r.university
+      })) || [],
       timestamp: new Date().toISOString(),
     });
-  }, [rides, ridesLoading, fastRides, nedRides, user, userData?.university]);
+  }, [rides, ridesLoading, fastRides, nedRides, karachiRides, user, userData?.university, firestore, fastRidesQuery, nedRidesQuery, karachiRidesQuery]);
   
   const isLoading = userLoading || ridesLoading;
 
@@ -972,24 +1118,58 @@ export default function RidesPage() {
   // Show all rides but hide rides offered by the current user and filter out expired rides
   const availableRides = rides?.filter((ride: any) => {
     // Only filter out driver's own ride if user is logged in
-    if (user && ride.driverId === user.uid) return false;
+    if (user && ride.driverId === user.uid) {
+      console.debug(`[Find Ride] Filtering out own ride: ${ride.id}`);
+      return false;
+    }
     
     // CRITICAL: If user is logged in, ONLY show rides from their university
     // If user is NOT logged in, show rides from ALL universities
     if (user && userData?.university) {
-      if (ride.university !== userData.university) return false;
+      if (ride.university !== userData.university) {
+        console.debug(`[Find Ride] Filtering out ride from different university: ${ride.id} (${ride.university})`);
+        return false;
+      }
     }
     
-    // Filter out rides where departure time has passed
+    // Filter out rides where departure time has passed (SAFELY using getTimestampMs)
     if (ride.departureTime) {
-      const departureDate = ride.departureTime.seconds 
-        ? new Date(ride.departureTime.seconds * 1000) 
-        : new Date(ride.departureTime);
-      if (departureDate <= currentTime) return false;
+      const departureMs = getTimestampMs(ride.departureTime);
+      const now = Date.now();
+      
+      if (departureMs === null) {
+        console.warn(`[Find Ride] Ride ${ride.id} has invalid departureTime, including anyway:`, ride.departureTime);
+        // Include rides with invalid timestamps - let server handle cleanup
+        return true;
+      }
+      
+      if (departureMs <= now) {
+        console.debug(`[Find Ride] Filtering out departed ride: ${ride.id} (departed ${Math.round((now - departureMs) / 1000 / 60)} min ago)`);
+        return false;
+      }
     }
     
+    console.debug(`[Find Ride] Including ride: ${ride.id} from ${ride.from} to ${ride.to}`);
     return true;
   }) ?? [];
+  
+  // Log available rides summary
+  useEffect(() => {
+    console.log('🔍 [Find Ride] Available Rides Summary:', {
+      totalRidesFromQuery: rides?.length || 0,
+      availableRidesAfterFilter: availableRides.length,
+      userLoggedIn: !!user,
+      userUniversity: userData?.university || 'N/A',
+      rides: availableRides.slice(0, 3).map(r => ({
+        id: r.id,
+        from: r.from,
+        to: r.to,
+        departureMs: getTimestampMs(r.departureTime),
+        status: r.status,
+        driverId: r.driverId
+      }))
+    });
+  }, [rides, availableRides, user, userData?.university]);
 
   const toMeters = (latlng: { lat: number; lng: number }) => {
     const latRad = (latlng.lat * Math.PI) / 180;
@@ -1044,6 +1224,15 @@ export default function RidesPage() {
   const filteredRides = availableRides?.filter((ride: any) => {
     if (!ride) return false;
 
+    // University filter - LOCKED for logged-in users, FREE for logged-out
+    if (filters.university && filters.university !== 'any' && filters.university !== '') {
+      // Logged-in user with locked university OR logged-out user filtering by university
+      if (ride.university !== filters.university) return false;
+    } else if (user && userData?.university) {
+      // Logged-in user with their university locked - should always have it set, but just in case
+      if (ride.university !== userData.university) return false;
+    }
+
     // transport/gender/price filters (only applied when user sets them)
     if (filters.transport !== 'any' && ride.transportMode !== filters.transport) return false;
     // Filter by ride provider gender (show rides offered by selected gender)
@@ -1078,7 +1267,7 @@ export default function RidesPage() {
     return true;
   }) ?? [];
 
-  const clearFilters = () => setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: userData?.university || '', direction: 'any' });
+  const clearFilters = () => setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && userData?.university) ? userData.university : '', direction: 'any' });
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
@@ -1160,8 +1349,8 @@ export default function RidesPage() {
 
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm mb-1 font-semibold">{(user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? 'University (Locked to Portal)' : 'University'}</label>
-                  {(user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? (
+                  <label className="block text-sm mb-1 font-semibold">{(user && userData?.university) ? 'University (Locked to Portal)' : 'University'}</label>
+                  {(user && userData?.university) ? (
                     <div className="flex items-center gap-2">
                       <Input 
                         value={getUniversityShortLabel(userData.university) || userData.university} 
@@ -1296,7 +1485,7 @@ export default function RidesPage() {
             </DialogContent>
           </Dialog>
           {/** Show matches badge only when filters/search are active */}
-          { (searchQuery.trim() !== '' || filters.transport !== 'any' || filters.gender !== 'any' || filters.minPrice || filters.maxPrice || filters.pointInput || filters.direction !== 'any') && (
+          { (searchQuery.trim() !== '' || filters.transport !== 'any' || filters.gender !== 'any' || filters.minPrice || filters.maxPrice || filters.pointInput || filters.direction !== 'any' || (filters.university && filters.university !== '' && !user)) && (
             <Badge>{filteredRides.length} matches</Badge>
           ) }
 
@@ -1310,11 +1499,17 @@ export default function RidesPage() {
           </div>
         </div>
         <div>
-          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: userData?.university || '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
+          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && userData?.university) ? userData.university : '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
         </div>
       </div>
 
-      {filteredRides && filteredRides.length > 0 ? (
+      {ridesLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-64 bg-slate-800/50 rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : filteredRides && filteredRides.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 items-stretch">
           {filteredRides.map((ride: any) => {
             const hasActiveBookingForOther = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected' && b.rideId !== ride.id));
@@ -1329,6 +1524,11 @@ export default function RidesPage() {
         <div className="text-center py-8 sm:py-12 md:py-16 rounded-2xl bg-gradient-to-br from-slate-800/40 via-slate-800/30 to-slate-900/40 backdrop-blur-md shadow-lg shadow-primary/5">
           <h2 className="text-2xl font-semibold text-slate-50">No Rides Available</h2>
           <p className="text-slate-400 mt-2">Check back later for new rides from your university!</p>
+          {fastRidesError || nedRidesError || karachiRidesError ? (
+            <div className="mt-4 p-4 bg-red-900/20 border border-red-900/50 rounded-lg text-red-300 text-sm">
+              ⚠️ Error loading rides. Please try again or contact support.
+            </div>
+          ) : null}
         </div>
       )}
       </div>

@@ -83,28 +83,27 @@ service cloud.firestore {
       // Rides under a university
       match /rides/{rideId} {
         // Allow anyone to list rides
-        // Allow authenticated users to list rides filtered by driverId (for "My Offered Rides")
         allow list: if true;
 
         allow get: if true;
 
-        allow create: if isAuth()
-          && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.university == univId
-          && request.resource.data.from is string
-          && request.resource.data.to is string
-          && (request.resource.data.departureTime is timestamp || request.resource.data.time is timestamp)
-          && request.resource.data.availableSeats is int
-          && (request.resource.data.createdAt is timestamp || request.resource.data.createdAt == request.time);
+        // ===== RIDE CREATE =====
+        // Allow authenticated users to create rides - validate driverId matches auth
+        allow create: if isAuth() && request.resource.data.driverId == request.auth.uid;
 
-        // Allow full update/delete for creators and admins
-        allow update, delete: if isAdmin() || (isAuth() && resource.data.createdBy == request.auth.uid);
-        
-        // Allow passengers to update ONLY confirmedPassengers, availableSeats, and status (for ride confirmation)
-        allow update: if isAuth() 
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedPassengers', 'availableSeats', 'status', 'updatedAt'])
-          && request.resource.data.confirmedPassengers.toSet().difference(resource.data.get('confirmedPassengers', []).toSet()).hasOnly([request.auth.uid])
-          && request.resource.data.availableSeats == resource.data.availableSeats - 1;
+        // ===== RIDE UPDATE/DELETE - UNIFIED RULE =====
+        // CRITICAL: Standardized on driverId as canonical ownership field
+        // Three update scenarios merged into ONE rule to prevent conflicts:
+        // 1. Driver (via driverId) or admin can update/delete anything
+        // 2. Passengers can ONLY update confirmedPassengers, availableSeats, status for booking confirmation
+        allow update, delete: if isAdmin()
+          || (isAuth() && resource.data.driverId == request.auth.uid)
+          || (isAuth() 
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedPassengers', 'availableSeats', 'status', 'updatedAt'])
+              && request.resource.data.keys().hasAll(['confirmedPassengers', 'availableSeats'])
+              && request.resource.data.confirmedPassengers.toSet().difference(resource.data.get('confirmedPassengers', []).toSet()).hasOnly([request.auth.uid])
+              && request.resource.data.availableSeats == resource.data.availableSeats - 1
+          );
 
         // Requests for a ride
         match /requests/{requestId} {

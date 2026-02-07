@@ -76,13 +76,13 @@ const coreSteps: Step[] = [
 
 const safetySteps: Step[] = [
   {
-    label: 'Smart timer',
-    title: 'If you do nothing',
+    label: 'Ride confirmation',
+    title: 'Your seat isn’t locked until you confirm the ride.',
     icon: <Clock3 className="h-6 w-6" />,
     points: [
-      'No harsh 5-minute rule, especially for late-night or future rides.',
-      'You get gentle reminders instead of surprise cancellations.',
-      'We keep your spot while you figure things out.',
+      'There’s no harsh timer — especially for late-night or future rides — but confirmation is required so the driver knows you’re coming.',
+      'We’ll send gentle reminders instead of cancelling anything unexpectedly. ',
+      'Confirm your ride to secure your seat and avoid losing your spot.',
     ],
   },
   {

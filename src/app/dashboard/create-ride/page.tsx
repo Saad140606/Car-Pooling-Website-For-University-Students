@@ -1220,7 +1220,7 @@ export default function CreateRidePage() {
                     const res = await fetch(`/api/nominatim/reverse?lat=${stop.lat}&lon=${stop.lng}`, {
                       method: 'GET',
                       headers: fetchHeaders,
-                      signal: AbortSignal.timeout(8000)
+                      signal: AbortSignal.timeout(15000)
                     });
                       
                     if (res.ok) {
@@ -1270,11 +1270,13 @@ export default function CreateRidePage() {
                           placeName = parts[0];
                         }
                       }
-                    } else if (res.status === 429) {
-                      console.warn(`[STOPS] Stop ${idx + 1}: Rate limited`);
+                  } else if (res.status === 429) {
+                      console.warn(`[STOPS] Stop ${idx + 1}: Rate limited (429)`);
                     }
                   } catch (fetchErr: any) {
-                    console.error(`[STOPS] Stop ${idx + 1}: Fetch error`, fetchErr.message);
+                    const isTimeout = fetchErr?.name === 'AbortError' || fetchErr?.code === 'ETIMEDOUT' || fetchErr?.message?.includes('timeout');
+                    const errMsg = isTimeout ? 'timeout' : fetchErr.message || 'network error';
+                    console.error(`[STOPS] Stop ${idx + 1}: Fetch error (${errMsg})`);
                   }
                   
                   // Validate and store result
@@ -1284,16 +1286,14 @@ export default function CreateRidePage() {
                     console.log(`[STOPS] Stop ${idx + 1}: "${placeName}"`);
                     return { ...stop, name: placeName };
                   } else {
-                    // Simple fallback without additional API call
-                    const distKm = (stop.distanceFromStart / 1000).toFixed(1);
-                    placeName = idx === 0 ? 'Start' : idx === finalStops.length - 1 ? 'End' : `${distKm}km from start`;
-                    console.warn(`[STOPS] Stop ${idx + 1}: Fallback "${placeName}"`);
-                    return { ...stop, name: placeName };
+                    // Use position-based fallback for unnamed stops
+                    // This helps identify which stop failed without duplicate names
+                    console.warn(`[STOPS] Stop ${idx + 1}: No name found, using fallback`);
+                    return { ...stop, name: `Stop ${idx + 1}` };
                   }
                 } catch (e) {
-                  console.error(`[STOPS] Stop ${idx + 1}: Error`, e);
-                  const distKm = (stop.distanceFromStart / 1000).toFixed(1);
-                  return { ...stop, name: idx === 0 ? 'Start' : idx === finalStops.length - 1 ? 'End' : `${distKm}km from start` };
+                  console.error(`[STOPS] Stop ${idx + 1}: Unexpected error:`, e instanceof Error ? e.message : String(e));
+                  return { ...stop, name: `Stop ${idx + 1}` };
                 }
               };
               
@@ -1353,20 +1353,35 @@ export default function CreateRidePage() {
               }));
               console.log('[STOPS] After cleaning names:', cleanedStops.map((s, i) => `${i+1}:"${s.name}"`).join(', '));
               
-              // Remove duplicate locations (same lat/lng)
+              // Remove duplicate locations (same lat/lng AND same name)
               const deduped = removeDuplicateLocations(cleanedStops);
-              console.log('[STOPS] After dedup:', deduped.length, 'stops:', deduped.map(s => s.name).join(' → '));
+              
+              // Additional deduplication: Remove consecutive stops with identical names
+              const dedupedByName: typeof deduped = [];
+              let lastName = '';
+              for (const stop of deduped) {
+                if (stop.name !== lastName || stop.name === 'Start' || stop.name === 'End') {
+                  dedupedByName.push(stop);
+                  lastName = stop.name;
+                } else {
+                  console.log(`[STOPS] Skipping duplicate named stop: "${stop.name}"`);
+                }
+              }
+              
+              console.log('[STOPS] After name dedup:', dedupedByName.length, 'stops:', dedupedByName.map(s => s.name).join(' → '));
 
               const ensureMinStops = (baseStops: any[], allStops: any[], minCount: number) => {
                 if (baseStops.length >= minCount) return baseStops;
 
                 const result = [...baseStops];
                 const used = new Set(result.map((s) => `${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
+                const usedNames = new Set(result.map((s) => s.name));
 
                 // Get candidates with valid names only (no placeholders)
                 const candidates = allStops
                   .filter((s) => {
                     if (used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`)) return false;
+                    if (usedNames.has(s.name)) return false; // Skip if name already used
                     // Only add stops with real names, not placeholders
                     return !isPlaceholderName(s.name);
                   })
@@ -1376,6 +1391,7 @@ export default function CreateRidePage() {
                   if (result.length >= minCount) break;
                   result.push({ ...c });
                   used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
+                  usedNames.add(c.name);
                 }
 
                 // If still below minimum, only then use fallback (with cleaned names)
@@ -1395,7 +1411,7 @@ export default function CreateRidePage() {
                 return orderStopsCorrectly(result);
               };
 
-              const finalStopsWithMin = ensureMinStops(deduped, cleanedStops, targetStopCount);
+              const finalStopsWithMin = ensureMinStops(dedupedByName, cleanedStops, targetStopCount);
 
               // Final validation: ensure all stops have real names and proper ordering
               const validatedStops = finalStopsWithMin.map(stop => ({
@@ -1715,15 +1731,51 @@ export default function CreateRidePage() {
 
     const totalSeats = Math.max(1, Math.trunc(values.totalSeats));
 
+    // Normalize departureTime: ensure it's a valid Date (Firestore will auto-convert to Timestamp)
+    let normalizedDeparture: Date | null = null;
+    try {
+      if (!values.departureTime) {
+        toast({ variant: 'destructive', title: 'Missing Time', description: 'Please select a departure date and time.' });
+        return;
+      }
+      
+      // If it's already a Date object, use it
+      if (values.departureTime instanceof Date) {
+        normalizedDeparture = values.departureTime;
+      }
+      // If it's a string, parse it
+      else if (typeof values.departureTime === 'string') {
+        normalizedDeparture = new Date(values.departureTime);
+      }
+      // Otherwise try to convert
+      else {
+        normalizedDeparture = new Date(values.departureTime);
+      }
+      
+      // Validate the resulting Date
+      if (!normalizedDeparture || isNaN(normalizedDeparture.getTime())) {
+        console.error('[CreateRide] Invalid departure time:', values.departureTime);
+        toast({ variant: 'destructive', title: 'Invalid Date', description: 'The departure date is invalid. Please select a new date.' });
+        return;
+      }
+      
+      console.log('[CreateRide] ✓ Departure time prepared:', normalizedDeparture.toISOString());
+    } catch (e) {
+      console.error('[CreateRide] ❌ Error preparing departure time:', e);
+      toast({ variant: 'destructive', title: 'Date Error', description: 'Error processing the departure date. Please try again.' });
+      return;
+    }
+
     const rideData = {
       university: universityId,
       driverId: uid,
       createdBy: uid, // canonical
       from: values.from,
       to: values.to,
-      time: values.departureTime,
-      // Firestore will auto-convert Date to Timestamp
-      departureTime: values.departureTime,
+      // store both `time` (legacy) and `departureTime` as Date/Timestamp
+      time: normalizedDeparture,
+      // Firestore will auto-convert JS Date to Timestamp on write
+      departureTime: normalizedDeparture,
       transportMode: values.transportMode,
       price: Math.trunc(values.price),
       seats: totalSeats, // canonical
@@ -1736,7 +1788,8 @@ export default function CreateRidePage() {
       routePolyline: routePolyline || null,
       routeBounds: routeBounds || null,
       waypoints: routeWaypoints || null,
-      createdAt: new Date(),
+      // Use serverTimestamp to guarantee a Firestore timestamp value accepted by rules
+      createdAt: serverTimestamp(),
       driverInfo: {
         ...(ud.fullName && { fullName: ud.fullName }),
         ...(ud.gender && { gender: ud.gender }),
@@ -1755,6 +1808,11 @@ export default function CreateRidePage() {
     const removeUndefined = (obj: any): any => {
       if (obj === undefined) return undefined;
       if (obj === null) return null;
+
+      // CRITICAL: Preserve Date objects — Firestore auto-converts them to Timestamps
+      // Without this check, Date objects get converted to {} (empty map) because
+      // Object.keys(new Date()) returns [] — destroying the date value entirely.
+      if (obj instanceof Date) return obj;
 
       // Keep Firestore Timestamp-like objects intact (duck-typed to avoid runtime/type import issues)
       if (obj && typeof (obj as any).toDate === 'function') return obj;
@@ -1835,112 +1893,82 @@ export default function CreateRidePage() {
         return;
       }
 
-      // SDK preflight: use Firestore SDK read of the current user doc to validate network/auth/rules.
-      if (!firestore || !user) {
-        console.warn('Firestore SDK preflight skipped due to missing firestore or user', { firestoreAvailable: !!firestore, uid: user?.uid });
-      } else {
-        try {
-          // Require the university-scoped user doc. Do NOT read or fall back to top-level `users/{uid}`.
-          if (!userData || !userData.university) {
-            setIsSubmitting(false);
-            toast({ variant: 'destructive', title: 'Complete Profile', description: 'Please complete your profile with your university before creating rides.' });
-            router.push('/dashboard/complete-profile');
-            return;
-          }
-          const userDocRefForPreflight = doc(db, 'universities', userData.university, 'users', uid);
-          const preflightPromise = getDoc(userDocRefForPreflight);
-          const res = await Promise.race([preflightPromise, new Promise((_, rej) => setTimeout(() => rej(new Error('preflight-timeout')), 5000))]);
-          // If getDoc resolves, the client can reach Firestore and auth is valid (though rules may still restrict the read)
-          if ((res as any)?.exists && (res as any).exists()) {
-            console.debug('Firestore SDK preflight OK (user doc exists)');
-          } else {
-            console.debug('Firestore SDK preflight OK (user doc read)');
-          }
-        } catch (err: any) {
-          console.warn('Firestore SDK preflight failed', err);
-          setIsSubmitting(false);
+      // NOTE: Removed preflight read to avoid pre-emptive permission-denied errors.
+      // We'll attempt the write directly and surface any real Firestore error to the user.
 
-          // Map common SDK errors to actionable messages
-          const code = err?.code || err?.status || '';
-          const message = err?.message || String(err);
-
-          if (message.includes('permission-denied') || code === 'permission-denied') {
-            toast({ variant: 'destructive', title: 'Permission Denied', description: 'Your account does not have permission to access Firestore. Check security rules and that you are signed in.' });
-          } else if (message === 'preflight-timeout') {
-            toast({ variant: 'destructive', title: 'Firestore Preflight Timeout', description: 'Request to Firestore did not respond within 5s. Check network/firewall.' });
-          } else {
-            toast({ variant: 'destructive', title: 'Could not reach Firestore', description: message });
-          }
-
-          return;
-        }
-      }
-
-      // Ensure user's ID token can be refreshed before attempting a write (helps catch auth/session issues)
+      // Optional token refresh: try to refresh but don't block writes if this minor step fails
       try {
-        // Race token refresh against a short timeout so we don't stall longer than necessary
-        await Promise.race([user!.getIdToken(true), new Promise((_, rej) => setTimeout(() => rej(new Error('token-timeout')), 5000))]);
-        console.debug('ID token refresh successful before write', { uid: user?.uid });
+        await user!.getIdToken(true);
       } catch (err) {
-        console.warn('ID token refresh failed before write', err);
-        setIsSubmitting(false);
-        toast({ variant: 'destructive', title: 'Authentication Error', description: 'Unable to verify your session. Please sign out and sign in again.' });
-        return;
+        console.warn('ID token refresh failed (non-fatal)', err);
       }
 
-      // Try the write with a simple retry strategy (2 attempts) and a 20s per-attempt timeout.
+      // Try the write with a simple retry strategy (2 attempts). Do not use per-attempt timeouts that
+      // could cause the app to ignore a later success — surface the final result to the user.
       const addDocWithRetry = async (attempts = 2) => {
         for (let attempt = 1; attempt <= attempts; attempt++) {
-          // reset abort flag for each attempt
-          submissionAbortedRef.current = false;
-
-          const p = new Promise<any>(async (resolve, reject) => {
-            const timer = setTimeout(() => {
-              submissionAbortedRef.current = true;
-              reject(new Error('write-timeout'));
-            }, 20000);
-
-              try {
-              const res = await addDoc(ridesCollection, sanitizedRideData as any);
-              clearTimeout(timer);
-              resolve(res);
-            } catch (err) {
-              clearTimeout(timer);
-              reject(err);
-            }
-          });
-
           try {
-            const res = await p;
+            console.debug(`[Ride Creation] Attempt ${attempt}: Creating document in collection: ${universityId}/rides`);
+            const res = await addDoc(ridesCollection, sanitizedRideData as any);
+            console.debug(`✅ [Ride Creation] Document created successfully! ID: ${res.id}`, {
+              universityId: universityId,
+              rideId: res.id,
+              driverId: sanitizedRideData.driverId,
+              from: sanitizedRideData.from,
+              to: sanitizedRideData.to,
+              departureTime: sanitizedRideData.departureTime,
+              status: sanitizedRideData.status,
+              writeTimeMs: Date.now() - writeStart
+            });
             return res;
           } catch (err: any) {
-            console.warn('addDoc attempt failed', { attempt, error: err?.message || err, online: typeof navigator !== 'undefined' ? navigator.onLine : undefined, uid: user?.uid, university: userData?.university });
-            // If last attempt, rethrow
+            console.warn('addDoc attempt failed', { 
+              attempt, 
+              error: err?.message || err, 
+              errorCode: err?.code,
+              online: typeof navigator !== 'undefined' ? navigator.onLine : undefined, 
+              uid: user?.uid, 
+              university: userData?.university 
+            });
             if (attempt === attempts) throw err;
-            // Otherwise, small backoff before retrying
             await new Promise((r) => setTimeout(r, 500 * attempt));
           }
         }
       };
 
       try {
-        await addDocWithRetry(2);
+        const docRef = await addDocWithRetry(2);
+        console.debug('✅ Ride write attempt finished successfully', { durationMs: Date.now() - writeStart, docId: docRef!.id });
       } catch (err: any) {
         // Re-throw to be handled by outer catch
+        console.error('❌ All addDoc retry attempts failed:', err);
         throw err;
       }
 
-      if (submissionAbortedRef.current) {
-        const offline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
-        console.warn('Create ride write completed after timeout — ignoring result', { offline });
-        return;
-      }
-
-      console.debug('Ride created successfully', { durationMs: Date.now() - writeStart });
-      toast({ title: 'Success!', description: 'Your ride has been created.' });
-      router.push('/dashboard/my-rides');
+      console.debug('Ride created successfully - notifying user');
+      toast({ title: 'Success!', description: 'Your ride has been created. Redirecting to My Rides...' });
+      
+      // CRITICAL: Wait for Firestore replication before redirecting to My Rides
+      // Firestore typically replicates within 100-500ms, but we use 2000ms to be safe
+      // This ensures the real-time listener on My Rides page will see the newly created ride
+      console.log('[CreateRide] ✅ Waiting 2 seconds for Firestore replication before redirecting...');
+      setTimeout(() => {
+        console.log('[CreateRide] 🔄 Redirecting to My Rides now');
+        router.push('/dashboard/my-rides');
+      }, 2000);
     } catch (e: any) {
-        console.error("Error creating ride:", e);
+        console.error("❌ Error creating ride:", e);
+        console.error("❌ Error details:", {
+          message: e?.message,
+          code: e?.code,
+          name: e?.name,
+          stack: e?.stack,
+          fullError: JSON.stringify(e, Object.getOwnPropertyNames(e), 2)
+        });
+        console.error("❌ User ID:", user?.uid);
+        console.error("❌ University:", userData?.university);
+        console.error("❌ SanitizedRideData driverId:", sanitizedRideData?.driverId);
+        
         // Ensure we clear the submitting state BEFORE doing anything that could throw or crash the page
         setIsSubmitting(false);
 
@@ -1949,8 +1977,12 @@ export default function CreateRidePage() {
           return;
         }
 
-        // Show a helpful toast for the user immediately
-        toast({ variant: 'destructive', title: 'Could not create ride', description: e?.message || 'An error occurred while creating the ride.' });
+        // Show detailed error in toast
+        const errorMsg = e?.code === 'permission-denied' 
+          ? `Permission denied. Check console for details. User: ${user?.uid?.substring(0,8)}...`
+          : (e?.message || 'An error occurred while creating the ride.');
+        
+        toast({ variant: 'destructive', title: 'Could not create ride', description: errorMsg });
 
         // Emit the permission error for developer visibility, but do it asynchronously so the UI can update first
         try {

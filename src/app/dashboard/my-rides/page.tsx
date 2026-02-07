@@ -492,11 +492,13 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
           setDeleteOpen(false);
           return;
         }
-        const rideDoc = rideSnap.data() as RideType & { createdBy?: string };
+        const rideDoc = rideSnap.data() as RideType & { driverId?: string; createdBy?: string };
 
-        // Fail fast with a clear message if the authenticated user is not the creator
-        if (!user || rideDoc.createdBy !== user.uid) {
-          toast({ variant: 'destructive', title: 'Not allowed', description: `You are not the creator of this ride (createdBy: ${rideDoc.createdBy || 'unknown'}) and cannot delete it.` });
+        // Fail fast with a clear message if the authenticated user is not the driver/creator
+        // CRITICAL: Check driverId (canonical) first, fallback to createdBy for backwards compatibility
+        const ownerId = rideDoc.driverId || rideDoc.createdBy;
+        if (!user || ownerId !== user.uid) {
+          toast({ variant: 'destructive', title: 'Not allowed', description: `You are not the driver of this ride (driverId: ${ownerId || 'unknown'}) and cannot delete it.` });
           setDeleteOpen(false);
           return;
         }
@@ -552,8 +554,9 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
           // Fetch the ride doc again to get more info for the user (debug help)
           try {
             const rSnap = await getDoc(doc(firestore, `universities/${university}/rides`, ride.id));
-            const createdBy = rSnap.exists() ? (rSnap.data() as any).createdBy : 'unknown';
-            toast({ variant: 'destructive', title: 'Could not delete ride', description: `Missing or insufficient permissions. Creator: ${createdBy}. Ensure your account has access or run the Firestore emulator to test rules (see docs/firestore-rules.md).` });
+            const rideData = rSnap.exists() ? rSnap.data() as any : null;
+            const ownerId = rideData?.driverId || rideData?.createdBy || 'unknown';
+            toast({ variant: 'destructive', title: 'Could not delete ride', description: `Missing or insufficient permissions. Driver ID: ${ownerId}. Ensure your account has access or run the Firestore emulator to test rules (see docs/firestore-rules.md).` });
           } catch (e) {
             toast({ variant: 'destructive', title: 'Could not delete ride', description: 'Missing or insufficient permissions. Ensure your account has access or run the Firestore emulator to test rules (see docs/firestore-rules.md).' });
           }
@@ -762,28 +765,131 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 }
 
 
+// Helper: Convert Firestore Timestamp to milliseconds, handling multiple formats
+function getTimestampMs(ts: any): number | null {
+  if (!ts) return null;
+  // If it's already a number (milliseconds), return it
+  if (typeof ts === 'number') return ts;
+  // If it's a Firestore Timestamp with .seconds property
+  if (ts && typeof ts === 'object' && typeof ts.seconds === 'number') {
+    return ts.seconds * 1000 + ((ts.nanoseconds || 0) / 1_000_000);
+  }
+  // If it's a Date object
+  if (ts instanceof Date) return ts.getTime();
+  // Try to convert to date and get time
+  try {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) return d.getTime();
+  } catch (_) {}
+  return null;
+}
+
 export default function MyRidesPage() {
   const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
 
+  // CRITICAL: Log when user data is still loading or missing
+  React.useEffect(() => {
+    if (userLoading) {
+      console.log('🚗 [My Rides] Still loading user data...');
+    } else if (!user) {
+      console.log('🚗 [My Rides] User not logged in');
+    } else if (!userData) {
+      console.warn('🚗 [My Rides] User authenticated but userData is missing');
+    } else if (!userData.university) {
+      console.warn('🚗 [My Rides] User profile missing university field');
+    } else {
+      console.log('🚗 [My Rides] User data loaded successfully', {
+        uid: user.uid,
+        university: userData.university,
+        fullName: userData.fullName
+      });
+    }
+  }, [userLoading, user, userData]);
+
   // Only create query if we have ALL required data (user, firestore, AND userData with university)
+  // Query by driverId to get rides offered by the current user
+  // NOTE: All rides should have driverId set (canonical field)
+  // createdBy is kept for backwards compatibility but queries use driverId
   const ridesQuery = (user && firestore && userData && userData.university) ? query(
     collection(firestore, 'universities', userData.university, 'rides'),
-    where('createdBy', '==', user.uid)
+    where('driverId', '==', user.uid)
   ) : null;
 
-  const { data: rides, loading: ridesLoading } = useCollection<RideType>(ridesQuery);
+  const { data: ridesRaw, loading: ridesLoading, error: ridesError } = useCollection<RideType>(ridesQuery);
+  
+  // Sort client-side by departureTime (descending) until Firestore index is ready
+  const rides = React.useMemo(() => {
+    if (!ridesRaw) return null;
+    return [...ridesRaw].sort((a, b) => {
+      const aMs = getTimestampMs(a.departureTime);
+      const bMs = getTimestampMs(b.departureTime);
+      const aTime = aMs || 0;
+      const bTime = bMs || 0;
+      return bTime - aTime; // descending
+    });
+  }, [ridesRaw]);
+  
   const loading = userLoading || ridesLoading;
 
+  // Debug: Log query status and results - CRITICAL for diagnosing missing rides
+  React.useEffect(() => {
+    console.log('🚗 [My Rides] Query Status:', {
+      hasUser: !!user,
+      userId: user?.uid,
+      hasFirestore: !!firestore,
+      hasUserData: !!userData,
+      university: userData?.university,
+      queryCreated: !!ridesQuery,
+      ridesLoading,
+      ridesError: ridesError?.toString() || null,
+      ridesRawCount: ridesRaw?.length || 0,
+      ridesCount: rides?.length || 0,
+      rides: rides?.map(r => ({ 
+        id: r.id, 
+        from: r.from, 
+        to: r.to, 
+        driverId: r.driverId, 
+        createdBy: r.createdBy,
+        departureTime: r.departureTime,
+        departureTimeMs: getTimestampMs(r.departureTime),
+        status: r.status
+      })) || [],
+      timestamp: new Date().toISOString()
+    });
+  }, [user, firestore, userData, ridesQuery, ridesLoading, ridesError, rides, ridesRaw]);
+
   // Filter out rides that are 12+ hours past departure (should be auto-deleted)
-  const filteredRides = rides?.filter((ride) => {
-    if (!ride.departureTime) return true;
-    const departureMs = ride.departureTime.seconds * 1000;
-    const now = Date.now();
+  const filteredRides = React.useMemo(() => {
+    if (!rides) return [];
     const twelveHoursMs = 12 * 60 * 60 * 1000;
-    // Hide rides that are more than 12 hours past departure
-    return (now - departureMs) < twelveHoursMs;
-  }) || [];
+    const now = Date.now();
+    
+    const filtered = rides.filter((ride) => {
+      // Get timestamp in milliseconds (handles Timestamp, Date, number, etc.)
+      const departureMs = getTimestampMs(ride.departureTime);
+      
+      // Log filter decisions for rides that fail
+      if (departureMs === null) {
+        console.warn(`[My Rides] Ride ${ride.id} has invalid departureTime:`, ride.departureTime);
+        // Include rides with invalid timestamps - let server-side deletion handle cleanup
+        return true;
+      }
+      
+      const isExpired = (now - departureMs) >= twelveHoursMs;
+      if (isExpired) {
+        console.debug(`[My Rides] Filtering out expired ride ${ride.id}: departure was ${Math.round((now - departureMs) / 1000 / 60)} minutes ago`);
+      }
+      
+      return !isExpired;
+    });
+    
+    if (filtered.length < rides.length) {
+      console.log(`[My Rides] Filtered ${rides.length - filtered.length} expired ride(s)`);
+    }
+    
+    return filtered;
+  }, [rides]);
 
   if (loading) {
     return (
@@ -804,25 +910,9 @@ export default function MyRidesPage() {
     );
   }
 
-  if (!filteredRides || filteredRides.length === 0) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
-        <div className="fixed inset-0 -z-10 pointer-events-none">
-          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
-          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
-          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
-        </div>
-        <div className="section-shell py-8 relative z-10">
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-slate-50">No Rides Offered</h2>
-            <p className="text-slate-300">You have not offered any rides yet.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Guard against missing university - show loading or empty state
+  // IMPORTANT: This MUST come before the empty rides check to prevent
+  // showing "No Rides Offered" when the user profile hasn't loaded yet.
   if (!userData?.university) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
@@ -836,6 +926,25 @@ export default function MyRidesPage() {
             <Skeleton className="h-64 w-full" />
             <Skeleton className="h-64 w-full" />
             <Skeleton className="h-64 w-full" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Now safe to check for empty rides — university is loaded and query has been executed
+  if (!filteredRides || filteredRides.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/15 via-transparent to-transparent" />
+          <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-primary/20 blur-3xl opacity-30 animate-float" />
+          <div className="absolute -right-40 bottom-20 h-80 w-80 rounded-full bg-accent/15 blur-3xl opacity-20 animate-float" style={{ animationDelay: '0.5s' }} />
+        </div>
+        <div className="section-shell py-8 relative z-10">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold text-slate-50">No Rides Offered</h2>
+            <p className="text-slate-300">You have not offered any rides yet.</p>
           </div>
         </div>
       </div>

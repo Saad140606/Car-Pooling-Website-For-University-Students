@@ -44,19 +44,24 @@ export async function POST(request: NextRequest) {
     const db = adminDb ?? getFirestore();
 
     // ===== CRITICAL FIX: Check if email already exists in another university =====
-    // This prevents a user registered at FAST from signing up at NED with the same email
-    const otherUniversity = university === 'fast' ? 'ned' : 'fast';
-    const otherUniUsersRef = db.collection('universities').doc(otherUniversity).collection('users');
-    const existingUserQuery = await otherUniUsersRef.where('email', '==', email).limit(1).get();
+    // This prevents a user registered at one university from signing up at another with the same email
+    const allUniversities = ['fast', 'ned', 'karachi'];
+    const otherUniversities = allUniversities.filter(u => u !== university);
     
-    if (!existingUserQuery.empty) {
-      console.warn(`Email ${email} already registered at ${otherUniversity} university`);
-      return NextResponse.json(
-        { 
-          error: `This email is already registered with ${otherUniversity === 'fast' ? 'FAST' : 'NED'} University. Please use a different email or sign in to your existing account.`
-        },
-        { status: 409 } // Conflict status code
-      );
+    for (const otherUni of otherUniversities) {
+      const otherUniUsersRef = db.collection('universities').doc(otherUni).collection('users');
+      const existingUserQuery = await otherUniUsersRef.where('email', '==', email).limit(1).get();
+      
+      if (!existingUserQuery.empty) {
+        console.warn(`Email ${email} already registered at ${otherUni} university`);
+        const uniName = otherUni === 'fast' ? 'FAST' : otherUni === 'ned' ? 'NED' : 'Karachi';
+        return NextResponse.json(
+          { 
+            error: `This email is already registered with ${uniName} University. Please use a different email or sign in to your existing account.`
+          },
+          { status: 409 } // Conflict status code
+        );
+      }
     }
     // ===== END CRITICAL FIX =====
     const signupOtpRef = db.collection('signup_otps').doc(uid);

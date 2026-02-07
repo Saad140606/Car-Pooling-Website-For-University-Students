@@ -2,8 +2,101 @@ import React from 'react';
 import { Calendar, Users, Search, Clock } from 'lucide-react';
 import clsx from 'clsx';
 
+// Helper: Convert any timestamp format to Date safely with detailed logging
+function getDateFromTimestamp(ts: any): Date | null {
+  if (!ts) {
+    console.debug('[PublicRideCard] Timestamp is null or undefined');
+    return null;
+  }
+  
+  // If already a Date, validate and return
+  if (ts instanceof Date) {
+    if (!isNaN(ts.getTime())) {
+      console.debug('[PublicRideCard] Parsed Date object:', ts.toISOString());
+      return ts;
+    }
+    console.warn('[PublicRideCard] Invalid Date object');
+    return null;
+  }
+  
+  // If number (milliseconds), convert to Date
+  if (typeof ts === 'number') {
+    if (isFinite(ts)) {
+      const d = new Date(ts);
+      console.debug('[PublicRideCard] Parsed number timestamp:', d.toISOString());
+      return d;
+    }
+    console.warn('[PublicRideCard] Invalid number timestamp (not finite):', ts);
+    return null;
+  }
+  
+  // If Firestore Timestamp with .seconds and .nanoseconds
+  if (ts && typeof ts === 'object') {
+    if (typeof ts.seconds === 'number' && typeof ts.nanoseconds === 'number') {
+      const ms = ts.seconds * 1000 + (ts.nanoseconds / 1_000_000);
+      if (isFinite(ms)) {
+        const d = new Date(ms);
+        console.debug('[PublicRideCard] Parsed Firestore Timestamp:', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, isoString: d.toISOString() });
+        return d;
+      }
+      console.warn('[PublicRideCard] Invalid Firestore Timestamp (not finite):', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, ms });
+      return null;
+    }
+    // Check for toDate() method (Firebase SDK Timestamp)
+    if (typeof ts.toDate === 'function') {
+      try {
+        const d = ts.toDate();
+        if (d instanceof Date && !isNaN(d.getTime())) {
+          console.debug('[PublicRideCard] Parsed Timestamp.toDate():', d.toISOString());
+          return d;
+        }
+      } catch (e) {
+        console.warn('[PublicRideCard] toDate() failed:', e);
+      }
+    }
+  }
+  
+  // Try parsing as ISO string or other string format
+  if (typeof ts === 'string') {
+    try {
+      const d = new Date(ts);
+      if (!isNaN(d.getTime())) {
+        console.debug('[PublicRideCard] Parsed string timestamp:', ts, '→', d.toISOString());
+        return d;
+      }
+      console.warn('[PublicRideCard] Parsed string but got invalid Date:', ts);
+    } catch (e) {
+      console.warn('[PublicRideCard] Failed to parse string timestamp:', ts, e);
+    }
+  }
+  
+  console.warn('[PublicRideCard] Could not parse timestamp of type', typeof ts, ':', ts);
+  return null;
+}
+
 export default function PublicRideCard({ ride, onViewRoute, onBook }: { ride: any; onViewRoute?: () => void; onBook?: () => void }) {
-  const dateText = new Date(ride.departureTime).toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  let departureDate: Date | null = null;
+  try {
+    departureDate = getDateFromTimestamp(ride.departureTime);
+  } catch (e) {
+    console.error('[PublicRideCard] ❌ Exception parsing departureTime:', e);
+  }
+  
+  const dateText = departureDate 
+    ? (() => {
+        try {
+          return departureDate!.toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+        } catch (e) {
+          console.error('[PublicRideCard] ❌ toLocaleString failed:', e);
+          // Fallback to simpler format
+          try {
+            return departureDate!.toISOString().split('T')[0] + ' ' + departureDate!.toISOString().split('T')[1].substring(0, 5);
+          } catch (_) {
+            return '⚠ Invalid Date';
+          }
+        }
+      })()
+    : '⚠ Invalid Date';
 
   return (
     <div className={clsx('w-full min-w-0 rounded-xl bg-card border border-border shadow-sm text-foreground flex flex-col overflow-hidden h-full')}>

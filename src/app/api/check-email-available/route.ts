@@ -49,15 +49,15 @@ export async function POST(request: NextRequest) {
 
     // Validate university
     const normalizedUniversity = String(university).toLowerCase();
-    if (!['fast', 'ned'].includes(normalizedUniversity)) {
+    if (!['fast', 'ned', 'karachi'].includes(normalizedUniversity)) {
       return errorResponse('Invalid university', 400);
     }
 
     const db = adminDb ?? getFirestore();
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check BOTH universities to see if email is already registered
-    const universities = ['fast', 'ned'];
+    // Check ALL universities to see if email is already registered
+    const universities = ['fast', 'ned', 'karachi'];
     
     for (const uni of universities) {
       const usersRef = db.collection('universities').doc(uni).collection('users');

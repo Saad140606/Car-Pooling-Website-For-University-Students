@@ -12,6 +12,78 @@ import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore
 import { decodePolyline } from '@/lib/route';
 import { detectUniversityFromString } from '@/lib/universities';
 
+// Helper: Convert Firestore Timestamp to Date safely with detailed logging
+function getDateFromTimestamp(ts: any): Date | null {
+  if (!ts) {
+    console.debug('[FullRideCard] Timestamp is null or undefined');
+    return null;
+  }
+  
+  // If already a Date, validate and return
+  if (ts instanceof Date) {
+    if (!isNaN(ts.getTime())) {
+      console.debug('[FullRideCard] Parsed Date object:', ts.toISOString());
+      return ts;
+    }
+    console.warn('[FullRideCard] Invalid Date object');
+    return null;
+  }
+  
+  // If number (milliseconds), convert to Date
+  if (typeof ts === 'number') {
+    if (isFinite(ts)) {
+      const d = new Date(ts);
+      console.debug('[FullRideCard] Parsed number timestamp:', d.toISOString());
+      return d;
+    }
+    console.warn('[FullRideCard] Invalid number timestamp (not finite):', ts);
+    return null;
+  }
+  
+  // If Firestore Timestamp with .seconds and .nanoseconds
+  if (ts && typeof ts === 'object') {
+    if (typeof ts.seconds === 'number' && typeof ts.nanoseconds === 'number') {
+      const ms = ts.seconds * 1000 + (ts.nanoseconds / 1_000_000);
+      if (isFinite(ms)) {
+        const d = new Date(ms);
+        console.debug('[FullRideCard] Parsed Firestore Timestamp:', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, isoString: d.toISOString() });
+        return d;
+      }
+      console.warn('[FullRideCard] Invalid Firestore Timestamp (not finite):', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, ms });
+      return null;
+    }
+    // Check for toDate() method (Firebase SDK Timestamp)
+    if (typeof ts.toDate === 'function') {
+      try {
+        const d = ts.toDate();
+        if (d instanceof Date && !isNaN(d.getTime())) {
+          console.debug('[FullRideCard] Parsed Timestamp.toDate():', d.toISOString());
+          return d;
+        }
+      } catch (e) {
+        console.warn('[FullRideCard] toDate() failed:', e);
+      }
+    }
+  }
+  
+  // Try parsing as ISO string or other string format
+  if (typeof ts === 'string') {
+    try {
+      const d = new Date(ts);
+      if (!isNaN(d.getTime())) {
+        console.debug('[FullRideCard] Parsed string timestamp:', ts, '→', d.toISOString());
+        return d;
+      }
+      console.warn('[FullRideCard] Parsed string but got invalid Date:', ts);
+    } catch (e) {
+      console.warn('[FullRideCard] Failed to parse string timestamp:', ts, e);
+    }
+  }
+  
+  console.warn('[FullRideCard] Could not parse timestamp of type', typeof ts, ':', ts);
+  return null;
+}
+
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
   return null;
@@ -441,7 +513,27 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
 
   const start = ride.from;
   const end = ride.to;
-  const departure = ride.departureTime ? new Date(ride.departureTime.seconds * 1000).toISOString() : '';
+  // Use helper to safely convert Firestore Timestamp to readable date
+  let departureDate: Date | null = null;
+  try {
+    departureDate = getDateFromTimestamp(ride.departureTime);
+    if (!departureDate) {
+      console.error('[FullRideCard] ❌ Failed to parse departureTime for ride', ride.id, ':', ride.departureTime);
+    }
+  } catch (e) {
+    console.error('[FullRideCard] ❌ Exception parsing departureTime:', e);
+  }
+  
+  const departure = departureDate ? (
+    (() => {
+      try {
+        return new Date(departureDate.getTime()).toISOString();
+      } catch (e) {
+        console.error('[FullRideCard] ❌ Failed to convert departureDate to ISO string:', e);
+        return '';
+      }
+    })()
+  ) : '';
   const isFromUniversity = !!detectUniversityFromString(start);
 
   return (

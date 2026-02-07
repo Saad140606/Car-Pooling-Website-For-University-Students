@@ -455,10 +455,10 @@ export function AuthForm({ university, action }: AuthFormProps) {
           // Determine the final university to create the profile under. Default
           // to the selected portal but allow a pending value set during
           // registration to override it.
-          let finalUniversity: 'ned' | 'fast' = selectedUni as 'ned' | 'fast';
+          let finalUniversity: 'ned' | 'fast' | 'karachi' = selectedUni as 'ned' | 'fast' | 'karachi';
           try {
             const pending = getPendingUniversity();
-            if (isValidUniversity(pending)) finalUniversity = pending as 'ned' | 'fast';
+            if (isValidUniversity(pending)) finalUniversity = pending as 'ned' | 'fast' | 'karachi';
           } catch (_) {}
 
           // Only create the profile for the university the user is currently

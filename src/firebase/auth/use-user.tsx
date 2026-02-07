@@ -59,11 +59,13 @@ export function useUser() {
         try {
           const userFastRef = doc(firestore, 'universities', 'fast', 'users', u.uid);
           const userNedRef = doc(firestore, 'universities', 'ned', 'users', u.uid);
+          const userKarachiRef = doc(firestore, 'universities', 'karachi', 'users', u.uid);
           const snapFast = await getDoc(userFastRef).catch(() => null as any);
           const snapNed = await getDoc(userNedRef).catch(() => null as any);
+          const snapKarachi = await getDoc(userKarachiRef).catch(() => null as any);
 
           // If a profile exists in universities/*/users/*, do nothing here.
-          const existsInUniversities = (snapFast && snapFast.exists()) || (snapNed && snapNed.exists());
+          const existsInUniversities = (snapFast && snapFast.exists()) || (snapNed && snapNed.exists()) || (snapKarachi && snapKarachi.exists());
           if (!existsInUniversities) {
             // Only create profile if email verified
             if (!u.emailVerified) {
@@ -78,7 +80,7 @@ export function useUser() {
                 uid: u.uid,
                 name: (u.displayName || '') as string,
                 email: u.email || null,
-                university: finalUniversity as 'fast' | 'ned',
+                university: finalUniversity as 'fast' | 'ned' | 'karachi',
                 role: 'passenger',
                 createdAt: serverTimestamp() as any,
                 // preserve optional legacy fields when available
@@ -124,9 +126,11 @@ export function useUser() {
                 // Determine the university for this user doc (prefer existing docs)
                 const fastSnap = await getDoc(doc(firestore, 'universities', 'fast', 'users', u.uid));
                 const nedSnap = await getDoc(doc(firestore, 'universities', 'ned', 'users', u.uid));
+                const karachiSnap = await getDoc(doc(firestore, 'universities', 'karachi', 'users', u.uid));
                 let finalUniversity = 'fast';
                 if (fastSnap.exists()) finalUniversity = 'fast';
                 else if (nedSnap.exists()) finalUniversity = 'ned';
+                else if (karachiSnap.exists()) finalUniversity = 'karachi';
 
                 // Update the token document per user. Use setDoc with merge instead of transaction
                 // to avoid failed-precondition errors from rapid concurrent updates.
@@ -183,12 +187,14 @@ export function useUser() {
 
   const fastRef = user && firestore ? doc(firestore, 'universities', 'fast', 'users', user.uid) : null;
   const nedRef = user && firestore ? doc(firestore, 'universities', 'ned', 'users', user.uid) : null;
+  const karachiRef = user && firestore ? doc(firestore, 'universities', 'karachi', 'users', user.uid) : null;
   const { data: fastData, loading: fastLoading, error: fastError } = useDoc<UserProfile>(fastRef);
   const { data: nedData, loading: nedLoading, error: nedError } = useDoc<UserProfile>(nedRef);
+  const { data: karachiData, loading: karachiLoading, error: karachiError } = useDoc<UserProfile>(karachiRef);
 
-  const data = fastData || nedData || null;
-  const dataLoading = (fastLoading || nedLoading);
-  const error = fastError || nedError || null;
+  const data = fastData || nedData || karachiData || null;
+  const dataLoading = (fastLoading || nedLoading || karachiLoading);
+  const error = fastError || nedError || karachiError || null;
 
   return {
     user,

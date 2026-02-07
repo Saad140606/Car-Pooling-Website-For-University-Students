@@ -63,6 +63,9 @@ export function useCollection<T extends DocumentData>(
     try {
       const path = (firestoreQuery as any)?._query?.path?.segments?.join('/');
       if (path) return path;
+      // Try alternative internal structures for different Firebase SDK versions
+      const altPath = (firestoreQuery as any)?.query?.path?.segments?.join('/');
+      if (altPath) return altPath;
       return String(firestoreQuery);
     } catch (e) {
       console.warn('Failed to create query key, falling back to String(query):', e);
@@ -70,13 +73,21 @@ export function useCollection<T extends DocumentData>(
     }
   }, [firestoreQuery]);
 
+  // Track query key transitions to detect when query changes from null to valid.
+  // During this transition, stale loading=false from the null query can cause a
+  // one-frame flash of "no data" before the useEffect sets loading=true.
+  // The ref tracks the queryKey for which data was last fetched.
+  const dataForQueryKeyRef = useRef<string | null | undefined>(undefined);
+
   useEffect(() => {
     if (!firestoreQuery || !firestore) {
+      dataForQueryKeyRef.current = null;
       setData([]);
       setLoading(false);
       return;
     }
 
+    dataForQueryKeyRef.current = queryKey;
     setLoading(true);
 
     const processSnapshot = async (snapshot: any) => {
@@ -137,6 +148,7 @@ export function useCollection<T extends DocumentData>(
       const unsubscribe = onSnapshot(
         firestoreQuery,
         (snapshot) => {
+          console.debug(`[useCollection] onSnapshot received ${snapshot.docs.length} documents for query:`, queryKey);
           processSnapshot(snapshot);
         },
         (err) => {
@@ -156,7 +168,11 @@ export function useCollection<T extends DocumentData>(
           setLoading(false);
         }
       );
-      return () => unsubscribe();
+      console.debug(`[useCollection] Real-time listener attached for query:`, queryKey);
+      return () => {
+        console.debug(`[useCollection] Unsubscribing from listener for query:`, queryKey);
+        unsubscribe();
+      };
     } else {
       getDocs(firestoreQuery)
         .then(processSnapshot)
@@ -180,5 +196,11 @@ export function useCollection<T extends DocumentData>(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey, firestore, options.listen]);
 
-  return { data, loading, error };
+  // If the query just transitioned from null to a valid key but the effect hasn't
+  // run yet (stale loading=false from null query), report as loading to prevent
+  // a one-frame flash of "no data" in consuming components.
+  const isQueryTransitioning = queryKey !== null && dataForQueryKeyRef.current !== queryKey;
+  const effectiveLoading = loading || isQueryTransitioning;
+
+  return { data, loading: effectiveLoading, error };
 }

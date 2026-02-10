@@ -393,7 +393,7 @@ export async function getUserInfo(
     const data = userSnap.data();
     return {
       fullName: data.fullName || 'User',
-      verified: data.universityEmailVerified || data.verified
+      verified: !!(data.universityEmailVerified && data.idVerified) || data.isVerified || false
     };
   } catch (error) {
     console.error('[RideNotificationService] Failed to fetch user info:', error);

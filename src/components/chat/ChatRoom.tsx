@@ -890,7 +890,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
               }
               
               const senderName = senderDetails?.fullName || senderDetails?.name || null;
-              const senderVerified = senderDetails?.universityEmailVerified || senderDetails?.verified || senderDetails?.isVerified || false;
+              const senderVerified = !!(senderDetails?.universityEmailVerified && senderDetails?.idVerified) || senderDetails?.isVerified || false;
               const initials = senderName?.split(' ').map((n: string) => n[0]).slice(0, 2).join('') || '?';
               
               return (

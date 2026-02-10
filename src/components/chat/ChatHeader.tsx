@@ -3,7 +3,8 @@ import { useFirestore, useUser } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { Phone, Video, PhoneOff, X, MoreVertical, Info } from 'lucide-react';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogClose } from '@/components/ui/dialog';
-import { InlineVerifiedBadge } from '@/components/VerificationBadge';
+import { UserNameWithBadge } from '@/components/UserNameWithBadge';
+import { isUserVerified } from '@/lib/verificationUtils';
 
 export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { meta: any, onStartCall?: (mode: 'audio'|'video') => void, onHangup?: () => void, calling?: boolean }) {
   const firestore = useFirestore();
@@ -24,7 +25,6 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
     : meta?.passengerDetails;
   
   const otherUserName = otherUserDetails?.fullName || otherUserDetails?.name || 'Chat Partner';
-  const otherUserVerified = otherUserDetails?.universityEmailVerified || otherUserDetails?.verified || otherUserDetails?.isVerified || false;
   
   const initials = otherUserName.split(' ').map((n: string) => n[0]).slice(0, 2).join('');
 
@@ -102,9 +102,13 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
         
         {/* Name and status */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-white truncate text-sm sm:text-base">{otherUserName}</span>
-            <InlineVerifiedBadge verified={otherUserVerified} />
+          <div className="mb-1">
+            <UserNameWithBadge 
+              name={otherUserName} 
+              verified={isUserVerified(otherUserDetails)}
+              size="md"
+              truncate
+            />
           </div>
           {calling ? (
             <div className="flex items-center gap-1.5 text-xs text-green-400 animate-pulse">

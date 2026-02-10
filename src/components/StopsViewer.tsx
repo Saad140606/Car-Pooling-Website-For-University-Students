@@ -102,17 +102,39 @@ export default function StopsViewer({
 
   const universityDisplay = getUniversityDisplay();
 
-  // ===== Normalize and ORDER stops: dedupe by coordinates, then SORT correctly =====
+  // ===== Normalize and ORDER stops: dedupe by coordinates ONLY for intermediate stops, NEVER for START/END =====
   const [stops, setStops] = useState<Stop[]>(() => {
-    // First dedupe by coordinates
+    // CRITICAL: Separate START/END from intermediate stops
+    const startStops = initialStops.filter(s => s.type === 'start');
+    const endStops = initialStops.filter(s => s.type === 'end');
+    const intermediateStops = initialStops.filter(s => s.type !== 'start' && s.type !== 'end');
+    
+    // Dedupe intermediate stops ONLY (never touch START/END)
     const deduped: Stop[] = [];
     const seenCoords = new Set<string>();
 
-    for (const stop of initialStops) {
+    // Always add START first
+    for (const stop of startStops) {
+      deduped.push(stop);
+      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
+      seenCoords.add(key);
+    }
+    
+    // Dedupe intermediate stops by coordinates
+    for (const stop of intermediateStops) {
       const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
       if (seenCoords.has(key)) continue;
       seenCoords.add(key);
       deduped.push(stop);
+    }
+    
+    // Always add END last
+    for (const stop of endStops) {
+      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
+      if (!seenCoords.has(key)) {
+        deduped.push(stop);
+        seenCoords.add(key);
+      }
     }
 
     // CRITICAL: Apply correct ordering (START first, END last, intermediate by distance)
@@ -138,15 +160,37 @@ export default function StopsViewer({
     requestedNameKeysRef.current = new Set();
     resolvingNamesRef.current = false;
     
-    // Dedupe by coordinate only (preserve placeholders and distance-based names)
+    // CRITICAL: Separate START/END from intermediate stops - NEVER dedup START/END
+    const startStops = initialStops.filter(s => s.type === 'start');
+    const endStops = initialStops.filter(s => s.type === 'end');
+    const intermediateStops = initialStops.filter(s => s.type !== 'start' && s.type !== 'end');
+    
+    // Dedupe intermediate stops ONLY by coordinate (preserve placeholders and distance-based names)
     const deduped: Stop[] = [];
     const seenCoords = new Set<string>();
 
-    for (const stop of initialStops) {
+    // Always add START first
+    for (const stop of startStops) {
+      deduped.push(stop);
+      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
+      seenCoords.add(key);
+    }
+    
+    // Dedupe intermediate stops by coordinates ONLY
+    for (const stop of intermediateStops) {
       const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
       if (seenCoords.has(key)) continue;
       seenCoords.add(key);
       deduped.push(stop);
+    }
+    
+    // Always add END last
+    for (const stop of endStops) {
+      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
+      if (!seenCoords.has(key)) {
+        deduped.push(stop);
+        seenCoords.add(key);
+      }
     }
 
     // CRITICAL: Apply correct ordering - START first, END last, intermediate by distance
@@ -441,9 +485,9 @@ export default function StopsViewer({
           <DialogTitle>Route Stops ({stops.length})</DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+        <div className="flex-1 overflow-y-auto space-y-2 pr-2">
           {/* Stops List */}
-          <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+          <div className="space-y-2 overflow-y-auto">
             {stops.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 No stops available for this route
@@ -714,14 +758,22 @@ export default function StopsViewer({
 
                 {/* Show route polyline */}
                 {routeCoordinates && routeCoordinates.length > 0 && (
-                  <Polyline
-                    key="route-polyline"
-                    positions={routeCoordinates.map(c => [c.lat, c.lng])}
-                    color="#87CEEB"
-                    weight={3}
-                    opacity={0.7}
-                    dashArray="5,5"
-                  />
+                  <>
+                    <Polyline
+                      key="route-polyline-outline"
+                      positions={routeCoordinates.map(c => [c.lat, c.lng])}
+                      color="#ffffff"
+                      weight={6}
+                      opacity={0.5}
+                    />
+                    <Polyline
+                      key="route-polyline"
+                      positions={routeCoordinates.map(c => [c.lat, c.lng])}
+                      color="#60A5FA"
+                      weight={3}
+                      opacity={0.8}
+                    />
+                  </>
                 )}
 
                 {/* Show selected point marker */}
@@ -1089,12 +1141,20 @@ export default function StopsViewer({
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                   attribution='&copy; OpenStreetMap contributors'
                 />
-                <Polyline
-                  positions={routeCoordinates as L.LatLngExpression[]}
-                  color="#87CEEB"
-                  weight={4}
-                  opacity={0.8}
-                />
+                <>
+                  <Polyline
+                    positions={routeCoordinates as L.LatLngExpression[]}
+                    color="#ffffff"
+                    weight={7}
+                    opacity={0.5}
+                  />
+                  <Polyline
+                    positions={routeCoordinates as L.LatLngExpression[]}
+                    color="#60A5FA"
+                    weight={4}
+                    opacity={0.8}
+                  />
+                </>
                 <MapClickHandler />
                 {selectedMapPoint && (
                   <Marker position={[selectedMapPoint.lat, selectedMapPoint.lng] as L.LatLngExpression}>

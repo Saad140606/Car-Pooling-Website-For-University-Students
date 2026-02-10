@@ -3,79 +3,8 @@
 import React, { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { Calendar, Users, Search, Clock, MapPin } from 'lucide-react';
-import { VerificationBadge } from './VerificationBadge';
-
-// Helper: Convert any timestamp format to Date safely with detailed logging
-function getDateFromTimestamp(ts: any): Date | null {
-  if (!ts) {
-    console.debug('[RideCard] Timestamp is null or undefined');
-    return null;
-  }
-  
-  // If already a Date, validate and return
-  if (ts instanceof Date) {
-    if (!isNaN(ts.getTime())) {
-      console.debug('[RideCard] Parsed Date object:', ts.toISOString());
-      return ts;
-    }
-    console.warn('[RideCard] Invalid Date object');
-    return null;
-  }
-  
-  // If number (milliseconds), convert to Date
-  if (typeof ts === 'number') {
-    if (isFinite(ts)) {
-      const d = new Date(ts);
-      console.debug('[RideCard] Parsed number timestamp:', d.toISOString());
-      return d;
-    }
-    console.warn('[RideCard] Invalid number timestamp (not finite):', ts);
-    return null;
-  }
-  
-  // If Firestore Timestamp with .seconds and .nanoseconds
-  if (ts && typeof ts === 'object') {
-    if (typeof ts.seconds === 'number' && typeof ts.nanoseconds === 'number') {
-      const ms = ts.seconds * 1000 + (ts.nanoseconds / 1_000_000);
-      if (isFinite(ms)) {
-        const d = new Date(ms);
-        console.debug('[RideCard] Parsed Firestore Timestamp:', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, isoString: d.toISOString() });
-        return d;
-      }
-      console.warn('[RideCard] Invalid Firestore Timestamp (not finite):', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, ms });
-      return null;
-    }
-    // Check for toDate() method (Firebase SDK Timestamp)
-    if (typeof ts.toDate === 'function') {
-      try {
-        const d = ts.toDate();
-        if (d instanceof Date && !isNaN(d.getTime())) {
-          console.debug('[RideCard] Parsed Timestamp.toDate():', d.toISOString());
-          return d;
-        }
-      } catch (e) {
-        console.warn('[RideCard] toDate() failed:', e);
-      }
-    }
-  }
-  
-  // Try parsing as ISO string or other string format
-  if (typeof ts === 'string') {
-    try {
-      const d = new Date(ts);
-      if (!isNaN(d.getTime())) {
-        console.debug('[RideCard] Parsed string timestamp:', ts, '→', d.toISOString());
-        return d;
-      }
-      console.warn('[RideCard] Parsed string but got invalid Date:', ts);
-    } catch (e) {
-      console.warn('[RideCard] Failed to parse string timestamp:', ts, e);
-    }
-  }
-  
-  console.warn('[RideCard] Could not parse timestamp of type', typeof ts, ':', ts);
-  return null;
-}
+import { UserNameWithBadge } from './UserNameWithBadge';
+import { parseTimestamp } from '@/lib/timestampUtils';
 
 type RideCardProps = {
   startLocation: string;
@@ -122,10 +51,10 @@ export default function RideCard({
   driverVerified,
   statusLabel,
 }: RideCardProps) {  const [isHovering, setIsHovering] = useState(false);
-    const dateText = useMemo(() => {
-    // Use helper to safely convert any timestamp format
+  const dateText = useMemo(() => {
+    // Use centralized timestamp parser to safely convert any timestamp format
     try {
-      const dt = getDateFromTimestamp(rideDateTime);
+      const dt = parseTimestamp(rideDateTime, { silent: true });
       
       // If conversion fails, show placeholder
       if (!dt) {
@@ -142,7 +71,6 @@ export default function RideCard({
           hour: 'numeric',
           minute: '2-digit',
         });
-        console.debug('[RideCard] ✓ Formatted date successfully:', formatted);
         return formatted;
       } catch (formatError) {
         console.error('[RideCard] ❌ toLocaleString failed:', formatError);
@@ -194,9 +122,13 @@ export default function RideCard({
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center font-semibold text-[0.6rem] flex-shrink-0 hover-lift-sm transition-all">
               {initials}
             </div>
-            <div className="min-w-0 flex items-center gap-1">
-              <p className="font-semibold truncate text-xs">{driverName}</p>
-              <VerificationBadge verified={driverVerified} showText={false} size="sm" />
+            <div className="min-w-0">
+              <UserNameWithBadge 
+                name={driverName} 
+                verified={driverVerified}
+                size="sm"
+                truncate
+              />
             </div>
           </div>
           {statusLabel ? (

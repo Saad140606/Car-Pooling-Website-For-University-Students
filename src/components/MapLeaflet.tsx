@@ -16,6 +16,7 @@ export type MapLeafletProps = {
   tileAttribution?: string;
   maxZoom?: number;
   startEndPins?: boolean;             // when true, render start/end pins derived from the route
+  routeColor?: string;                // optional route polyline color (e.g. '#60A5FA' for light blue)
 };
 
 export default function MapLeaflet({
@@ -30,6 +31,7 @@ export default function MapLeaflet({
   tileAttribution,
   maxZoom,
   startEndPins = true,
+  routeColor,
 }: MapLeafletProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -128,8 +130,8 @@ export default function MapLeaflet({
     if (route && route.length) {
       console.log('[MAP] Drawing initial route with', route.length, 'points');
       // Use SVG renderer explicitly to avoid canvas draw errors on teardown in Strict Mode
-      const mainColor = '#3b82f6'; // Vibrant blue
-      const outlineColor = '#1e3a8a'; // Dark blue outline for depth
+      const mainColor = routeColor || '#3b82f6'; // Default: Vibrant blue, or custom color if provided
+      const outlineColor = routeColor ? '#ffffff' : '#1e3a8a'; // White outline when custom color, else dark blue for depth
       try {
         // Draw outline for depth and contrast
         polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 10, opacity: 0.8, renderer: L.svg() }).addTo(map);
@@ -296,13 +298,17 @@ export default function MapLeaflet({
       } else {
         console.log('[MAP] Creating new route polylines');
         try {
-          polyOutlineRef.current = L.polyline(route, { color: '#0b1220', weight: 11, opacity: 0.95, renderer: L.svg() }).addTo(map);
-          polyRef.current = L.polyline(route, { color: '#FFD166', weight: 5, renderer: L.svg() }).addTo(map);
+          const mainColor = routeColor || '#FFD166'; // Default: Yellow, or custom color if provided
+          const outlineColor = routeColor ? '#ffffff' : '#0b1220'; // White outline when custom color, else dark for depth
+          polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.95, renderer: L.svg() }).addTo(map);
+          polyRef.current = L.polyline(route, { color: mainColor, weight: 5, renderer: L.svg() }).addTo(map);
           console.log('[MAP] ✓ New route polylines created');
         } catch (e) {
           console.warn('[MAP] SVG renderer failed, using fallback:', e);
-          polyOutlineRef.current = L.polyline(route, { color: '#0b1220', weight: 11, opacity: 0.95 }).addTo(map);
-          polyRef.current = L.polyline(route, { color: '#FFD166', weight: 5 }).addTo(map);
+          const mainColor = routeColor || '#FFD166';
+          const outlineColor = routeColor ? '#ffffff' : '#0b1220';
+          polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.95 }).addTo(map);
+          polyRef.current = L.polyline(route, { color: mainColor, weight: 5 }).addTo(map);
         }
       }
       // Intentionally do NOT auto-fit or center the map here — keep user-controlled view
@@ -311,7 +317,7 @@ export default function MapLeaflet({
       if (polyRef.current) { try { map.removeLayer(polyRef.current); } catch (_) {} polyRef.current = null; }
       if (polyOutlineRef.current) { try { map.removeLayer(polyOutlineRef.current); } catch (_) {} polyOutlineRef.current = null; }
     }
-  }, [route]);
+  }, [route, routeColor]);
 
   // Update markers when `markers` or `route` changes (replace layer) and keep start/end pins
   useEffect(() => {

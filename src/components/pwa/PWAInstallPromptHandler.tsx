@@ -44,7 +44,7 @@ export function PWAInstallPromptHandler() {
   const [installationStatus, setInstallationStatus] = useState<'idle' | 'installing' | 'success' | 'error'>('idle');
   const [hasInteracted, setHasInteracted] = useState(false);
 
-  const SHOW_DELAY_MS = 5 * 60 * 1000; // 5 minutes
+  const SHOW_DELAY_MS = 1000; // 1 second - must be short to avoid browser warnings
   const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
   const STORAGE_LAST_SHOWN = 'pwa_install_last_shown';
   const STORAGE_LAST_DISMISSED = 'pwa_install_last_dismissed';
@@ -161,14 +161,10 @@ export function PWAInstallPromptHandler() {
       // Store the prompt for later use
       (window as any).deferredInstallPrompt = event as BeforeInstallPromptEvent;
 
-      // Show install UI after interaction + 5 minutes, and only if cooldown allows
-      if (dismissedCount === 0) {
-        setTimeout(() => {
-          if (!isAlreadyInstalled() && hasInteracted && canShowPrompt()) {
-            markShown();
-            setShowInstallUI(true);
-          }
-        }, SHOW_DELAY_MS);
+      // Show install UI immediately if not dismissed, to avoid browser warnings about preventDefault() without prompt()
+      if (dismissedCount === 0 && !isAlreadyInstalled() && canShowPrompt()) {
+        markShown();
+        setShowInstallUI(true);
       }
     };
 

@@ -162,7 +162,7 @@ export function CallingProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       const callerName = userData?.fullName || user?.displayName || user?.email || 'Campus Ride User';
       const callerPhoto = user?.photoURL || undefined;
-      const callerVerified = userData?.universityEmailVerified || (userData as any)?.verified || false;
+      const callerVerified = !!(userData?.universityEmailVerified && userData?.idVerified) || (userData as any)?.isVerified || false;
       const call = await webrtcCallingService.initiateCall(
         receiverId, 
         receiverName, 

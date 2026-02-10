@@ -15,12 +15,15 @@ import { FirestorePermissionError } from '@/firebase/errors';
 import L, { LatLngExpression } from 'leaflet';
 import { Ride as RideType, Booking as BookingType } from '@/lib/types';
 import { decodePolyline } from '@/lib/route';
+import { formatTimestamp, parseTimestampToMs } from '@/lib/timestampUtils';
 import MapLeaflet from '@/components/MapLeaflet';
 import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { InlineVerifiedBadge } from '@/components/VerificationBadge';
+import { UserNameWithBadge } from '@/components/UserNameWithBadge';
+import { isUserVerified } from '@/lib/verificationUtils';
 import React from 'react';
 
 // Fix for default icon not showing in Leaflet
@@ -71,7 +74,8 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
 
   // Read requests from the ride-scoped `requests` subcollection so ride owners
   // can safely list only requests for their ride (rules allow listing here).
-  const bookingsQuery = firestore ? query(
+  // CRITICAL: Only create query if ride.id is defined to prevent invalid collection paths
+  const bookingsQuery = (firestore && ride?.id) ? query(
     collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
     where('status', 'in', ['PENDING', 'pending'])
   ) : null;
@@ -134,14 +138,38 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       return;
     }
     
-    // Check if booking is already accepted/rejected
-    if (booking.status && booking.status !== 'pending') {
-      toast({
-        variant: 'destructive',
-        title: 'Request Already Processed',
-        description: 'This request has already been handled.'
-      });
-      return;
+    // Fetch fresh booking data from Firestore to ensure status is current
+    try {
+      const freshRequestRef = doc(firestore, `universities/${university}/rides/${ride.id}/requests/${booking.id}`);
+      const freshRequestSnap = await getDoc(freshRequestRef);
+      
+      if (freshRequestSnap.exists()) {
+        const freshBooking = freshRequestSnap.data() as BookingType;
+        const normalizedStatus = freshBooking.status?.toLowerCase();
+        
+        console.log('[handleBooking] Fresh booking status from Firestore:', normalizedStatus);
+        
+        if (normalizedStatus && normalizedStatus !== 'pending') {
+          console.log('[handleBooking] Booking already processed with status:', freshBooking.status);
+          toast({
+            variant: 'destructive',
+            title: 'Request Already Processed',
+            description: 'This request has already been handled.'
+          });
+          return;
+        }
+      } else {
+        console.error('[handleBooking] Booking not found in Firestore');
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Booking request not found.'
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('[handleBooking] Error fetching fresh booking data:', error);
+      // Continue anyway - the transaction/API will handle errors
     }
     
     setProcessingIds((s) => [...s, booking.id]);
@@ -151,204 +179,121 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     setShownBookings((s) => s.filter((b) => b.id !== booking.id));
 
     try {
-      // Use API endpoint for accept to ensure idempotency and proper seat management
+      // Use Firestore transaction for accept - simplify flow and avoid API issues
       if (newStatus === 'accepted') {
-        console.log('[handleBooking] Processing acceptance...');
+        console.log('[handleBooking] Processing acceptance via direct Firestore transaction...');
         
-        // Get auth token for API call
-        if (!user) {
-          console.error('[handleBooking] User not authenticated');
-          throw new Error('User not authenticated');
-        }
-        
-        console.log('[handleBooking] Getting auth token...');
-        // Force refresh to get a valid token
-        let token: string;
-        try {
-          token = await user.getIdToken(true);
-          console.log('[handleBooking] Token retrieved successfully, length:', token?.length);
-          
-          if (!token) {
-            throw new Error('Token is null or undefined');
-          }
-          
-          if (typeof token !== 'string') {
-            throw new Error(`Token is not a string: ${typeof token}`);
-          }
-          
-          if (token.length < 100) {
-            throw new Error(`Token too short: ${token.length} characters`);
-          }
-        } catch (tokenError) {
-          console.error('[handleBooking] Failed to get token:', tokenError);
-          throw new Error('Failed to retrieve authentication token');
-        }
-        
-        // Ensure we have rideId - use ride.id since requests are nested under rides/{rideId}/requests
-        // The booking document might not have rideId field since it's implicit in the path
-        const rideId = ride.id;
-        
+        const rideId = ride.id || booking.rideId;
         if (!rideId) {
-          console.error('[handleBooking] No rideId available');
+          throw new Error('Ride ID not found');
+        }
+
+        await runTransaction(firestore, async (transaction) => {
+          const rideRef = doc(firestore, `universities/${university}/rides`, rideId);
+          const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
+          
+          // Get ride data
+          const rideDoc = await transaction.get(rideRef);
+          if (!rideDoc.exists()) {
+            throw new Error('Ride not found in database');
+          }
+          
+          const rideData = rideDoc.data() as RideType;
+          
+          // Get request data
+          const requestDoc = await transaction.get(requestRef);
+          if (!requestDoc.exists()) {
+            throw new Error('Request not found in database');
+          }
+          
+          const requestData = requestDoc.data() as BookingType;
+          
+          // Verify request is still pending
+          const normalizedStatus = requestData.status?.toLowerCase();
+          if (normalizedStatus && normalizedStatus !== 'pending') {
+            throw new Error(`Request has already been ${normalizedStatus}`);
+          }
+          
+          // Update request to accepted
+          transaction.update(requestRef, {
+            status: 'ACCEPTED',
+            acceptedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          
+          // Create booking document
+          const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
+          const chatId = booking.id;
+          const chatRef = doc(firestore, `universities/${university}/chats`, chatId);
+          
+          transaction.set(chatRef, {
+            bookingId: booking.id,
+            rideId: rideId,
+            passengerId: requestData.passengerId,
+            providerId: rideData.driverId,
+            participants: [requestData.passengerId, rideData.driverId],
+            createdAt: serverTimestamp(),
+            status: 'active'
+          });
+          
+          transaction.set(bookingRef, {
+            ...requestData,
+            status: 'accepted',
+            createdAt: serverTimestamp(),
+            rideId: rideId,
+            chatId: chatId,
+            // Store complete ride details so my-bookings can display them
+            ride: {
+              id: rideData.id || rideId,
+              from: rideData.from,
+              to: rideData.to,
+              departureTime: rideData.departureTime,
+              price: rideData.price,
+              route: rideData.route || [],
+              driverId: rideData.driverId,
+              driverInfo: rideData.driverInfo || { fullName: 'Driver' }
+            },
+            // Store driver details for chat display
+            driverDetails: {
+              fullName: rideData.driverInfo?.fullName || 'Driver',
+              universityEmailVerified: rideData.driverInfo?.universityEmailVerified,
+              idVerified: rideData.driverInfo?.idVerified,
+              isVerified: rideData.driverInfo?.isVerified
+            }
+          });
+        });
+
+        console.log('[handleBooking] Acceptance processed successfully via transaction');
+      } else {
+        // For rejects: use direct Firestore update
+        console.log('[handleBooking] Processing rejection...');
+        
+        const rideId = ride.id || booking.rideId;
+        if (!rideId) {
           throw new Error('Ride ID not found');
         }
         
-        console.log('[handleBooking] Making API call with:', { 
-          university, 
-          rideId, 
-          requestId: booking.id,
-          hasToken: !!token,
-          tokenLength: token?.length,
-          tokenPreview: token.substring(0, 20) + '...',
-          verifyingRideId: 'Using ride.id from component prop, not booking.rideId',
-          rideFromProp: {
-            id: ride.id,
-            driverId: ride.driverId,
-            from: ride.from,
-            to: ride.to
-          },
-          fullPath: `universities/${university}/rides/${rideId}`
-        });
-        
-        const requestBody = {
-          university,
-          rideId,
-          requestId: booking.id
-        };
-        
-        const requestHeaders = { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        };
-        
-        console.log('[handleBooking] Request headers:', Object.keys(requestHeaders));
-        console.log('[handleBooking] Authorization header set:', requestHeaders.Authorization.substring(0, 30) + '...');
-        console.log('[handleBooking] Full Authorization header length:', requestHeaders.Authorization.length);
-        console.log('[handleBooking] Authorization starts with Bearer:', requestHeaders.Authorization.startsWith('Bearer '));
-        
-        // Test the token by decoding it to verify it's valid
         try {
-          const tokenParts = token.split('.');
-          if (tokenParts.length === 3) {
-            const payload = JSON.parse(atob(tokenParts[1]));
-            console.log('[handleBooking] Token payload:', {
-              uid: payload.uid,
-              email: payload.email,
-              exp: payload.exp,
-              iat: payload.iat,
-              isExpired: payload.exp < Date.now() / 1000
-            });
-            
-            if (payload.exp < Date.now() / 1000) {
-              console.error('[handleBooking] TOKEN IS EXPIRED!');
-              throw new Error('Authentication token has expired. Please refresh the page.');
-            }
+          const res = await fetch('/api/requests/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              university,
+              rideId,
+              requestId: booking.id,
+              cancelledBy: booking.driverId || user?.uid,
+              reason: 'Driver rejected request'
+            })
+          });
+
+          if (!res.ok) {
+            console.log('[handleBooking] Cancel API failed with status:', res.status, 'using fallback...');
+            throw new Error(`Cancel API failed: ${res.status}`);
           }
-        } catch (e) {
-          console.warn('[handleBooking] Could not decode token:', e);
-        }
-        
-        console.log('[handleBooking] Sending fetch request...');
-        const res = await fetch('/api/requests/accept', {
-          method: 'POST',
-          headers: requestHeaders,
-          body: JSON.stringify(requestBody),
-          // Explicitly set credentials to include auth
-          credentials: 'same-origin',
-          // Bypass service worker cache for auth requests
-          cache: 'no-store',
-        });
-
-        console.log('[handleBooking] API response status:', res.status);
-        console.log('[handleBooking] API response headers:', {
-          contentType: res.headers.get('content-type'),
-          authorization: res.headers.get('authorization'),
-        });
-        
-        let data;
-        try {
-          data = await res.json();
-          console.log('[handleBooking] API response data:', data);
-        } catch (parseError) {
-          console.error('[handleBooking] Failed to parse response:', parseError);
-          const text = await res.text();
-          console.error('[handleBooking] Response text:', text);
-          throw new Error(`API returned ${res.status} but response is not JSON`);
-        }
-        
-        if (!res.ok) {
-          console.error('[handleBooking] API error:', { status: res.status, data, booking });
-          throw new Error(data.error || data.message || 'Failed to accept request');
-        }
-
-        // Update local request to accepted status
-        await runTransaction(firestore, async (transaction) => {
-          const rideId = ride.id;
-          const rideRef = doc(firestore, `universities/${university}/rides`, rideId);
-          const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
-          const rideDoc = await transaction.get(rideRef);
           
-          if (rideDoc.exists()) {
-            const currentRideData = rideDoc.data() as RideType;
-            const driverDetails = currentRideData.driverInfo || null;
-            const rideSnapshot = {
-              id: rideDoc.id,
-              driverId: currentRideData.driverId,
-              from: currentRideData.from,
-              to: currentRideData.to,
-              departureTime: currentRideData.departureTime,
-              price: currentRideData.price,
-              route: currentRideData.route,
-              driverInfo: currentRideData.driverInfo,
-            } as Partial<RideType>;
-
-            // Create booking doc with 'accepted' status
-            const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
-            const chatId = booking.id;
-            const chatRef2 = doc(firestore, `universities/${university}/chats`, chatId);
-            const chatData = {
-              bookingId: booking.id,
-              rideId: rideId,
-              passengerId: booking.passengerId,
-              providerId: currentRideData.driverId,
-              participants: [booking.passengerId, currentRideData.driverId],
-              createdAt: serverTimestamp(),
-              status: 'active'
-            };
-
-            const bookingPayload = Object.assign({}, booking, {
-              status: 'accepted',
-              createdAt: serverTimestamp(),
-              driverDetails,
-              ride: rideSnapshot,
-              chatId,
-              rideId: rideId, // Ensure rideId is explicitly set
-            });
-
-            transaction.set(chatRef2, chatData);
-            transaction.set(bookingRef, bookingPayload);
-          }
-        });
-      } else {
-        // For rejects: use API if available, otherwise direct update
-        console.log('[handleBooking] Processing rejection...');
-        
-        const rideId = ride.id;
-        
-        const res = await fetch('/api/requests/cancel', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            university,
-            rideId,
-            requestId: booking.id,
-            cancelledBy: booking.driverId || user?.uid,
-            reason: 'Driver rejected request'
-          })
-        });
-
-        if (!res.ok) {
-          console.log('[handleBooking] Cancel API failed, using fallback...');
+          console.log('[handleBooking] Rejection processed via API');
+        } catch (apiError) {
+          console.log('[handleBooking] API rejection failed, using direct update:', apiError);
           // Fallback: update directly
           await runTransaction(firestore, async (transaction) => {
             const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
@@ -406,9 +351,13 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       {shownBookings.map((booking: any) => (
         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-800/40 backdrop-blur-sm rounded-lg">
           <div>
-            <div className="flex items-center gap-1.5">
-              <p className="font-medium text-slate-100">{booking.passengerDetails?.fullName}</p>
-              <InlineVerifiedBadge verified={booking.passengerDetails?.universityEmailVerified || booking.passengerDetails?.verified} />
+            <div className="mb-2">
+              <UserNameWithBadge 
+                name={booking.passengerDetails?.fullName || 'User'} 
+                verified={isUserVerified(booking.passengerDetails)}
+                size="md"
+                truncate={false}
+              />
             </div>
             {booking.passengerDetails?.phone ? (
               <p className="text-sm text-slate-300">{booking.passengerDetails.phone}</p>
@@ -450,14 +399,14 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const { user, data: userData } = useUser();
     const { getUnreadForRide } = useNotifications();
 
-    const acceptedBookingsQuery = firestore ? query(
+    const acceptedBookingsQuery = (firestore && ride?.id) ? query(
         collection(firestore, `universities/${university}/bookings`),
         where('rideId', '==', ride.id),
         where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED'])
     ) : null;
     const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery);
 
-    const pendingRequestsQuery = firestore ? query(
+    const pendingRequestsQuery = (firestore && ride?.id) ? query(
       collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
       where('status', 'in', ['PENDING', 'pending'])
     ) : null;
@@ -598,7 +547,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                     </div>
                     <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
                       <div className="text-[0.7rem] text-slate-300">
-                        {new Date(ride.departureTime.seconds * 1000).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        {formatTimestamp(ride.departureTime, { format: 'short', fallback: 'Time TBD' })}
                       </div>
                     </div>
                   </div>
@@ -636,8 +585,14 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
                             <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                            <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
-                            <InlineVerifiedBadge verified={b.passengerDetails?.universityEmailVerified || (b.passengerDetails as any)?.verified} />
+                            <div className="flex-1 min-w-0">
+                              <UserNameWithBadge 
+                                name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
+                                verified={isUserVerified(b.passengerDetails)}
+                                size="md"
+                                truncate
+                              />
+                            </div>
                           </div>
                           <div className="space-y-2 text-xs text-slate-400">
                             <div className="flex items-start gap-2">
@@ -652,12 +607,12 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                             </div>
                             <div className="flex items-center gap-2 ml-5 text-slate-500">
                               <Clock className="h-3.5 w-3.5" />
-                              <span>{new Date((b.ride?.departureTime?.seconds ?? ride.departureTime.seconds) * 1000).toLocaleString('en-US', { 
+                              <span>{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
                                 month: 'short',
                                 day: 'numeric',
                                 hour: '2-digit',
                                 minute: '2-digit'
-                              })}</span>
+                              })) || 'Time TBD'}</span>
                             </div>
                           </div>
                         </div>
@@ -692,8 +647,14 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
                             <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                            <div className="font-bold text-white truncate">{b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}</div>
-                            <InlineVerifiedBadge verified={b.passengerDetails?.universityEmailVerified || (b.passengerDetails as any)?.verified} />
+                            <div className="flex-1 min-w-0">
+                              <UserNameWithBadge 
+                                name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
+                                verified={isUserVerified(b.passengerDetails)}
+                                size="md"
+                                truncate
+                              />
+                            </div>
                             <Badge className="bg-amber-600/80 text-white text-[10px] py-0 px-1.5">Awaiting Confirmation</Badge>
                           </div>
                           <div className="space-y-2 text-xs text-slate-400">
@@ -709,12 +670,12 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                             </div>
                             <div className="flex items-center gap-2 ml-5 text-slate-500">
                               <Clock className="h-3.5 w-3.5" />
-                              <span>{new Date((b.ride?.departureTime?.seconds ?? ride.departureTime.seconds) * 1000).toLocaleString('en-US', { 
+                              <span>{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
                                 month: 'short',
                                 day: 'numeric',
                                 hour: '2-digit',
                                 minute: '2-digit'
-                              })}</span>
+                              })) || 'Time TBD'}</span>
                             </div>
                           </div>
                         </div>
@@ -849,8 +810,7 @@ export default function MyRidesPage() {
         id: r.id, 
         from: r.from, 
         to: r.to, 
-        driverId: r.driverId, 
-        createdBy: r.createdBy,
+        driverId: r.driverId,
         departureTime: r.departureTime,
         departureTimeMs: getTimestampMs(r.departureTime),
         status: r.status
@@ -890,6 +850,25 @@ export default function MyRidesPage() {
     
     return filtered;
   }, [rides]);
+
+  // Update ride status to "inactive" if departure time has passed
+  const ridesWithStatus = React.useMemo(() => {
+    if (!filteredRides || filteredRides.length === 0) return [];
+    const now = Date.now();
+    
+    return filteredRides.map((ride) => {
+      const departureMs = getTimestampMs(ride.departureTime);
+      // If departure time has passed and ride is currently "active", mark as "inactive"
+      const isInactive = departureMs !== null && now > departureMs && ride.status === 'active';
+      
+      if (isInactive) {
+        console.debug(`[My Rides] Marking ride ${ride.id} as inactive (departed)`);
+        return { ...ride, status: 'inactive' };
+      }
+      
+      return ride;
+    });
+  }, [filteredRides]);
 
   if (loading) {
     return (
@@ -933,7 +912,7 @@ export default function MyRidesPage() {
   }
 
   // Now safe to check for empty rides — university is loaded and query has been executed
-  if (!filteredRides || filteredRides.length === 0) {
+  if (!ridesWithStatus || ridesWithStatus.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">
         <div className="fixed inset-0 -z-10 pointer-events-none">
@@ -966,7 +945,7 @@ export default function MyRidesPage() {
           <p className="text-slate-300">Track and manage your active ride offers</p>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {filteredRides
+        {ridesWithStatus
           .sort((a: RideType, b: RideType) => {
             const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt as any)?.toMillis?.() ?? 0;
             const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt as any)?.toMillis?.() ?? 0;
@@ -1185,6 +1164,7 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
                   // Match create-ride map styling and give a reliable tile source
                   tileUrl="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                   tileAttribution="&copy; OpenStreetMap contributors"
+                  routeColor="#60A5FA"
                 />
               </div>
             </MapErrorBoundary>

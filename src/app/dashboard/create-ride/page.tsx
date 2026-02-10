@@ -95,6 +95,7 @@ const MapComponent = forwardRef<MapComponentRef, {
   // Permanent locked marker (uni) which must not be removed during selection or map movements
   const lockedMarkerRef = useRef<L.Marker | null>(null);
   const routeLayerRef = useRef<L.Polyline | null>(null);
+  const routeOutlineRef = useRef<L.Polyline | null>(null);  // Store outline polyline separately
   // Ref for the temporary marker used in selection mode
   const tempMarkerRef = useRef<L.Marker | null>(null);
   // Semi-transparent selection circle to indicate allowed campus radius during selection
@@ -416,13 +417,25 @@ const MapComponent = forwardRef<MapComponentRef, {
     // CLEANUP: Clear previous route immediately when coordinates change (before drawing new route)
     const clearRoute = () => {
       console.log('[ROUTE] Clearing previous route');
-      if (routeLayerRef.current && mapInstanceRef.current) {
-        try {
-          mapInstanceRef.current.removeLayer(routeLayerRef.current);
-        } catch (e) {
-          console.debug('[ROUTE] Error removing route layer:', e);
+      if (mapInstanceRef.current) {
+        // Remove route outline first
+        if (routeOutlineRef.current) {
+          try {
+            mapInstanceRef.current.removeLayer(routeOutlineRef.current);
+          } catch (e) {
+            console.debug('[ROUTE] Error removing route outline layer:', e);
+          }
+          routeOutlineRef.current = null;
         }
-        routeLayerRef.current = null;
+        // Remove main route polyline
+        if (routeLayerRef.current) {
+          try {
+            mapInstanceRef.current.removeLayer(routeLayerRef.current);
+          } catch (e) {
+            console.debug('[ROUTE] Error removing route layer:', e);
+          }
+          routeLayerRef.current = null;
+        }
       }
       props.onRouteUpdate(null, null);
     };
@@ -552,6 +565,16 @@ const MapComponent = forwardRef<MapComponentRef, {
                 const endIsLocked = lockedPos && end && Math.abs(end.lat - lockedPos.lat) < 1e-6 && Math.abs(end.lng - lockedPos.lng) < 1e-6;
                 const routeColor = (lockedPos && (startIsLocked || endIsLocked)) ? '#3F51B5' : '#9575CD';
                 
+                // Remove OLD route layers before creating new one
+                if (routeOutlineRef.current) {
+                  mapInstanceRef.current.removeLayer(routeOutlineRef.current);
+                  routeOutlineRef.current = null;
+                }
+                if (routeLayerRef.current) {
+                  mapInstanceRef.current.removeLayer(routeLayerRef.current);
+                  routeLayerRef.current = null;
+                }
+                
                 // Create single polyline with glow effect via CSS/opacity instead of double rendering
                 const polyline = L.polyline(coordinates, { color: routeColor, weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }).addTo(mapInstanceRef.current);
                 routeLayerRef.current = polyline;
@@ -627,6 +650,7 @@ const MapComponent = forwardRef<MapComponentRef, {
       if (mapInstanceRef.current) {
         if (startMarkerRef.current) mapInstanceRef.current.removeLayer(startMarkerRef.current);
         if (endMarkerRef.current) mapInstanceRef.current.removeLayer(endMarkerRef.current);
+        if (routeOutlineRef.current) mapInstanceRef.current.removeLayer(routeOutlineRef.current);
         if (routeLayerRef.current) mapInstanceRef.current.removeLayer(routeLayerRef.current);
       }
       startMarkerRef.current = null;
@@ -703,6 +727,11 @@ const MapComponent = forwardRef<MapComponentRef, {
     setRoute: (coords: { lat: number; lng: number }[]) => {
       if (!mapInstanceRef.current) return;
       try {
+        // Remove OLD route layers (both outline and main polyline)
+        if (routeOutlineRef.current) {
+          mapInstanceRef.current.removeLayer(routeOutlineRef.current);
+          routeOutlineRef.current = null;
+        }
         if (routeLayerRef.current) {
           mapInstanceRef.current.removeLayer(routeLayerRef.current);
           routeLayerRef.current = null;
@@ -716,8 +745,11 @@ const MapComponent = forwardRef<MapComponentRef, {
         const startLocked = lockedPos2 && start && Math.abs(start.lat - lockedPos2.lat) < 1e-6 && Math.abs(start.lng - lockedPos2.lng) < 1e-6;
         const endLocked = lockedPos2 && end && Math.abs(end.lat - lockedPos2.lat) < 1e-6 && Math.abs(end.lng - lockedPos2.lng) < 1e-6;
         const color = (lockedPos2 && (startLocked || endLocked)) ? '#3F51B5' : '#9575CD';
+        // Create NEW route layers
         const polylineOutline = L.polyline(ll, { color: '#ffffff', weight: 10, opacity: 0.7 }).addTo(mapInstanceRef.current);
         const polyline = L.polyline(ll, { color, weight: 6, opacity: 0.95 }).addTo(mapInstanceRef.current);
+        // Store both references for future cleanup
+        routeOutlineRef.current = polylineOutline;
         routeLayerRef.current = polyline;
         // Compute approximate distance (meters) from the polyline coordinates and estimate duration.
         try {
@@ -1353,14 +1385,37 @@ export default function CreateRidePage() {
               }));
               console.log('[STOPS] After cleaning names:', cleanedStops.map((s, i) => `${i+1}:"${s.name}"`).join(', '));
               
-              // Remove duplicate locations (same lat/lng AND same name)
-              const deduped = removeDuplicateLocations(cleanedStops);
+              // CRITICAL FIX: Never remove START or END stops, even if at same location
+              // Preserve all stops - START is always first, END is always last by type
+              let deduped = cleanedStops;
               
-              // Additional deduplication: Remove consecutive stops with identical names
+              // Only deduplicate INTERMEDIATE stops (not START or END)
+              const startStop = cleanedStops.find(s => s.type === 'start');
+              const endStop = cleanedStops.find(s => s.type === 'end');
+              const intermediateStops = cleanedStops.filter(s => s.type !== 'start' && s.type !== 'end');
+              
+              // Deduplicate intermediate stops but NEVER remove START/END
+              const dedupedIntermediate = removeDuplicateLocations(intermediateStops);
+              
+              // Rebuild: START + deduplicated intermediate + END
+              deduped = [];
+              if (startStop) deduped.push(startStop);
+              deduped.push(...dedupedIntermediate);
+              if (endStop && !deduped.some(s => s.id === endStop.id)) deduped.push(endStop);
+              
+              console.log('[STOPS] After protecting START/END:', deduped.length, 'stops:', deduped.map(s => s.name).join(' → '));
+              
+              // Additional deduplication: Remove consecutive INTERMEDIATE stops with identical names (but keep START/END)
               const dedupedByName: typeof deduped = [];
               let lastName = '';
               for (const stop of deduped) {
-                if (stop.name !== lastName || stop.name === 'Start' || stop.name === 'End') {
+                const isStartOrEnd = stop.type === 'start' || stop.type === 'end';
+                if (isStartOrEnd) {
+                  // Always keep START and END
+                  dedupedByName.push(stop);
+                  lastName = stop.name;
+                } else if (stop.name !== lastName) {
+                  // Only keep intermediate stops with different names
                   dedupedByName.push(stop);
                   lastName = stop.name;
                 } else {
@@ -1371,43 +1426,21 @@ export default function CreateRidePage() {
               console.log('[STOPS] After name dedup:', dedupedByName.length, 'stops:', dedupedByName.map(s => s.name).join(' → '));
 
               const ensureMinStops = (baseStops: any[], allStops: any[], minCount: number) => {
-                if (baseStops.length >= minCount) return baseStops;
-
-                const result = [...baseStops];
-                const used = new Set(result.map((s) => `${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
-                const usedNames = new Set(result.map((s) => s.name));
-
-                // Get candidates with valid names only (no placeholders)
-                const candidates = allStops
-                  .filter((s) => {
-                    if (used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`)) return false;
-                    if (usedNames.has(s.name)) return false; // Skip if name already used
-                    // Only add stops with real names, not placeholders
-                    return !isPlaceholderName(s.name);
-                  })
-                  .sort((a, b) => (a.distanceFromStart || 0) - (b.distanceFromStart || 0));
-
-                for (const c of candidates) {
-                  if (result.length >= minCount) break;
-                  result.push({ ...c });
-                  used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
-                  usedNames.add(c.name);
-                }
-
-                // If still below minimum, only then use fallback (with cleaned names)
-                if (result.length < minCount) {
-                  const fallback = allStops
-                    .sort((a, b) => (a.distanceFromStart || 0) - (b.distanceFromStart || 0))
-                    .filter((s) => !used.has(`${Number(s.lat).toFixed(5)},${Number(s.lng).toFixed(5)}`));
-                  for (const c of fallback) {
-                    if (result.length >= minCount) break;
-                    // Use the cleaned name from the stop, not a placeholder
-                    result.push({ ...c, name: cleanLocationName(c.name) });
-                    used.add(`${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}`);
-                  }
-                }
-
-                // Sort by distance and rebuild order
+                // CRITICAL: Never return less than what's provided, especially for START/END
+                if (baseStops.length === 0) return baseStops;
+                
+                // Preserve START and END stops AT ALL COSTS
+                const startStop = baseStops.find(s => s.type === 'start');
+                const endStop = baseStops.find(s => s.type === 'end');
+                const intermediateStops = baseStops.filter(s => s.type !== 'start' && s.type !== 'end');
+                
+                // Build final array: START + all intermediates + END
+                const result: any[] = [];
+                if (startStop) result.push(startStop);
+                result.push(...intermediateStops); // Keep ALL intermediate stops
+                if (endStop) result.push(endStop);
+                
+                // ALWAYS sort by distance to maintain proper ordering
                 return orderStopsCorrectly(result);
               };
 
@@ -1795,6 +1828,11 @@ export default function CreateRidePage() {
         ...(ud.gender && { gender: ud.gender }),
         ...(ud.contactNumber && { contactNumber: ud.contactNumber }),
         ...(ud.transport && { transport: ud.transport }),
+        // Include verification flags
+        ...(ud.universityEmailVerified !== undefined && { universityEmailVerified: ud.universityEmailVerified }),
+        ...(ud.idVerified !== undefined && { idVerified: ud.idVerified }),
+        // Compute isVerified: true only if BOTH email and ID verified, explicitly set false otherwise
+        isVerified: !!(ud.universityEmailVerified && ud.idVerified),
       },
       ...(distanceKm && { distanceKm }),
       ...(durationMin && { durationMin }),
@@ -1838,7 +1876,7 @@ export default function CreateRidePage() {
     // Prefer using generatedStops (which have names fetched) if available;
     // otherwise use route waypoints or sample the route lat/lngs.
     try {
-      const maxStops = 12;
+      const maxStops = 20; // Increased from 12 to allow more stops - Firestore can handle it
       let stops: { name?: string; lat: number; lng: number; distanceFromStart?: number; type?: string; isCustom?: boolean; isAutoGenerated?: boolean }[] | null = null;
 
       // First priority: use generatedStops if they have been created (they have names!)
@@ -1852,6 +1890,8 @@ export default function CreateRidePage() {
           isCustom: s.isCustom,
           isAutoGenerated: s.isAutoGenerated
         })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+        
+        console.log('[RIDE_SAVE] Using generatedStops:', stops.length, 'stops:', stops.map((s, i) => `${i+1}:${s.type}:"${s.name}"`).join(', '));
       }
       // Second priority: route waypoints
       else if (routeWaypoints && Array.isArray(routeWaypoints) && routeWaypoints.length > 0) {
@@ -1870,8 +1910,10 @@ export default function CreateRidePage() {
       }
 
       if (stops && stops.length > 0) {
-        // Trim to maxStops and attach to rideData before sanitization
-        (rideData as any).stops = stops.slice(0, maxStops);
+        // CRITICAL: Save ALL stops without slicing - preserve complete stop list
+        // Every stop is important for route accuracy
+        (rideData as any).stops = stops;
+        console.log('[RIDE_SAVE] Attached', stops.length, 'stops to ride document:', stops.map((s, i) => `${i+1}:${s.type}:"${s.name}"`).join(', '));
       }
     } catch (stopsErr) {
       console.warn('Failed to auto-generate stops for ride:', stopsErr);

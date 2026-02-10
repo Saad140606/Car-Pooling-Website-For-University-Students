@@ -14,6 +14,11 @@ export interface UserProfile {
   universityEmail?: string; // @nu.edu.pk or @neduet.edu.pk
   universityEmailVerified?: boolean;
   universityEmailVerifiedAt?: Timestamp;
+  // ID verification (e.g., CNIC or Student ID)
+  idVerified?: boolean;
+  idVerifiedAt?: Timestamp;
+  // Computed field: true if both email + ID verified
+  isVerified?: boolean;
   // Password rate limiting
   passwordChangeCount?: number;
   passwordChangeWindowStart?: number;
@@ -39,6 +44,11 @@ export interface CanonicalUserProfile {
   universityEmail?: string;
   universityEmailVerified?: boolean;
   universityEmailVerifiedAt?: Timestamp;
+  // ID verification
+  idVerified?: boolean;
+  idVerifiedAt?: Timestamp;
+  // Computed field: true if both email + ID verified
+  isVerified?: boolean;
 }
 
 export interface Ride {
@@ -63,6 +73,9 @@ export interface Ride {
     gender: 'male' | 'female';
     contactNumber?: string;
     transport?: 'car' | 'bike';
+    universityEmailVerified?: boolean;
+    idVerified?: boolean;
+    isVerified?: boolean;
   };
 }
 

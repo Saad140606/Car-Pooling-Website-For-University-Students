@@ -2,7 +2,7 @@
 // exports ready-to-use `auth` and `firestore` instances.
 import { initializeApp as initApp, getApps } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, enableLogging } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
 let app: ReturnType<typeof initApp> | undefined;
@@ -11,11 +11,58 @@ let firestore: ReturnType<typeof getFirestore> | undefined;
 
 export function initializeFirebaseClient() {
   if (typeof window === 'undefined') return { app, auth, firestore };
+  
+  // Validate Firebase config has required values
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    console.warn('[Firebase] Missing required config values. Check environment variables:', {
+      hasApiKey: !!firebaseConfig.apiKey,
+      hasProjectId: !!firebaseConfig.projectId,
+      hasAuthDomain: !!firebaseConfig.authDomain,
+    });
+  }
+  
   if (!getApps().length && !app) {
     app = initApp(firebaseConfig);
     auth = getAuth(app);
     setPersistence(auth, browserLocalPersistence).catch(() => {});
+    
     firestore = getFirestore(app);
+    
+    // Configure Firestore settings
+    if (firestore) {
+      try {
+        // Enable offline persistence for better resilience
+        // This helps with network timeouts
+        const settings = {
+          cacheSizeBytes: 50 * 1024 * 1024, // 50MB cache
+        };
+        
+        // Try to enable persistence (fails gracefully if not supported)
+        import('firebase/firestore').then(() => {
+          try {
+            // Enable persistence
+            import('firebase/firestore').then(({ enableIndexedDbPersistence }) => {
+              enableIndexedDbPersistence(firestore!).catch((err) => {
+                if (err.code === 'failed-precondition') {
+                  console.warn('[Firebase] Multiple tabs open, persistence disabled');
+                } else if (err.code === 'unimplemented') {
+                  console.warn('[Firebase] Browser does not support persistence');
+                }
+              });
+            });
+          } catch (error) {
+            console.debug('[Firebase] Persistence setup skipped:', error);
+          }
+        });
+      } catch (error) {
+        console.debug('[Firebase] Could not configure persistence:', error);
+      }
+      
+      // Enable logging in development for debugging
+      if (process.env.NODE_ENV === 'development') {
+        enableLogging(true);
+      }
+    }
   } else if (!app) {
     // reuse
     app = getApps()[0] as any;

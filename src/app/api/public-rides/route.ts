@@ -56,7 +56,7 @@ export async function GET(req: Request) {
         price: d.price ?? null,
         transportMode: d.transportMode ?? d.transport ?? 'car',
         genderAllowed: d.genderAllowed ?? 'both',
-        stops: stops.slice(0, 6),
+        stops: stops, // FIXED: Preserve ALL stops without truncating
       };
     });
 

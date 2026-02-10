@@ -10,6 +10,7 @@ import { Ride as RideType } from '@/lib/types';
 import { PremiumSearchBar } from '@/components/PremiumSearchBar';
 import { PriceSlider } from '@/components/PriceSlider';
 import { PremiumEmptyState, PremiumCountdown } from '@/components/PremiumEmptyState';
+import { RequestPickupModal } from '@/components/RequestPickupModal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -182,6 +183,8 @@ export default function FindARidePage() {
   const [showFilters, setShowFilters] = useState(false);
   const [expandedRide, setExpandedRide] = useState<string | null>(null);
   const [bookingRide, setBookingRide] = useState<string | null>(null);
+  const [requestPickupOpen, setRequestPickupOpen] = useState(false);
+  const [selectedRideForRequest, setSelectedRideForRequest] = useState<RideType | null>(null);
 
   const ridesQuery =
     user && firestore && userData
@@ -232,8 +235,14 @@ export default function FindARidePage() {
 
   const handleBook = useCallback(
     async (rideId: string) => {
+      // Check if user is logged in
       if (!user || !userData || !firestore) {
-        toast({ variant: 'destructive', title: 'Sign in required', description: 'Please sign in to book a ride.' });
+        // Show the request pickup modal for logged-out users
+        const ride = rides?.find((r) => r.id === rideId);
+        if (ride) {
+          setSelectedRideForRequest(ride);
+          setRequestPickupOpen(true);
+        }
         return;
       }
 
@@ -441,6 +450,17 @@ export default function FindARidePage() {
           </div>
         )}
       </div>
+
+      {/* Request Pickup Modal for Logged-out Users */}
+      {selectedRideForRequest && (
+        <RequestPickupModal
+          open={requestPickupOpen}
+          onOpenChange={setRequestPickupOpen}
+          ride={selectedRideForRequest}
+          requestType="both"
+          university={userData?.university || 'ned'}
+        />
+      )}
     </div>
   );
 }

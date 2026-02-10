@@ -11,78 +11,7 @@ import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMapEvents, 
 import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { decodePolyline } from '@/lib/route';
 import { detectUniversityFromString } from '@/lib/universities';
-
-// Helper: Convert Firestore Timestamp to Date safely with detailed logging
-function getDateFromTimestamp(ts: any): Date | null {
-  if (!ts) {
-    console.debug('[FullRideCard] Timestamp is null or undefined');
-    return null;
-  }
-  
-  // If already a Date, validate and return
-  if (ts instanceof Date) {
-    if (!isNaN(ts.getTime())) {
-      console.debug('[FullRideCard] Parsed Date object:', ts.toISOString());
-      return ts;
-    }
-    console.warn('[FullRideCard] Invalid Date object');
-    return null;
-  }
-  
-  // If number (milliseconds), convert to Date
-  if (typeof ts === 'number') {
-    if (isFinite(ts)) {
-      const d = new Date(ts);
-      console.debug('[FullRideCard] Parsed number timestamp:', d.toISOString());
-      return d;
-    }
-    console.warn('[FullRideCard] Invalid number timestamp (not finite):', ts);
-    return null;
-  }
-  
-  // If Firestore Timestamp with .seconds and .nanoseconds
-  if (ts && typeof ts === 'object') {
-    if (typeof ts.seconds === 'number' && typeof ts.nanoseconds === 'number') {
-      const ms = ts.seconds * 1000 + (ts.nanoseconds / 1_000_000);
-      if (isFinite(ms)) {
-        const d = new Date(ms);
-        console.debug('[FullRideCard] Parsed Firestore Timestamp:', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, isoString: d.toISOString() });
-        return d;
-      }
-      console.warn('[FullRideCard] Invalid Firestore Timestamp (not finite):', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, ms });
-      return null;
-    }
-    // Check for toDate() method (Firebase SDK Timestamp)
-    if (typeof ts.toDate === 'function') {
-      try {
-        const d = ts.toDate();
-        if (d instanceof Date && !isNaN(d.getTime())) {
-          console.debug('[FullRideCard] Parsed Timestamp.toDate():', d.toISOString());
-          return d;
-        }
-      } catch (e) {
-        console.warn('[FullRideCard] toDate() failed:', e);
-      }
-    }
-  }
-  
-  // Try parsing as ISO string or other string format
-  if (typeof ts === 'string') {
-    try {
-      const d = new Date(ts);
-      if (!isNaN(d.getTime())) {
-        console.debug('[FullRideCard] Parsed string timestamp:', ts, '→', d.toISOString());
-        return d;
-      }
-      console.warn('[FullRideCard] Parsed string but got invalid Date:', ts);
-    } catch (e) {
-      console.warn('[FullRideCard] Failed to parse string timestamp:', ts, e);
-    }
-  }
-  
-  console.warn('[FullRideCard] Could not parse timestamp of type', typeof ts, ':', ts);
-  return null;
-}
+import { parseTimestamp } from '@/lib/timestampUtils';
 
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
@@ -513,10 +442,10 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
 
   const start = ride.from;
   const end = ride.to;
-  // Use helper to safely convert Firestore Timestamp to readable date
+  // Use centralized timestamp parser (silent mode avoids console spam in production)
   let departureDate: Date | null = null;
   try {
-    departureDate = getDateFromTimestamp(ride.departureTime);
+    departureDate = parseTimestamp(ride.departureTime, { silent: false });
     if (!departureDate) {
       console.error('[FullRideCard] ❌ Failed to parse departureTime for ride', ride.id, ':', ride.departureTime);
     }
@@ -551,7 +480,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         university={ride.university}
         hideUniversity={userData?.university === ride.university}
         stops={ride.stops}
-        driverVerified={ride.driverInfo?.universityEmailVerified}
+        driverVerified={ride.driverInfo?.isVerified}
         statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
         onViewRoute={() => setOpenView(true)}
         onViewStops={() => setOpenStops(true)}

@@ -1,7 +1,7 @@
 // src/firebase/init.ts
 import { getApps, initializeApp } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
 let firebaseApp: ReturnType<typeof initializeApp> | undefined;
@@ -11,6 +11,14 @@ let firestore: ReturnType<typeof getFirestore> | undefined;
 function initializeFirebase(): { firebaseApp?: ReturnType<typeof initializeApp>; auth?: ReturnType<typeof getAuth>; firestore?: ReturnType<typeof getFirestore> } {
   if (typeof window === 'undefined') {
     return { firebaseApp, auth, firestore };
+  }
+
+  // Validate Firebase config
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    console.error('[Firebase] Missing required config. Ensure environment variables are set:', {
+      hasApiKey: !!firebaseConfig.apiKey,
+      hasProjectId: !!firebaseConfig.projectId,
+    });
   }
 
   const apps = getApps();
@@ -28,6 +36,18 @@ function initializeFirebase(): { firebaseApp?: ReturnType<typeof initializeApp>;
       console.warn('[Firebase] Local persistence failed (non-fatal):', e);
     });
     const fs = getFirestore(app);
+
+    // Enable IndexedDB persistence for better offline support
+    // This helps prevent "Backend didn't respond within 10 seconds" errors
+    enableIndexedDbPersistence(fs).catch((err) => {
+      if (err.code === 'failed-precondition') {
+        console.warn('[Firebase] Multiple tabs open - persistence disabled');
+      } else if (err.code === 'unimplemented') {
+        console.warn('[Firebase] Browser does not support IndexedDB persistence');
+      } else {
+        console.debug('[Firebase] Persistence initialization:', err);
+      }
+    });
 
     // assign to module-level variables after local initialization to keep types narrow
     firebaseApp = app;

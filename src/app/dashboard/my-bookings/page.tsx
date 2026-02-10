@@ -11,6 +11,8 @@ import MapLeaflet from '@/components/MapLeaflet';
 import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
 import { InlineVerifiedBadge } from '@/components/VerificationBadge';
+import { UserNameWithBadge } from '@/components/UserNameWithBadge';
+import { isUserVerified } from '@/lib/verificationUtils';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -83,7 +85,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
   // Safe ride status check
   const checkRideStatus = React.useCallback(async () => {
     if (!firestore || !ride || !ride.id) {
-      setStatusError('Ride data incomplete');
+      console.debug('[BookingCard] Ride data not fully available yet');
       return;
     }
 
@@ -93,7 +95,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
       // Check departure time
       const departureTimeData = safeGet(ride, 'departureTime');
       if (!departureTimeData) {
-        setStatusError('Departure time not available');
+        console.debug('[BookingCard] Departure time not available');
         return;
       }
 
@@ -102,7 +104,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
       );
       
       if (isNaN(departureTime.getTime())) {
-        setStatusError('Invalid departure time');
+        console.debug('[BookingCard] Invalid departure time');
         return;
       }
 
@@ -116,7 +118,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
       const rideSnap = await getDoc(rideRef);
       
       if (!rideSnap.exists()) {
-        setStatusError('Ride not found');
+        console.debug('[BookingCard] Ride not found');
         setRideStatus('expired');
         return;
       }
@@ -129,7 +131,6 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
       setRideStatus(seatsAvailable > 0 ? 'available' : 'full');
     } catch (err) {
       console.debug('[BookingCard] Failed to check ride status:', err);
-      setStatusError(err instanceof Error ? err.message : 'Failed to check status');
     }
   }, [firestore, ride, university]);
 
@@ -402,7 +403,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
   }, [booking?.status, ride?.departureTime]);
 
   const driverName = safeGet(driver, 'fullName', 'Ride Provider');
-  const driverVerified = safeGet(driver, 'universityEmailVerified') || safeGet(driver, 'verified') || false;
+  const driverVerified = !!(safeGet(driver, 'universityEmailVerified') && safeGet(driver, 'idVerified')) || safeGet(driver, 'isVerified') || false;
   const driverInitials = driverName.split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase();
   const rideFrom = safeGet(ride, 'from', 'Unknown');
   const rideTo = safeGet(ride, 'to', 'Unknown');
@@ -428,9 +429,13 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <CardTitle className="text-sm font-bold text-white truncate">{driverName}</CardTitle>
-                <InlineVerifiedBadge verified={driverVerified} />
+              <div className="mb-1">
+                <UserNameWithBadge 
+                  name={driverName} 
+                  verified={driverVerified}
+                  size="md"
+                  truncate
+                />
               </div>
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {booking.status === 'CONFIRMED' && (
@@ -924,9 +929,13 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <CardTitle className="text-sm font-bold text-white truncate">{driver.fullName || 'Driver'}</CardTitle>
-                <InlineVerifiedBadge verified={driver.universityEmailVerified || driver.verified} />
+              <div className="mb-1">
+                <UserNameWithBadge 
+                  name={driver.fullName || 'Driver'} 
+                  verified={isUserVerified(driver)}
+                  size="md"
+                  truncate
+                />
               </div>
               <div className="flex items-center gap-1.5 mt-1">
                 {booking.status === 'CONFIRMED' && (
@@ -1067,9 +1076,21 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
               <CheckCircle2 className="h-4 w-4" />
               {confirming ? 'Confirming...' : 'Confirm Ride'}
             </Button>
-            {((booking as any).chatId || booking.id) ? (
+            {((booking as any).chatId || booking.id) && (
               <ChatButton chatId={(booking as any).chatId || booking.id} university={university} label="Chat" />
-            ) : null}
+            )}
+          </>
+        ) : booking.status === 'CONFIRMED' && ((booking as any).chatId || booking.id) ? (
+          <>
+            <Button 
+              onClick={handleConfirmRide} 
+              disabled={true}
+              className="flex-1 gap-1.5 h-9 bg-slate-700 hover:bg-slate-700 text-slate-300 cursor-not-allowed"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Already Confirmed
+            </Button>
+            <ChatButton chatId={(booking as any).chatId || booking.id} university={university} label="Chat" />
           </>
         ) : rideStatus === 'expired' ? (
           <Button 
@@ -1105,9 +1126,9 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
                 </div>
               </DialogContent>
             </Dialog>
-            {booking.status === 'CONFIRMED' && ((booking as any).chatId || booking.id) ? (
-              <ChatButton chatId={(booking as any).chatId || booking.id} university={university} label="Chat" />
-            ) : null}
+            {booking.id && (
+              <ChatButton chatId={booking.id} university={university} label="Chat" />
+            )}
           </>
         )}
       </CardFooter>

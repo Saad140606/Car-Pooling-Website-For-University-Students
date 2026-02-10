@@ -24,6 +24,7 @@ import { getUniversityShortLabel } from '@/lib/universities';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { notifyNewRideRequest } from '@/lib/rideNotificationService';
+import { parseTimestamp, parseTimestampToMs, isRideExpired } from '@/lib/timestampUtils';
 
 
 // Fix for default icon not showing in Leaflet
@@ -684,10 +685,10 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
   const isDriver = user && ride.driverId === user.uid;
   const isFull = (ride.availableSeats ?? 0) <= 0;
 
-  // Departure date pieces for display
-  const departureDt = ride?.departureTime ? new Date(ride.departureTime.seconds * 1000) : null;
+  // Departure date pieces for display - use centralized timestamp parser
+  const departureDt = parseTimestamp(ride?.departureTime, { silent: true });
   const weekday = departureDt ? departureDt.toLocaleDateString('en-US', { weekday: 'long' }) : '';
-  const dateShort = departureDt ? departureDt.toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : ''; 
+  const dateShort = departureDt ? departureDt.toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '⚠ Invalid Date'; 
 
   // local component: image + fallback inline preview
   function PreviewInner({ route, makeUrl }: { route: any[]; makeUrl: () => string | null }) {
@@ -799,97 +800,22 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
   );
 }
 
-// Helper: Convert Firestore Timestamp to milliseconds, handling multiple formats with validation
-function getTimestampMs(ts: any): number | null {
-  if (!ts) {
-    console.debug('[Find Ride] getTimestampMs: null/undefined');
-    return null;
-  }
-  
-  // If it's already a number (milliseconds), validate and return
-  if (typeof ts === 'number') {
-    if (isFinite(ts)) {
-      console.debug('[Find Ride] getTimestampMs: number', ts);
-      return ts;
-    }
-    console.warn('[Find Ride] getTimestampMs: not finite number', ts);
-    return null;
-  }
-  
-  // If it's a Firestore Timestamp with .seconds property
-  if (ts && typeof ts === 'object' && typeof ts.seconds === 'number') {
-    try {
-      const ms = ts.seconds * 1000 + ((ts.nanoseconds || 0) / 1_000_000);
-      if (isFinite(ms)) {
-        console.debug('[Find Ride] getTimestampMs: Firestore Timestamp', { seconds: ts.seconds, nanoseconds: ts.nanoseconds });
-        return ms;
-      }
-      console.warn('[Find Ride] getTimestampMs: Firestore Timestamp not finite', { seconds: ts.seconds, nanoseconds: ts.nanoseconds, ms });
-      return null;
-    } catch (e) {
-      console.warn('[Find Ride] getTimestampMs: Firestore Timestamp conversion failed', e);
-      return null;
-    }
-  }
-  
-  // Check for .toDate() method (Firebase SDK Timestamp)
-  if (ts && typeof ts === 'object' && typeof ts.toDate === 'function') {
-    try {
-      const d = ts.toDate();
-      if (d instanceof Date && !isNaN(d.getTime())) {
-        console.debug('[Find Ride] getTimestampMs: via toDate()', d.toISOString());
-        return d.getTime();
-      }
-    } catch (e) {
-      console.warn('[Find Ride] getTimestampMs: toDate() failed', e);
-    }
-  }
-  
-  // If it's a Date object
-  if (ts instanceof Date) {
-    if (!isNaN(ts.getTime())) {
-      console.debug('[Find Ride] getTimestampMs: Date object', ts.toISOString());
-      return ts.getTime();
-    }
-    console.warn('[Find Ride] getTimestampMs: Invalid Date object');
-    return null;
-  }
-  
-  // Try to convert string to date
-  if (typeof ts === 'string') {
-    try {
-      const d = new Date(ts);
-      if (!isNaN(d.getTime())) {
-        console.debug('[Find Ride] getTimestampMs: string', ts, '→', d.toISOString());
-        return d.getTime();
-      }
-      console.warn('[Find Ride] getTimestampMs: string resulted in invalid Date', ts);
-    } catch (e) {
-      console.warn('[Find Ride] getTimestampMs: string conversion failed', ts);
-    }
-  }
-  
-  console.warn('[Find Ride] getTimestampMs: could not parse type', typeof ts);
-  return null;
+export default function RidesPage() {
+  // Lightweight wrapper to stabilize hooks at this component boundary.
+  // The heavy logic and all hooks live inside `RidesPageInner` so React's
+  // hook order in the exported component remains stable across renders.
+  return <RidesPageInner />;
 }
 
-export default function RidesPage() {
-    const { user, data: userData, loading: userLoading } = useUser();
+function RidesPageInner() {
+  const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
   const router = useRouter();
   const pathname = usePathname();
-
-  useEffect(() => {
-    console.log('[RidesPage] User:', user?.uid || 'NOT LOGGED IN', 'UserData:', userData?.university || 'N/A', 'UserLoading:', userLoading);
-  }, [user, userData, userLoading]);
-  
-  
   const searchParams = useSearchParams();
 
-  // --- Filters UI state (must be declared unconditionally to preserve Hooks order) ---
+  // Declare ALL state hooks unconditionally at the top
   const [filters, setFilters] = useState(() => {
-    // For logged-in users, lock to their university
-    // For logged-out users, allow all universities
     const baseFilters = {
       transport: 'any' as 'any'|'car'|'bike',
       gender: 'any' as 'any'|'male'|'female',
@@ -903,50 +829,46 @@ export default function RidesPage() {
     return baseFilters;
   });
 
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [hideProfileBanner, setHideProfileBanner] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  const [suggestions, setSuggestions] = useState<Array<any>>([]);
+  const [searching, setSearching] = useState(false);
+
+  // Declare ALL effect hooks unconditionally 
+  useEffect(() => {
+    // keep lightweight logging only
+    // Avoid logging heavy objects which can cause stringify issues
+  }, [user, userData, userLoading]);
+
   // Auto-lock university filter for logged-in users
   useEffect(() => {
     if (user && userData?.university) {
-      // User is logged in - lock their university filter
       setFilters(f => ({ ...f, university: userData.university }));
     } else {
-      // User is logged out - allow free filtering
       setFilters(f => ({ ...f, university: '' }));
     }
   }, [user?.uid, userData?.university]);
 
-  // Debug filter state changes (placed after `filters` is initialized)
+  // Debug filter state changes (defensive)
   useEffect(() => {
     try {
-      console.log('[RidesPage] Filter University:', filters?.university || 'EMPTY', 'Should Lock:', user && userData?.university ? userData.university : 'NO');
-    } catch (e) {
-      // defensive: don't throw in render if filters is unexpectedly undefined
-    }
+      // No-op or minimal logging to avoid accidental throws
+    } catch (e) {}
   }, [filters?.university, user, userData?.university]);
 
-  // Current time state that updates every minute to trigger re-filtering
-  const [currentTime, setCurrentTime] = useState(() => new Date());
-  
+  // Update current time every minute
   useEffect(() => {
-    // Update current time every minute to automatically filter out expired rides
     const interval = setInterval(() => {
       setCurrentTime(new Date());
-    }, 60000); // Update every 60 seconds
-    
+    }, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  // CRITICAL SECURITY: Query ALL rides (all three universities) for everyone
-  // RULE 1: Everyone can SEE all public rides (no login required to browse)
-  // RULE 2: Display filter: Logged-in users see only their university (applied below)
-  // RULE 3: Booking: Logged-out users are redirected to /auth/select-university
-  const universitiesToQuery = ['fast', 'ned', 'karachi'];  // ✅ ALWAYS query all universities
+  // === ALL HOOK DEFINITIONS MUST HAPPEN BEFORE ANY NON-HOOK CODE ===
 
-  // Build queries for each university
-  // NOTE: orderBy removed temporarily while Firestore indexes are building (client-side sort below)
-  // IMPORTANT: Query for active rides WITHOUT aggressive time filtering here
-  // We filter out past rides client-side with proper timestamp handling
-  // REMOVED: departureTime filter was too aggressive and incompatible with timestamp variants
-  
+  // Build queries - always execute unconditionally
   const fastRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'fast', 'rides'),
     where('status', '==', 'active')
@@ -962,108 +884,193 @@ export default function RidesPage() {
     where('status', '==', 'active')
   ) : null;
 
-  // Query ALL universities for everyone (always all three)
-  const fastRidesQueryToUse = fastRidesQuery;
-  const nedRidesQueryToUse = nedRidesQuery;
-  const karachiRidesQueryToUse = karachiRidesQuery;
+  // Custom hooks - MUST be called unconditionally and in same order
+  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQuery);
+  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQuery);
+  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQuery);
 
-  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQueryToUse);
-  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQueryToUse);
-  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQueryToUse);
+  // myBookingsQuery hook
+  const myBookingsQuery = firestore && userData?.university ? query(
+    safeCollection(firestore, 'universities', userData.university, 'bookings'),
+    where('passengerId', '==', user?.uid || '')
+  ) : null;
+  const { data: myBookings } = useBookingsCollection(myBookingsQuery);
 
-  // Merge rides from all universities and sort client-side by departureTime (ascending)
-  // Client-side sorting while Firestore index builds
+  // Memos MUST be declared before useCallback and useEffect
   const ridesWithValidTimestamps = React.useMemo(() => {
     const allRides = [
       ...(fastRides || []).map(r => ({ ...r, university: 'fast' })),
       ...(nedRides || []).map(r => ({ ...r, university: 'ned' })),
       ...(karachiRides || []).map(r => ({ ...r, university: 'karachi' }))
     ];
-    
-    // Filter and log rides with invalid timestamps
-    return allRides.filter(ride => {
-      const tsMs = getTimestampMs(ride.departureTime);
-      if (tsMs === null) {
-        console.warn(`[Find Ride] Ride ${ride.id} has invalid departureTime:`, ride.departureTime);
-        // Include anyway - let server handle deletion
-        return true;
-      }
-      return true;
-    });
+    // Keep ALL rides, even if timestamp parsing fails
+    // Filtering happens later in availableRides based on expiration
+    return allRides;
   }, [fastRides, nedRides, karachiRides]);
   
   const rides = React.useMemo(() => {
     return ridesWithValidTimestamps.sort((a, b) => {
-      const aTime = getTimestampMs(a.departureTime) || 0;
-      const bTime = getTimestampMs(b.departureTime) || 0;
-      return aTime - bTime; // ascending
+      // Use centralized timestamp parser (silent mode to avoid console spam)
+      const aTime = parseTimestampToMs(a.departureTime, { silent: true }) || 0;
+      const bTime = parseTimestampToMs(b.departureTime, { silent: true }) || 0;
+      return aTime - bTime;
     });
   }, [ridesWithValidTimestamps]);
+
+  // Helper callbacks
+  const parsePointInput = useCallback((s: string) => {
+    const parts = s.split(',').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const lat = Number(parts[0]);
+      const lng = Number(parts[1]);
+      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+    }
+    return null;
+  }, []);
+
+  const useMyLocation = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(pos => {
+      const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      setFilters(f => ({ ...f, pointInput: `${p.lat},${p.lng}`, point: p }));
+    });
+  }, []);
+
+  // Compute availableRides - filter out own rides and past rides (before downstream filters)
+  // CRITICAL: This is the ONLY place where we filter expired rides
+  // Expired rides must remain visible in:
+  //   - My Rides (driver's view)
+  //   - My Bookings (passenger's view)
+  //   - My Offered Rides
+  //   - Ride history/analytics
+  // Only Find Ride (this page) should hide expired rides
+  const availableRides = React.useMemo(() => {
+    return rides?.filter((ride: any) => {
+      if (!ride) return false;
+      
+      // Only filter out driver's own ride if user is logged in
+      if (user && ride.driverId === user.uid) {
+        return false;
+      }
+      
+      // If user is logged in, only show rides from their university
+      if (user && userData?.university) {
+        if (ride.university !== userData.university) {
+          return false;
+        }
+      }
+      
+      // CRITICAL: Filter out expired rides using centralized utility
+      // Uses defensive logic: if timestamp is invalid/unparseable, keeps the ride visible
+      // to avoid hiding rides due to data corruption
+      if (isRideExpired(ride.departureTime, { silent: true })) {
+        return false;
+      }
+      
+      return true;
+    }) ?? [];
+  }, [rides, user, userData?.university]);
+
+  // Helper for route proximity filtering
+  const isPointNearRoute = useCallback((point: {lat:number; lng:number}, route: L.LatLngExpression[] | {lat:number; lng:number}[], tolerance = 0.003): boolean => {
+    const toMetersLocal = (latlng: { lat: number; lng: number }) => {
+      const latRad = (latlng.lat * Math.PI) / 180;
+      const x = latlng.lng * 111320 * Math.cos(latRad);
+      const y = latlng.lat * 110540;
+      return { x, y };
+    };
+
+    const pointToSegmentDistanceMetersLocal = (p: {lat:number; lng:number}, a: {lat:number; lng:number}, b: {lat:number; lng:number}) => {
+      const P = toMetersLocal({ lat: p.lat, lng: p.lng });
+      const A = toMetersLocal({ lat: a.lat, lng: a.lng });
+      const B = toMetersLocal({ lat: b.lat, lng: b.lng });
+      const vx = B.x - A.x;
+      const vy = B.y - A.y;
+      const l2 = vx * vx + vy * vy;
+      if (l2 === 0) return Math.hypot(P.x - A.x, P.y - A.y);
+      let t = ((P.x - A.x) * vx + (P.y - A.y) * vy) / l2;
+      t = Math.max(0, Math.min(1, t));
+      const projx = A.x + t * vx;
+      const projy = A.y + t * vy;
+      return Math.hypot(P.x - projx, P.y - projy);
+    };
+
+    const tolMeters = tolerance * 111320;
+    for (let i = 0; i < route.length - 1; i++) {
+      const start = L.latLng(route[i] as LatLng);
+      const end = L.latLng(route[i + 1] as LatLng);
+      const d = pointToSegmentDistanceMetersLocal(point as any, { lat: start.lat, lng: start.lng } as any, { lat: end.lat, lng: end.lng } as any);
+      if (d < tolMeters) return true;
+    }
+    return false;
+  }, []);
+
+  // Apply user filters to available rides
+  const filteredRides = React.useMemo(() => {
+    return availableRides?.filter((ride: any) => {
+      if (!ride) return false;
+
+      // University filter
+      if (filters.university && filters.university !== 'any' && filters.university !== '') {
+        if (ride.university !== filters.university) return false;
+      } else if (user && userData?.university) {
+        if (ride.university !== userData.university) return false;
+      }
+
+      // transport/gender/price filters
+      if (filters.transport !== 'any' && ride.transportMode !== filters.transport) return false;
+      if (filters.gender !== 'any' && !(ride.driverInfo?.gender === filters.gender)) return false;
+      const min = filters.minPrice ? Number(filters.minPrice) : null;
+      const max = filters.maxPrice ? Number(filters.maxPrice) : null;
+      if (min !== null && ride.price < min) return false;
+      if (max !== null && ride.price > max) return false;
+
+      // route proximity filter
+      const p = filters.point ?? (filters.pointInput ? parsePointInput(filters.pointInput) : null);
+      if (p) {
+        if (!(ride.route && ride.route.length && isPointNearRoute(p as any, ride.route as LatLngExpression[]))) return false;
+      }
+
+      // direction filter
+      if (filters.direction !== 'any' && userData?.university) {
+        const uni = getUniversityShortLabel(userData.university).toLowerCase();
+        const from = (ride.from || '').toLowerCase();
+        const to = (ride.to || '').toLowerCase();
+        if (filters.direction === 'toUniversity' && !to.includes(uni)) return false;
+        if (filters.direction === 'fromUniversity' && !from.includes(uni)) return false;
+      }
+
+      // Search query matching
+      const q = searchQuery.trim().toLowerCase();
+      if (q) {
+        const hay = (`${ride.from || ''} ${ride.to || ''} ${ride.driverInfo?.fullName || ''} ${String(ride.price || '')} ${ride.transportMode || ''}`).toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
+      return true;
+    }) ?? [];
+  }, [availableRides, user, userData?.university, filters, searchQuery, parsePointInput, isPointNearRoute]);
+
+  const clearFilters = useCallback(() => {
+    setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && userData?.university) ? userData.university : '', direction: 'any' });
+  }, [user, userData?.university]);
+
+  // === END OF ALL HOOK DEFINITIONS ===
   
   const ridesLoading = fastRidesLoading || nedRidesLoading || karachiRidesLoading;
-  
-  // Log query errors - CRITICAL for diagnosing issues
+  const hasActiveBooking = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected'));
+  const isLoading = userLoading || ridesLoading;
+
+  // Query error logging
   useEffect(() => {
     if (fastRidesError) console.error('❌ [Find Ride] FAST query error:', fastRidesError);
     if (nedRidesError) console.error('❌ [Find Ride] NED query error:', nedRidesError);
     if (karachiRidesError) console.error('❌ [Find Ride] Karachi query error:', karachiRidesError);
   }, [fastRidesError, nedRidesError, karachiRidesError]);
   
-  // Debug: log the rides data and query status - CRITICAL for diagnosing missing rides
-  useEffect(() => {
-    console.log('🔍 [Find Ride] Rides Query Debug:', {
-      isUserLoggedIn: !!user,
-      userUniversity: userData?.university || 'NONE',
-      firestore: !!firestore ? 'READY' : 'NOT_READY',
-      ridesLoading,
-      ridesCount: rides?.length || 0,
-      fastRidesCount: fastRides?.length || 0,
-      nedRidesCount: nedRides?.length || 0,
-      karachiRidesCount: karachiRides?.length || 0,
-      queriesBuild: {
-        fastRidesQuery: !!fastRidesQuery,
-        nedRidesQuery: !!nedRidesQuery,
-        karachiRidesQuery: !!karachiRidesQuery
-      },
-      sampleRides: rides?.slice(0, 5).map(r => ({
-        id: r.id,
-        from: r.from,
-        to: r.to,
-        driverId: r.driverId,
-        status: r.status,
-        departureTime: r.departureTime,
-        departureTimeMs: getTimestampMs(r.departureTime),
-        university: r.university
-      })) || [],
-      timestamp: new Date().toISOString(),
-    });
-  }, [rides, ridesLoading, fastRides, nedRides, karachiRides, user, userData?.university, firestore, fastRidesQuery, nedRidesQuery, karachiRidesQuery]);
-  
-  const isLoading = userLoading || ridesLoading;
-
-  // Check if the current user already has an active booking (any ride)
-  const myBookingsQuery = (user && firestore && userData?.university) ? query(
-    safeCollection(firestore, 'universities', userData.university, 'bookings'),
-    where('passengerId', '==', user.uid)
-  ) : null;
-  const { data: myBookings } = useBookingsCollection(myBookingsQuery);
-  const hasActiveBooking = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected'));
-
-  // Banner dismissal state for incomplete-profile prompt
-  const [hideProfileBanner, setHideProfileBanner] = useState(false);
-
-  // Local search query (matches from/to/ride provider/price)
-  const [searchQuery, setSearchQuery] = useState('');
-  // Show/hide in-page filter panel
-  const [showFilters, setShowFilters] = useState(false);
-  const [suggestions, setSuggestions] = useState<Array<any>>([]);
-  const [searching, setSearching] = useState(false);
-
-  // Sync filters from URL search params (so Filters page can set them via query string)
+  // Sync filters from URL search params
   useEffect(() => {
     try {
-      // Robustly convert ReadonlyURLSearchParams to a plain object without
-      // relying on `entries()` implementation differences across environments.
       const params: Record<string, string> = {};
       if (searchParams) {
         for (const key of Array.from(searchParams.keys())) {
@@ -1078,7 +1085,6 @@ export default function RidesPage() {
         maxPrice: params.maxPrice || '',
         pointInput: params.pointInput || '',
         point: params.pointInput ? parsePointInput(params.pointInput) : null,
-        // CRITICAL: Never override university from URL params for logged-in users
         university: (user && userData?.university) ? userData.university : (params.university || ''),
         direction: (params.direction as any) || 'any',
       };
@@ -1086,14 +1092,12 @@ export default function RidesPage() {
     } catch (e) {
       // ignore malformed query params
     }
-  }, [searchParams, user, userData?.university]);
+  }, [searchParams, user, userData?.university, parsePointInput]);
 
-  // If the user is logged in and has a university, lock the university filter to it
-  // This effect MUST run after URL params to enforce the lock
+  // Lock university filter for logged-in users
   useEffect(() => {
     if (user && userData && userData.university) {
       setFilters(f => {
-        // Only update if different to avoid infinite loops
         if (f.university !== userData.university) {
           return { ...f, university: userData.university };
         }
@@ -1102,6 +1106,7 @@ export default function RidesPage() {
     }
   }, [user, userData, userData?.university]);
 
+  // Early return for loading state - after all hooks
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
@@ -1109,165 +1114,6 @@ export default function RidesPage() {
       </div>
     );
   }
-
-  // IMPORTANT: Allow BOTH logged-out and logged-in users to view rides
-  // Everyone can SEE all rides from both universities
-  // Logged-in users will have university filter applied below
-  // Logged-out users who try to book are redirected to /auth/select-university
-
-  // Show all rides but hide rides offered by the current user and filter out expired rides
-  const availableRides = rides?.filter((ride: any) => {
-    // Only filter out driver's own ride if user is logged in
-    if (user && ride.driverId === user.uid) {
-      console.debug(`[Find Ride] Filtering out own ride: ${ride.id}`);
-      return false;
-    }
-    
-    // CRITICAL: If user is logged in, ONLY show rides from their university
-    // If user is NOT logged in, show rides from ALL universities
-    if (user && userData?.university) {
-      if (ride.university !== userData.university) {
-        console.debug(`[Find Ride] Filtering out ride from different university: ${ride.id} (${ride.university})`);
-        return false;
-      }
-    }
-    
-    // Filter out rides where departure time has passed (SAFELY using getTimestampMs)
-    if (ride.departureTime) {
-      const departureMs = getTimestampMs(ride.departureTime);
-      const now = Date.now();
-      
-      if (departureMs === null) {
-        console.warn(`[Find Ride] Ride ${ride.id} has invalid departureTime, including anyway:`, ride.departureTime);
-        // Include rides with invalid timestamps - let server handle cleanup
-        return true;
-      }
-      
-      if (departureMs <= now) {
-        console.debug(`[Find Ride] Filtering out departed ride: ${ride.id} (departed ${Math.round((now - departureMs) / 1000 / 60)} min ago)`);
-        return false;
-      }
-    }
-    
-    console.debug(`[Find Ride] Including ride: ${ride.id} from ${ride.from} to ${ride.to}`);
-    return true;
-  }) ?? [];
-  
-  // Log available rides summary
-  useEffect(() => {
-    console.log('🔍 [Find Ride] Available Rides Summary:', {
-      totalRidesFromQuery: rides?.length || 0,
-      availableRidesAfterFilter: availableRides.length,
-      userLoggedIn: !!user,
-      userUniversity: userData?.university || 'N/A',
-      rides: availableRides.slice(0, 3).map(r => ({
-        id: r.id,
-        from: r.from,
-        to: r.to,
-        departureMs: getTimestampMs(r.departureTime),
-        status: r.status,
-        driverId: r.driverId
-      }))
-    });
-  }, [rides, availableRides, user, userData?.university]);
-
-  const toMeters = (latlng: { lat: number; lng: number }) => {
-    const latRad = (latlng.lat * Math.PI) / 180;
-    const x = latlng.lng * 111320 * Math.cos(latRad);
-    const y = latlng.lat * 110540;
-    return { x, y };
-  };
-  const pointToSegmentDistanceMeters = (p: {lat:number; lng:number}, a: {lat:number; lng:number}, b: {lat:number; lng:number}) => {
-    const P = toMeters({ lat: p.lat, lng: p.lng });
-    const A = toMeters({ lat: a.lat, lng: a.lng });
-    const B = toMeters({ lat: b.lat, lng: b.lng });
-    const vx = B.x - A.x;
-    const vy = B.y - A.y;
-    const l2 = vx * vx + vy * vy;
-    if (l2 === 0) return Math.hypot(P.x - A.x, P.y - A.y);
-    let t = ((P.x - A.x) * vx + (P.y - A.y) * vy) / l2;
-    t = Math.max(0, Math.min(1, t));
-    const projx = A.x + t * vx;
-    const projy = A.y + t * vy;
-    return Math.hypot(P.x - projx, P.y - projy);
-  };
-
-  const isPointNearRoute = (point: {lat:number; lng:number}, route: L.LatLngExpression[] | {lat:number; lng:number}[], tolerance = 0.003) => {
-    const tolMeters = tolerance * 111320;
-    for (let i = 0; i < route.length - 1; i++) {
-      const start = L.latLng(route[i] as LatLng);
-      const end = L.latLng(route[i + 1] as LatLng);
-      const d = pointToSegmentDistanceMeters(point as any, { lat: start.lat, lng: start.lng } as any, { lat: end.lat, lng: end.lng } as any);
-      if (d < tolMeters) return true;
-    }
-    return false;
-  };
-
-  const parsePointInput = (s: string) => {
-    const parts = s.split(',').map(p => p.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      const lat = Number(parts[0]);
-      const lng = Number(parts[1]);
-      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
-    }
-    return null;
-  };
-
-  const useMyLocation = () => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(pos => {
-      const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      setFilters(f => ({ ...f, pointInput: `${p.lat},${p.lng}`, point: p }));
-    });
-  };
-
-  const filteredRides = availableRides?.filter((ride: any) => {
-    if (!ride) return false;
-
-    // University filter - LOCKED for logged-in users, FREE for logged-out
-    if (filters.university && filters.university !== 'any' && filters.university !== '') {
-      // Logged-in user with locked university OR logged-out user filtering by university
-      if (ride.university !== filters.university) return false;
-    } else if (user && userData?.university) {
-      // Logged-in user with their university locked - should always have it set, but just in case
-      if (ride.university !== userData.university) return false;
-    }
-
-    // transport/gender/price filters (only applied when user sets them)
-    if (filters.transport !== 'any' && ride.transportMode !== filters.transport) return false;
-    // Filter by ride provider gender (show rides offered by selected gender)
-    if (filters.gender !== 'any' && !(ride.driverInfo?.gender === filters.gender)) return false;
-    const min = filters.minPrice ? Number(filters.minPrice) : null;
-    const max = filters.maxPrice ? Number(filters.maxPrice) : null;
-    if (min !== null && ride.price < min) return false;
-    if (max !== null && ride.price > max) return false;
-
-    // route proximity filter
-    const p = filters.point ?? (filters.pointInput ? parsePointInput(filters.pointInput) : null);
-    if (p) {
-      if (!(ride.route && ride.route.length && isPointNearRoute(p as any, ride.route as LatLngExpression[]))) return false;
-    }
-
-    // direction filter
-    if (filters.direction !== 'any' && userData?.university) {
-      const uni = getUniversityShortLabel(userData.university).toLowerCase();
-      const from = (ride.from || '').toLowerCase();
-      const to = (ride.to || '').toLowerCase();
-      if (filters.direction === 'toUniversity' && !to.includes(uni)) return false;
-      if (filters.direction === 'fromUniversity' && !from.includes(uni)) return false;
-    }
-
-    // Search query matching (only applied when user types in search)
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      const hay = (`${ride.from || ''} ${ride.to || ''} ${ride.driverInfo?.fullName || ''} ${String(ride.price || '')} ${ride.transportMode || ''}`).toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-
-    return true;
-  }) ?? [];
-
-  const clearFilters = () => setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && userData?.university) ? userData.university : '', direction: 'any' });
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground relative">

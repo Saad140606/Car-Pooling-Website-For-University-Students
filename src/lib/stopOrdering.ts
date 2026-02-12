@@ -178,7 +178,7 @@ export function orderStopsCorrectly(stops: Stop[]): Stop[] {
   // Create a working copy
   const workingStops = stops.map(s => ({ ...s }));
 
-  // Find START stop (type='start' OR lowest distance)
+  // CRITICAL: Find START stop - STRICTLY by type first, fallback to distance
   let startStop = workingStops.find(s => s.type === 'start');
   if (!startStop) {
     // No explicit start - find stop with lowest distance
@@ -187,15 +187,23 @@ export function orderStopsCorrectly(stops: Stop[]): Stop[] {
     startStop.type = 'start';
   }
 
-  // Find END stop (type='end' OR highest distance)
+  // CRITICAL FIX: Find END stop - STRICTLY preserve any stop with type='end'
+  // The END stop (university) must NEVER be reassigned based on distance alone
   let endStop = workingStops.find(s => s.type === 'end' && s.id !== startStop!.id);
   if (!endStop) {
-    // No explicit end - find stop with highest distance
+    // FALLBACK ONLY: No explicit END stop found - use highest distance
+    // This should rarely happen in production (only during initial ride creation)
     const sorted = [...workingStops].sort((a, b) => (b.distanceFromStart || 0) - (a.distanceFromStart || 0));
     endStop = sorted.find(s => s.id !== startStop!.id);
     if (endStop) {
       endStop.type = 'end';
     }
+  }
+  
+  // VALIDATION: Ensure END stop type is preserved throughout
+  // This prevents any stop from accidentally becoming the END based on distance
+  if (endStop) {
+    endStop.type = 'end';
   }
 
   // Get intermediate stops (everything except START and END)

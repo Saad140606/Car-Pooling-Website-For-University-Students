@@ -1508,8 +1508,12 @@ export default function CreateRidePage() {
   const searchTokenTimeRef = useRef<number>(0);
   const searchNominatim = async (q: string, limit: number) => {
     if (q.length < 1) return []; // Allow even single character for instant suggestions
-    if (!user) return [];
+    if (!user) {
+      console.warn('[SEARCH] No user authenticated');
+      return [];
+    }
     const queryText = q.trim().toLowerCase() === 'all' ? 'karachi' : q;
+    console.log('[SEARCH] Searching Nominatim for:', queryText);
     try {
       // Cache the token for 30 minutes (Firebase tokens are valid for 1 hour) - aggressive caching for speed
       const now = Date.now();
@@ -1542,10 +1546,11 @@ export default function CreateRidePage() {
         priority: 'high' as RequestInit['priority']
       });
       if (!res.ok) {
-        console.warn('Nominatim search proxy returned non-OK', { status: res.status });
+        console.warn('[SEARCH] Nominatim search proxy returned non-OK', { status: res.status });
         return [];
       }
       const results = await res.json();
+      console.log('[SEARCH] Nominatim returned:', Array.isArray(results) ? results.length : 0, 'results');
       return Array.isArray(results) ? results : [];
     } catch (e) {
       console.error('Nominatim search failed', e);
@@ -1554,24 +1559,38 @@ export default function CreateRidePage() {
   };
 
   useEffect(() => {
-    if (query.text.length < 1) {
+    if (query.text.length < 3) {
       setSuggestions([]);
+      setSearchLoading(false);
       return;
     }
+    
+    if (!user) {
+      console.log('[SEARCH] No user - skipping search');
+      setSuggestions([]);
+      setSearchLoading(false);
+      return;
+    }
+    
     // Reset limit when new search starts
     setSuggestLimit(20);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     
+    console.log('[SEARCH] Debouncing search for:', query.field, query.text);
     setSearchLoading(true);
-    // NO DEBOUNCE - search instantly when user types 1+ characters for truly instant suggestions
-    (async () => {
+    
+    // DEBOUNCE: Wait 600ms after user stops typing before searching
+    // This prevents too many API calls and shows results only when user has finished typing
+    searchTimeoutRef.current = window.setTimeout(async () => {
+      console.log('[SEARCH] Starting search after debounce for:', query.field, query.text);
       const results = await searchNominatim(query.text, suggestLimit);
+      console.log('[SEARCH] Got results:', results.length, 'for field:', query.field);
       setSuggestions(results);
       setSearchLoading(false);
-    })();
+    }, 600);
 
     return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
-  }, [query, suggestLimit]);
+  }, [query.text, query.field, suggestLimit, user]);
 
   // Recalculate pricing whenever transportMode, route distance/duration or departure time changes
   useEffect(() => {
@@ -1608,6 +1627,7 @@ export default function CreateRidePage() {
   }, [transportMode, distanceKm, durationMin, departureTimeValue]);
   
   const handleSelectSuggestion = (field: 'from' | 'to', place: any) => {
+    console.log('[SELECT] Suggestion selected for field:', field, place);
     // Build a clean, readable place name from address parts
     const a = place.address || {};
     const placeName = a.amenity || a.building || a.shop || a.office || a.tourism || a.leisure;
@@ -1643,6 +1663,7 @@ export default function CreateRidePage() {
     const lat = parseFloat(place.lat);
     const lng = parseFloat(place.lon);
     
+    console.log('[SELECT] Setting field value:', { field, name, lat, lng });
     form.setValue(field, name, { shouldValidate: true, shouldDirty: true });
     if (field === 'from') {
         setFromCoords({ lat, lng, name });
@@ -2045,10 +2066,21 @@ export default function CreateRidePage() {
   };
 
   const renderSuggestionsFor = (field: 'from' | 'to') => {
-    if (query.field !== field || suggestions.length === 0) return null;
+    console.log('[RENDER] renderSuggestionsFor called:', { field, queryField: query.field, suggestionsCount: suggestions.length });
+    if (query.field !== field) {
+      console.log('[RENDER] Field mismatch - not rendering');
+      return null;
+    }
+    if (suggestions.length === 0) {
+      console.log('[RENDER] No suggestions - not rendering');
+      return null;
+    }
+    console.log('[RENDER] Rendering suggestions dropdown for:', field);
     return (
-      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-slate-800/80 backdrop-blur-md rounded-md mt-1 z-[10050] max-h-60 overflow-auto shadow-lg">
-        <div className="px-3 py-2 text-xs text-slate-400">Suggestions</div>
+      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-card border-2 border-primary/30 rounded-lg mt-2 z-[10050] max-h-72 overflow-auto shadow-xl" style={{ position: 'absolute' }}>
+        <div className="px-3 py-2 text-xs font-semibold text-primary bg-primary/5 border-b border-primary/10">
+          📍 {suggestions.length} Location{suggestions.length !== 1 ? 's' : ''} Found
+        </div>
             {suggestions.map((s, idx) => {
                 // Build a clean display name from address parts
                 const a = s.address || {};
@@ -2084,23 +2116,29 @@ export default function CreateRidePage() {
                   key={s.place_id || `${s.lat}-${s.lon}-${idx}`}
                   role="option"
                   aria-selected={false}
-                  className="w-full text-left flex flex-col p-3 hover:bg-muted cursor-pointer"
+                  className="w-full text-left flex items-start gap-2 p-3 hover:bg-primary/10 hover:border-l-4 hover:border-primary cursor-pointer transition-all border-b border-border/50 last:border-b-0"
                   onMouseDown={() => handleSelectSuggestion(field, s)}
                 >
-                    <div className="text-sm font-medium truncate">{primaryName || 'Unknown Location'}</div>
-                    {secondaryParts.length > 0 && (
-                      <div className="text-xs text-muted-foreground truncate">{secondaryParts.join(', ')}</div>
-                    )}
+                    <MapPin className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold truncate text-foreground">{primaryName || 'Unknown Location'}</div>
+                      {secondaryParts.length > 0 && (
+                        <div className="text-xs text-muted-foreground truncate mt-0.5">{secondaryParts.join(' • ')}</div>
+                      )}
+                    </div>
                 </button>
                 );
             })}
         {suggestions.length >= suggestLimit && (
-          <div className="p-2 bg-slate-800/50 sticky bottom-0">
-            <button type="button" className="text-xs text-accent hover:underline" onMouseDown={() => setSuggestLimit((v) => Math.min(200, v + 30))}>Show more results</button>
+          <div className="p-3 bg-primary/5 border-t border-primary/10 sticky bottom-0">
+            <button type="button" className="text-sm text-primary font-medium hover:underline flex items-center gap-1" onMouseDown={() => setSuggestLimit((v) => Math.min(200, v + 30))}>
+              <span>Load more results</span>
+              <span className="text-xs">({suggestions.length}+ available)</span>
+            </button>
           </div>
         )}
         {suggestions.length === 0 && (
-          <div className="p-3 text-sm text-muted-foreground">No nearby results. Try a different query.</div>
+          <div className="p-4 text-sm text-muted-foreground text-center">No locations found. Try a different search term.</div>
         )}
       </div>
     );
@@ -2137,13 +2175,13 @@ export default function CreateRidePage() {
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 relative">
                 <FormField control={form.control} name="from" render={({ field }: any) => (
-                    <FormItem className="relative">
+                    <FormItem className="relative z-[100]" style={{ overflow: 'visible' }}>
                         <FormLabel>From</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Search for starting point" {...field} value={uniAuto === 'fromUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'fromUni'} className={uniAuto === 'fromUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              <Input placeholder="Type to search locations..." {...field} value={uniAuto === 'fromUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'fromUni'} className={uniAuto === 'fromUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} onFocus={() => { if (field.value && uniAuto !== 'fromUni') setQuery({ field: 'from', text: field.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 300)} autoComplete="off" />
                               {searchLoading && query.field === 'from' && uniAuto !== 'fromUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
                               {uniAuto === 'fromUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
@@ -2157,11 +2195,11 @@ export default function CreateRidePage() {
                 )}/>
 
                 <FormField control={form.control} name="to" render={({ field }: any) => (
-                    <FormItem className="relative">
+                    <FormItem className="relative z-[100]" style={{ overflow: 'visible' }}>
                         <FormLabel>To</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Search for destination" {...field} value={uniAuto === 'toUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'toUni'} className={uniAuto === 'toUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} onBlur={() => setTimeout(() => setSuggestions([]), 200)} autoComplete="off" />
+                              <Input placeholder="Type to search locations..." {...field} value={uniAuto === 'toUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'toUni'} className={uniAuto === 'toUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} onFocus={() => { if (field.value && uniAuto !== 'toUni') setQuery({ field: 'to', text: field.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 300)} autoComplete="off" />
                               {searchLoading && query.field === 'to' && uniAuto !== 'toUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
                               {uniAuto === 'toUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>

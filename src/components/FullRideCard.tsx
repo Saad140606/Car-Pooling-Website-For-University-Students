@@ -74,6 +74,8 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
   const genderMismatch = ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed;
   const existingRequestStatus = existingRequest ? existingRequest.status : null;
   const bookingStatus = existingBooking ? existingBooking.status : null;
+  // CRITICAL FIX: Define active statuses whitelist (not blacklist)
+  const activeStatuses = ['pending', 'PENDING', 'accepted', 'ACCEPTED', 'confirmed', 'CONFIRMED', 'ongoing', 'ONGOING'];
   // Only treat accepted when a booking exists and is accepted. Pending requests should show pending.
   const isAcceptedBooking = bookingStatus === 'accepted' || bookingStatus === 'ACCEPTED';
   const isConfirmedBooking = bookingStatus === 'CONFIRMED' || bookingStatus === 'confirmed';
@@ -237,7 +239,8 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
       const reqRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', requestId);
       const reqSnap = await getDoc(reqRef);
       const reqData = reqSnap.exists() ? (reqSnap.data() as any) : null;
-      if (reqData && reqData.status && reqData.status !== 'rejected') {
+      // CRITICAL FIX: Only block on ACTIVE statuses, not completed/rejected/cancelled
+      if (reqData && reqData.status && activeStatuses.includes(reqData.status)) {
         toast({ variant: 'destructive', title: 'Already Requested', description: 'You have already requested this ride.' });
         return false;
       }
@@ -245,7 +248,8 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
       const bookingRef = doc(firestore, `universities/${userData.university}/bookings`, requestId);
       const bSnap = await getDoc(bookingRef);
       const bData = bSnap.exists() ? (bSnap.data() as any) : null;
-      if (bData && bData.status && bData.status !== 'rejected' && bData.status !== 'cancelled') {
+      // CRITICAL FIX: Only block on ACTIVE statuses, not completed/rejected/cancelled
+      if (bData && bData.status && activeStatuses.includes(bData.status)) {
         toast({ variant: 'destructive', title: 'Already Requested', description: 'You have already requested this ride.' });
         return false;
       }
@@ -480,7 +484,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
         university={ride.university}
         hideUniversity={userData?.university === ride.university}
         stops={ride.stops}
-        driverVerified={ride.driverInfo?.isVerified}
+        driverVerified={ride.driverInfo?.isVerified || ride.driverInfo?.universityEmailVerified || false}
         statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
         onViewRoute={() => setOpenView(true)}
         onViewStops={() => setOpenStops(true)}

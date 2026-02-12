@@ -50,6 +50,10 @@ const truncateWords = (s?: string, limit = 30) => {
   return s.slice(0, limit) + '...';
 };
 
+// CRITICAL FIX: Active booking statuses that block new bookings
+// Only these statuses are considered "active" - completed/expired/rejected/cancelled don't block
+const ACTIVE_BOOKING_STATUSES = ['pending', 'PENDING', 'accepted', 'ACCEPTED', 'confirmed', 'CONFIRMED', 'ongoing', 'ONGOING'];
+
 function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ride: RideType, onBook: (pickupPoint: LatLng) => Promise<boolean>, children: React.ReactNode, userData?: any, alreadyBooked?: boolean }) {
   const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
   const [loading, setLoading] = useState(false);
@@ -437,7 +441,8 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
   }, [firestore, user, userData, ride.id]);
 
   const existingRequestStatus = existingBooking ? existingBooking.status : null;
-  const hasBlockingRequest = existingBooking ? (existingRequestStatus && existingRequestStatus !== 'rejected') : false;
+  // CRITICAL FIX: Only block on ACTIVE statuses (not completed/rejected/cancelled)
+  const hasBlockingRequest = existingBooking ? ACTIVE_BOOKING_STATUSES.includes(existingRequestStatus) : false;
 
   const handleRequestSeat = async (pickupPoint: LatLng) => {
     // CRITICAL: Logged-out users are redirected to university selection
@@ -890,9 +895,12 @@ function RidesPageInner() {
   const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQuery);
 
   // myBookingsQuery hook
+  // CRITICAL FIX: Only fetch ACTIVE bookings at query level
+  // This prevents completed/expired/rejected bookings from blocking new bookings
   const myBookingsQuery = firestore && userData?.university ? query(
     safeCollection(firestore, 'universities', userData.university, 'bookings'),
-    where('passengerId', '==', user?.uid || '')
+    where('passengerId', '==', user?.uid || ''),
+    where('status', 'in', ACTIVE_BOOKING_STATUSES)
   ) : null;
   const { data: myBookings } = useBookingsCollection(myBookingsQuery);
 
@@ -1058,7 +1066,8 @@ function RidesPageInner() {
   // === END OF ALL HOOK DEFINITIONS ===
   
   const ridesLoading = fastRidesLoading || nedRidesLoading || karachiRidesLoading;
-  const hasActiveBooking = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected'));
+  // FIX: Only consider bookings with ACTIVE statuses (already filtered at query level)
+  const hasActiveBooking = (myBookings || []).some((b: any) => b && b.status);
   const isLoading = userLoading || ridesLoading;
 
   // Query error logging
@@ -1358,7 +1367,10 @@ function RidesPageInner() {
       ) : filteredRides && filteredRides.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 items-stretch">
           {filteredRides.map((ride: any) => {
-            const hasActiveBookingForOther = (myBookings || []).some((b: any) => (b.status && b.status !== 'cancelled' && b.status !== 'rejected' && b.rideId !== ride.id));
+            // FIX: Only check for ACTIVE bookings on OTHER rides (already filtered at query level)
+            const hasActiveBookingForOther = (myBookings || []).some((b: any) => (
+              b && b.status && b.rideId !== ride.id
+            ));
             const pendingBookingId = searchParams ? searchParams.get('pendingBooking') : null;
             const openBooking = pendingBookingId && pendingBookingId === ride.id;
             return (

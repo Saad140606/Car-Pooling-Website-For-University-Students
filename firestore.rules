@@ -208,25 +208,65 @@ service cloud.firestore {
 
     // Calls collection: Real-time calling system
     match /calls/{callId} {
-      // Allow create for initiating a call
+      // Allow create for initiating a call (supports legacy caller/callee fields)
       allow create: if isAuth()
-        && request.resource.data.callerId == request.auth.uid
-        && request.resource.data.receiverId is string
-        && request.resource.data.callType in ['audio', 'video']
+        && (
+          (request.resource.data.callerId is string && request.resource.data.callerId == request.auth.uid)
+          || (request.resource.data.caller is string && request.resource.data.caller == request.auth.uid)
+        )
+        && (
+          (request.resource.data.receiverId is string)
+          || (request.resource.data.callee is string)
+        )
+        && (
+          (request.resource.data.callType in ['audio', 'video'])
+          || (request.resource.data.mode in ['audio', 'video'])
+        )
         && request.resource.data.status in ['ringing', 'connected', 'rejected', 'missed', 'ended']
-        && request.resource.data.createdAt is timestamp
-        && request.resource.data.candidates is list;
+        && (request.resource.data.createdAt is timestamp || request.resource.data.createdAt is number)
+        && (!('candidates' in request.resource.data) || request.resource.data.candidates is list);
       
       // Allow get/update for participants only
       allow get, update: if isAuth()
-        && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+        && (
+          (resource.data.callerId == request.auth.uid)
+          || (resource.data.receiverId == request.auth.uid)
+          || (resource.data.caller == request.auth.uid)
+          || (resource.data.callee == request.auth.uid)
+        );
       
       // Allow delete only for participants
       allow delete: if isAuth()
-        && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+        && (
+          (resource.data.callerId == request.auth.uid)
+          || (resource.data.receiverId == request.auth.uid)
+          || (resource.data.caller == request.auth.uid)
+          || (resource.data.callee == request.auth.uid)
+        );
       
       // No listing calls
       allow list: if false;
+
+      // ICE candidates subcollections
+      match /callerCandidates/{candidateId} {
+        allow create, get, list, delete: if isAuth()
+          && (
+            (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callerId == request.auth.uid)
+            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.receiverId == request.auth.uid)
+            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid)
+            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid)
+          );
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow create, get, list, delete: if isAuth()
+          && (
+            (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callerId == request.auth.uid)
+            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.receiverId == request.auth.uid)
+            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid)
+            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid)
+          );
+      }
     }
 
     // Admin fallback: allow read access to any document

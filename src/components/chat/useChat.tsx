@@ -105,6 +105,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
                 const bData = bSnap.data() as any;
                 // passengerId on booking indicates the passenger; provider/driver is present on ride or chat
                 if (bData?.passengerId && bData.passengerId === user.uid) allowedViaBooking = true;
+                if (!allowedViaBooking && bData?.driverId && bData.driverId === user.uid) allowedViaBooking = true;
                 // also allow if chat explicitly names providerId and it matches the current user
                 if (!allowedViaBooking && data?.providerId && data.providerId === user.uid) allowedViaBooking = true;
               }

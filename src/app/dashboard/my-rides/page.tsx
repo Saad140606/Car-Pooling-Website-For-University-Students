@@ -151,11 +151,6 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
         
         if (normalizedStatus && normalizedStatus !== 'pending') {
           console.log('[handleBooking] Booking already processed with status:', freshBooking.status);
-          toast({
-            variant: 'destructive',
-            title: 'Request Already Processed',
-            description: 'This request has already been handled.'
-          });
           return;
         }
       } else {
@@ -242,6 +237,8 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             createdAt: serverTimestamp(),
             rideId: rideId,
             chatId: chatId,
+            driverId: rideData.driverId || requestData.driverId || user?.uid,
+            passengerId: requestData.passengerId,
             // Store complete ride details so my-bookings can display them
             ride: {
               id: rideData.id || rideId,
@@ -256,9 +253,9 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             // Store driver details for chat display
             driverDetails: {
               fullName: rideData.driverInfo?.fullName || 'Driver',
-              universityEmailVerified: rideData.driverInfo?.universityEmailVerified,
-              idVerified: rideData.driverInfo?.idVerified,
-              isVerified: rideData.driverInfo?.isVerified
+              universityEmailVerified: !!rideData.driverInfo?.universityEmailVerified,
+              idVerified: !!rideData.driverInfo?.idVerified,
+              isVerified: !!rideData.driverInfo?.isVerified
             }
           });
         });

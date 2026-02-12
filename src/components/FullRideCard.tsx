@@ -18,7 +18,7 @@ function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   return null;
 }
 
-export default function FullRideCard({ ride, user, userData, firestore, hasActiveBooking, myBookings, openBookingOnMount, selectedUniversity }: { ride: any; user: any; userData: any; firestore: any; hasActiveBooking?: boolean; myBookings?: any[]; openBookingOnMount?: boolean; selectedUniversity?: string }) {
+export default function FullRideCard({ ride, user, userData, firestore, myBookings, openBookingOnMount, selectedUniversity }: { ride: any; user: any; userData: any; firestore: any; myBookings?: any[]; openBookingOnMount?: boolean; selectedUniversity?: string }) {
   const router = useRouter();
   const [openView, setOpenView] = useState(false);
   const [openBook, setOpenBook] = useState(false);
@@ -89,7 +89,7 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
     : isConfirmedBooking ? `You have already confirmed this ride`
     : isAcceptedBooking ? `You already requested this ride (accepted)`
     : isPendingRequest ? `You already requested this ride (pending)`
-    : (hasActiveBooking ? 'You already have an active booking on another ride' : undefined);
+    : undefined;
 
   // Smart countdown for accepted request confirmation window
   // Respects dynamic timer based on pickup time (short/medium/none)
@@ -256,10 +256,6 @@ export default function FullRideCard({ ride, user, userData, firestore, hasActiv
     } catch (e) {
       // If the re-check fails, fall back to local checks below
       console.debug('Failed to re-check existing request/booking:', e);
-    }
-    if (hasActiveBooking) {
-      toast({ variant: 'destructive', title: 'Already have booking', description: 'You already have an active booking and cannot request another.' });
-      return false;
     }
     if (genderMismatch) {
       toast({ variant: 'destructive', title: 'Booking Not Allowed', description: `This ride is reserved for ${ride.genderAllowed} riders.` });

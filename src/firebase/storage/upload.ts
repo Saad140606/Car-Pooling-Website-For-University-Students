@@ -1,12 +1,31 @@
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, connectStorageEmulator } from 'firebase/storage';
 import { getApps } from 'firebase/app';
 
+let emulatorConnected = false;
+
 export function uploadFile(file: File, path: string, onProgress?: (p: number) => void) {
   const apps = getApps();
   if (!apps.length) {
     throw new Error('Firebase app not initialized');
   }
   const storage = getStorage(apps[0]);
+
+  const emulatorHost = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST;
+  const shouldUseLocalEmulator = typeof window !== 'undefined'
+    && window.location.hostname === 'localhost'
+    && process.env.NODE_ENV !== 'production';
+
+  if (!emulatorConnected && (emulatorHost || shouldUseLocalEmulator)) {
+    try {
+      const hostPort = emulatorHost || 'localhost:9199';
+      const [host, portRaw] = hostPort.split(':');
+      const port = Number(portRaw) || 9199;
+      connectStorageEmulator(storage, host, port);
+      emulatorConnected = true;
+    } catch (e) {
+      console.warn('[Firebase Storage] Failed to connect to emulator:', e);
+    }
+  }
   
   // Increase max operational timeout to 120 seconds (default is 60)
   // This helps with slower connections or larger files

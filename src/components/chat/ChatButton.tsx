@@ -2,13 +2,13 @@
 
 import React, { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import ChatRoom from './ChatRoom';
 import NotificationBadge from '@/components/NotificationBadge';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { MessageCircle } from 'lucide-react';
 
-export default function ChatButton({ chatId, university, label = 'Chat', disabled = false }: { chatId: string, university: string, label?: string, disabled?: boolean }) {
+export default function ChatButton({ chatId, university, label = 'Chat', disabled = false, className = '' }: { chatId: string, university: string, label?: string, disabled?: boolean, className?: string }) {
   const { getUnreadForChat, markChatAsRead } = useNotifications();
   const [open, setOpen] = React.useState(false);
   const unreadCount = getUnreadForChat(chatId);
@@ -23,7 +23,7 @@ export default function ChatButton({ chatId, university, label = 'Chat', disable
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button disabled={disabled} className="bg-primary text-primary-foreground relative">
+        <Button disabled={disabled} className={`bg-primary text-primary-foreground relative ${className}`.trim()}>
           <MessageCircle className="h-4 w-4 mr-2" />
           {label}
           {unreadCount > 0 && <NotificationBadge count={unreadCount} dot={unreadCount === 1} />}
@@ -32,6 +32,7 @@ export default function ChatButton({ chatId, university, label = 'Chat', disable
       <DialogContent className="max-w-2xl w-full">
         <DialogHeader>
           <DialogTitle className="sr-only">Chat</DialogTitle>
+          <DialogDescription className="sr-only">Chat conversation</DialogDescription>
         </DialogHeader>
         <ChatRoom chatId={chatId} university={university} />
       </DialogContent>

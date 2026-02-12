@@ -50,8 +50,8 @@ const truncateWords = (s?: string, limit = 30) => {
   return s.slice(0, limit) + '...';
 };
 
-// CRITICAL FIX: Active booking statuses that block new bookings
-// Only these statuses are considered "active" - completed/expired/rejected/cancelled don't block
+// Active booking statuses used for queries and duplicate checks
+// Only these statuses are considered "active" - completed/expired/rejected/cancelled are excluded
 const ACTIVE_BOOKING_STATUSES = ['pending', 'PENDING', 'accepted', 'ACCEPTED', 'confirmed', 'CONFIRMED', 'ongoing', 'ONGOING'];
 
 function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ride: RideType, onBook: (pickupPoint: LatLng) => Promise<boolean>, children: React.ReactNode, userData?: any, alreadyBooked?: boolean }) {
@@ -1066,8 +1066,6 @@ function RidesPageInner() {
   // === END OF ALL HOOK DEFINITIONS ===
   
   const ridesLoading = fastRidesLoading || nedRidesLoading || karachiRidesLoading;
-  // FIX: Only consider bookings with ACTIVE statuses (already filtered at query level)
-  const hasActiveBooking = (myBookings || []).some((b: any) => b && b.status);
   const isLoading = userLoading || ridesLoading;
 
   // Query error logging
@@ -1367,14 +1365,10 @@ function RidesPageInner() {
       ) : filteredRides && filteredRides.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 items-stretch">
           {filteredRides.map((ride: any) => {
-            // FIX: Only check for ACTIVE bookings on OTHER rides (already filtered at query level)
-            const hasActiveBookingForOther = (myBookings || []).some((b: any) => (
-              b && b.status && b.rideId !== ride.id
-            ));
             const pendingBookingId = searchParams ? searchParams.get('pendingBooking') : null;
             const openBooking = pendingBookingId && pendingBookingId === ride.id;
             return (
-              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} hasActiveBooking={hasActiveBookingForOther} myBookings={myBookings} openBookingOnMount={openBooking} />
+              <FullRideCard key={ride.id} ride={ride} user={user} userData={userData} firestore={firestore} myBookings={myBookings} openBookingOnMount={openBooking} />
             );
           })}
         </div>

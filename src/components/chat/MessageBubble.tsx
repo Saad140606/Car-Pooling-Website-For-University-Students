@@ -73,7 +73,7 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
   };
 
   const isAudioType = (type: string): boolean => {
-    return type === 'audio' || (message.mediaUrl && 
+    return type === 'audio' || type === 'voice' || (message.mediaUrl && 
       /\.(mp3|wav|ogg|webm|m4a|aac|flac)$/i.test(message.mediaUrl));
   };
 

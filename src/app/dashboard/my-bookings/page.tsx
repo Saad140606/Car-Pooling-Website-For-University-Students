@@ -16,7 +16,7 @@ import { isUserVerified } from '@/lib/verificationUtils';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { MapPin, Clock, Users, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { MapPin, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { ErrorState, EmptyState, LoadingState } from '@/components/StateComponents';
@@ -57,10 +57,10 @@ function formatDate(ts: any, defaultValue = '') {
 interface BookingCardProps {
   booking: BookingType | null | undefined;
   university: string | null | undefined;
-  onRetry?: () => void;
+  cancellationRate?: number;
 }
 
-function BookingCard({ booking, university, onRetry }: BookingCardProps) {
+function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardProps) {
   // Safety checks
   if (!booking || !booking.id || !university) {
     return null;
@@ -319,21 +319,25 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
       return;
     }
 
-    if (!window.confirm('Are you sure you want to cancel this confirmed ride? This may incur a cancellation penalty.')) {
+    if (!window.confirm(`Are you sure you want to cancel this booking? This may affect your cancellation rate (${cancellationRate}%).`)) {
       return;
     }
 
     setCancelling(true);
     try {
+      const idToken = await user.getIdToken();
       const res = await fetch('/api/requests/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           university,
           rideId: ride.id,
           requestId: booking.id,
           cancelledBy: user.uid,
-          reason: 'Passenger cancelled confirmed ride'
+          reason: 'Passenger cancelled booking'
         })
       });
 
@@ -525,7 +529,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
         )}
       </CardContent>
 
-      <CardFooter className="flex gap-2 pt-3">
+      <CardFooter className="flex flex-col gap-2 pt-3">
         {/* ACCEPTED STATUS - Show Confirm button */}
         {(booking.status === 'accepted' || localBookingStatus === 'accepted') && !confirmationProcessed && (
           <>
@@ -533,20 +537,42 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
               onClick={handleConfirmRide}
               disabled={confirming || confirmationProcessed || rideStatus !== 'available'}
               size="sm"
-              className="flex-1"
+              className="w-full h-10 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 shadow-lg shadow-emerald-500/20"
             >
               {confirming ? 'Confirming...' : 'Confirm Ride'}
             </Button>
-            {onRetry && (
+            <div className="grid grid-cols-2 gap-2">
+              {chatId && (
+                <ChatButton chatId={chatId} university={university} label="Chat" className="h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
+              )}
               <Button
-                onClick={onRetry}
-                variant="outline"
+                onClick={handleCancelRide}
+                disabled={cancelling}
+                variant="destructive"
                 size="sm"
+                className="h-9"
               >
-                <RefreshCw className="h-4 w-4" />
+                {cancelling ? 'Cancelling...' : 'Cancel Ride'}
               </Button>
-            )}
+            </div>
           </>
+        )}
+
+        {booking.status === 'pending' && !confirmationProcessed && (
+          <div className="grid grid-cols-2 gap-2 w-full">
+            {chatId && (
+              <ChatButton chatId={chatId} university={university} label="Chat" className="h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
+            )}
+            <Button
+              onClick={handleCancelRide}
+              disabled={cancelling}
+              variant="destructive"
+              size="sm"
+              className="h-9"
+            >
+              {cancelling ? 'Cancelling...' : 'Cancel Request'}
+            </Button>
+          </div>
         )}
 
         {/* CONFIRMED STATUS - Show Confirmed badge and Cancel button */}
@@ -558,7 +584,7 @@ function BookingCard({ booking, university, onRetry }: BookingCardProps) {
             </div>
             <div className="flex gap-2">
               {chatId && (
-                <ChatButton chatId={chatId} university={university} label="Chat" />
+                <ChatButton chatId={chatId} university={university} label="Chat" className="flex-1 h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
               )}
               <Button
                 onClick={handleCancelRide}
@@ -613,6 +639,12 @@ export default function MyBookingsPage() {
 
   // Safe bookings array
   const bookings = toArray(bookingsData).filter((b) => b && b.id);
+  const cancelledCount = bookings.filter(
+    (b) => b.status === 'cancelled' || b.status === 'CANCELLED'
+  ).length;
+  const cancellationRate = bookings.length > 0
+    ? Math.round((cancelledCount / bookings.length) * 100)
+    : 0;
 
   const isLoading = userLoading || loading;
   const hasError = !!queryError || !!pageError;
@@ -718,7 +750,7 @@ export default function MyBookingsPage() {
               key={`${booking.id}-${retryKey}`}
               booking={booking}
               university={userData?.university}
-              onRetry={handleRetry}
+              cancellationRate={cancellationRate}
             />
           ))}
         </div>

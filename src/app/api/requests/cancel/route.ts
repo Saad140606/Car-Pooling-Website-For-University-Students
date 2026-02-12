@@ -62,41 +62,47 @@ export async function POST(req: NextRequest) {
     const sanitizedReason = reason ? sanitizeString(reason) : 'No reason provided';
 
     const db = adminDb;
-    const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
     const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
+    const bookingRef = db.doc(`universities/${validUniversity}/bookings/${requestId}`);
 
     const result = await db.runTransaction(async (tx) => {
       const reqSnap = await tx.get(requestRef);
-      if (!reqSnap.exists) {
+      const bookingSnap = reqSnap.exists ? null : await tx.get(bookingRef);
+      if (!reqSnap.exists && !bookingSnap?.exists) {
         throw new Error('Request not found');
       }
-      const request = reqSnap.data() as any;
+      const request = reqSnap.exists ? (reqSnap.data() as any) : null;
+      const booking = bookingSnap?.exists ? (bookingSnap.data() as any) : null;
+      const effective = request || booking;
 
       // ===== AUTHORIZATION: Verify authenticated user is passenger or driver =====
-      const isPassenger = request.passengerId === authenticatedUserId;
-      const isDriver = request.driverId === authenticatedUserId;
+      const isPassenger = effective.passengerId === authenticatedUserId;
+      const isDriver = effective.driverId === authenticatedUserId;
       
       if (!isPassenger && !isDriver) {
         throw new Error('FORBIDDEN: Only passenger or driver can cancel this request');
       }
 
-      const status = request.status;
-      if (!['PENDING', 'ACCEPTED', 'CONFIRMED'].includes(status)) {
+      const status = effective.status;
+      const normalizedStatus = String(status || '').toUpperCase();
+      if (!['PENDING', 'ACCEPTED', 'CONFIRMED'].includes(normalizedStatus)) {
         throw new Error('Cannot cancel request with current status');
       }
 
       const now = admin.firestore.Timestamp.now();
-      const isLateCancellation = status === 'CONFIRMED';
+      const isLateCancellation = normalizedStatus === 'CONFIRMED';
       const cancellerRole = isPassenger ? 'passenger' : 'driver';
 
-      // Update request
-      tx.update(requestRef, {
-        status: 'CANCELLED',
-        cancelledAt: now,
-        cancelledBy: authenticatedUserId,
-        cancellationReason: sanitizedReason,
-        isLateCancellation,
-      });
+      // Update request if it exists
+      if (request) {
+        tx.update(requestRef, {
+          status: 'CANCELLED',
+          cancelledAt: now,
+          cancelledBy: authenticatedUserId,
+          cancellationReason: sanitizedReason,
+          isLateCancellation,
+        });
+      }
 
       // Track late cancellations for penalties
       if (isLateCancellation) {
@@ -123,15 +129,29 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Update booking document if it exists (for analytics and user history)
+      const bookingSnap2 = bookingSnap ?? await tx.get(bookingRef);
+      if (bookingSnap2.exists) {
+        tx.update(bookingRef, {
+          status: 'CANCELLED',
+          cancelledAt: now,
+          cancelledBy: authenticatedUserId,
+          cancellationReason: sanitizedReason,
+          isLateCancellation,
+        });
+      }
+
       // Release seats based on status
+      const effectiveRideId = effective.rideId || rideId;
+      const rideRef = db.doc(`universities/${validUniversity}/rides/${effectiveRideId}`);
       const rideSnap = await tx.get(rideRef);
       if (rideSnap.exists) {
         const ride = rideSnap.data() as any;
-        if (status === 'ACCEPTED') {
+        if (normalizedStatus === 'ACCEPTED') {
           // Release reserved seat
           const reserved = (ride.reservedSeats ?? 0) as number;
           tx.update(rideRef, { reservedSeats: Math.max(0, reserved - 1) });
-        } else if (status === 'CONFIRMED') {
+        } else if (normalizedStatus === 'CONFIRMED') {
           // Return seat to available pool
           const available = (ride.availableSeats ?? 0) as number;
           tx.update(rideRef, { availableSeats: available + 1 });
@@ -141,8 +161,8 @@ export async function POST(req: NextRequest) {
       return { 
         cancellerRole, 
         isLateCancellation, 
-        passengerId: request.passengerId, 
-        driverId: request.driverId 
+        passengerId: effective.passengerId, 
+        driverId: effective.driverId 
       };
     });
 

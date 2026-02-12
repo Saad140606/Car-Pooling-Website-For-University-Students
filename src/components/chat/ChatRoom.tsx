@@ -5,7 +5,7 @@ import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
 import ChatHeader from './ChatHeader';
 import { useFirestore, useUser } from '@/firebase';
-import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function ChatRoom({ chatId, university }: { chatId: string, university: string }) {
   const { messages, loading, sendMessage, setTyping, accessible } = useChat(chatId, university);
@@ -138,7 +138,9 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       const data = snap.data();
       // If there's an offer and we're not already in a call, show incoming ringing UI
       if (data.offer && !inCall) {
-        setIncomingCall({ caller: data.caller, mode: data.mode || 'audio' });
+        const incomingCaller = data.callerId || data.caller;
+        const incomingMode = data.callType || data.mode || 'audio';
+        setIncomingCall({ caller: incomingCaller, mode: incomingMode });
         // play ringtone & vibrate
         playRingtone();
       }
@@ -402,15 +404,27 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           }
         } catch (_) {}
         
+        if (!calleeId) {
+          setCallError('Unable to start call: chat participant not found');
+          setInCall(false);
+          setIsConnecting(false);
+          await cleanupCall();
+          return;
+        }
+
         console.debug('[ChatRoom] Writing call document...', { caller: user.uid, mode, hasCallee: !!calleeId });
-        
+
         await setDoc(cdoc, { 
           offer: { type: offer.type, sdp: offer.sdp }, 
-          caller: user.uid, 
-          callee: calleeId, 
-          mode, 
+          callerId: user.uid,
+          receiverId: calleeId,
+          callType: mode,
           status: 'ringing', 
-          createdAt: Date.now() 
+          createdAt: serverTimestamp(),
+          candidates: [],
+          caller: user.uid,
+          callee: calleeId,
+          mode,
         });
         
         console.debug('[ChatRoom] Call document written successfully');
@@ -527,10 +541,11 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         return;
       }
       
-      console.debug('[ChatRoom] Answering call, mode:', data.mode);
+      const callModeValue = data.callType || data.mode;
+      console.debug('[ChatRoom] Answering call, mode:', callModeValue);
       
       setInCall(true);
-      setCallMode(data.mode === 'video' ? 'video' : 'audio');
+      setCallMode(callModeValue === 'video' ? 'video' : 'audio');
       setIsConnecting(true);
       setCallError(null);
       stopRingtone();
@@ -552,7 +567,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             autoGainControl: true,
           }
         };
-        if (data.mode === 'video') {
+        if (callModeValue === 'video') {
           constraints.video = { 
             width: { ideal: 1280 }, 
             height: { ideal: 720 }, 
@@ -674,8 +689,9 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         await setDoc(cdoc, { 
           answer: { type: answer.type, sdp: answer.sdp }, 
           callee: user.uid, 
+          receiverId: user.uid,
           status: 'connected', 
-          updatedAt: Date.now() 
+          updatedAt: serverTimestamp()
         }, { merge: true });
         console.debug('[ChatRoom] Answer sent');
       } catch (e) { 
@@ -952,7 +968,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           onSend={async (text) => await sendMessage({ type: 'text', content: text })} 
           onTyping={(v) => setTyping(Boolean(v))} 
           onSendMedia={async (mediaUrl, type) => await sendMessage({ type, mediaUrl })}
-          onSendVoice={async (mediaUrl) => await sendMessage({ type: 'audio', mediaUrl })}
+          onSendVoice={async (mediaUrl) => await sendMessage({ type: 'voice', mediaUrl })}
           disabled={meta?.status !== 'active' || accessible !== true} 
         />
       </div>

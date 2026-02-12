@@ -1,10 +1,10 @@
 // Campus Rides PWA Service Worker
 // Handles app installation, caching, offline support, and background tasks
 
-const CACHE_NAME = 'campus-rides-v1';
-const RUNTIME_CACHE = 'campus-rides-runtime-v1';
-const API_CACHE = 'campus-rides-api-v1';
-const IMAGE_CACHE = 'campus-rides-images-v1';
+const CACHE_NAME = 'campus-rides-v2';
+const RUNTIME_CACHE = 'campus-rides-runtime-v2';
+const API_CACHE = 'campus-rides-api-v2';
+const IMAGE_CACHE = 'campus-rides-images-v2';
 
 // Assets to cache on install
 const STATIC_ASSETS = [

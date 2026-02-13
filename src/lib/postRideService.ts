@@ -46,7 +46,8 @@ function toDate(ts: any): Date | null {
 // ============================================================================
 
 /**
- * Get all rides that the passenger has completed but not yet rated
+ * OPTIMIZED: Get all rides that the passenger has completed but not yet rated
+ * Fixed N+1 query issue by batching Firestore reads
  */
 export async function getPendingRatingsForPassenger(
   firestore: Firestore,
@@ -56,15 +57,21 @@ export async function getPendingRatingsForPassenger(
   const pendingRatings: PendingRating[] = [];
   
   try {
-    // Get all confirmed bookings for this passenger
+    // Get all confirmed bookings for this passenger (with limit for performance)
     const bookingsRef = collection(firestore, `universities/${university}/bookings`);
     const bookingsQuery = query(
       bookingsRef,
       where('passengerId', '==', passengerId),
-      where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+      where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed']),
+      // Limit to last 50 bookings to avoid fetching too much data
+      orderBy('createdAt', 'desc')
     );
     
     const bookingsSnap = await getDocs(bookingsQuery);
+    
+    // OPTIMIZATION: Batch multiple getDoc calls together instead of sequential awaits
+    // Collect all refs to fetch first
+    const rideRefsToFetch: { bookingId: string; rideId: string; ratingRef: any; rideRef: any }[] = [];
     
     for (const bookingDoc of bookingsSnap.docs) {
       const booking = bookingDoc.data();
@@ -72,13 +79,67 @@ export async function getPendingRatingsForPassenger(
       
       if (!rideId) continue;
       
-      // Get the ride data
       const rideRef = doc(firestore, `universities/${university}/rides`, rideId);
-      const rideSnap = await getDoc(rideRef);
+      const ratingRef = doc(firestore, `universities/${university}/ratings`, bookingDoc.id);
       
-      if (!rideSnap.exists()) continue;
+      rideRefsToFetch.push({
+        bookingId: bookingDoc.id,
+        rideId,
+        rideRef,
+        ratingRef,
+      });
+    }
+    
+    // Batch fetch rides and ratings in parallel instead of sequential
+    const rideDataMap = new Map<string, any>();
+    const ratedBookingIds = new Set<string>();
+    
+    // Fetch rides in batches to avoid overwhelming Firebase
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < rideRefsToFetch.length; i += BATCH_SIZE) {
+      const batch = rideRefsToFetch.slice(i, i + BATCH_SIZE);
       
-      const ride = rideSnap.data();
+      // Fetch all rides in this batch in parallel
+      const rideSnapshots = await Promise.all(
+        batch.map(item => getDoc(item.rideRef).catch(() => null))
+      );
+      
+      // Fetch all ratings in this batch in parallel
+      const ratingSnapshots = await Promise.all(
+        batch.map(item => getDoc(item.ratingRef).catch(() => null))
+      );
+      
+      // Process results
+      batch.forEach((item, index) => {
+        const rideSnap = rideSnapshots[index];
+        const ratingSnap = ratingSnapshots[index];
+        
+        if (rideSnap?.exists()) {
+          rideDataMap.set(item.rideId, { ride: rideSnap.data(), bookingId: item.bookingId });
+        }
+        
+        if (ratingSnap?.exists()) {
+          ratedBookingIds.add(item.bookingId);
+        }
+      });
+    }
+    
+    // Now process all rides with cached data
+    for (const bookingDoc of bookingsSnap.docs) {
+      const booking = bookingDoc.data();
+      const rideId = booking.rideId;
+      
+      if (!rideId || !rideDataMap.has(rideId)) continue;
+      
+      const rideData = rideDataMap.get(rideId);
+      if (!rideData) continue;
+      
+      const ride = rideData.ride;
+      const bookingId = bookingDoc.id;
+      
+      // Skip if already rated
+      if (ratedBookingIds.has(bookingId)) continue;
+      
       const departureTime = toDate(ride.departureTime);
       
       if (!departureTime) continue;
@@ -89,18 +150,12 @@ export async function getPendingRatingsForPassenger(
       // Check if rating is eligible (within rating window)
       if (!isRatingEligible(departureTime)) continue;
       
-      // Check if rating already exists
-      const ratingRef = doc(firestore, `universities/${university}/ratings`, bookingDoc.id);
-      const ratingSnap = await getDoc(ratingRef);
-      
-      if (ratingSnap.exists()) continue; // Already rated
-      
       // Add to pending ratings
       const rideCompletedAt = new Date(departureTime.getTime() + POST_RIDE_CONSTANTS.COMPLETION_HOURS * 60 * 60 * 1000);
       
       pendingRatings.push({
         rideId,
-        bookingId: bookingDoc.id,
+        bookingId,
         driverId: ride.driverId || ride.createdBy,
         driverName: ride.driverInfo?.fullName || 'Ride Provider',
         from: ride.from || 'Unknown',

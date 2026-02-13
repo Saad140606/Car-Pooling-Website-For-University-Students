@@ -128,6 +128,11 @@ export function subscribeToNotifications(
   userId: string,
   callback: (notifications: Notification[]) => void
 ) {
+  console.log('[NotificationFirestore] Setting up subscription for:', {
+    university,
+    userId
+  });
+  
   const notificationsRef = collection(firestore, 'universities', university, 'notifications');
   const q = query(
     notificationsRef,
@@ -138,14 +143,30 @@ export function subscribeToNotifications(
   return onSnapshot(
     q,
     (snapshot) => {
+      console.log('[NotificationFirestore] Snapshot received:', {
+        size: snapshot.size,
+        empty: snapshot.empty,
+        changes: snapshot.docChanges().map(c => ({ type: c.type, id: c.doc.id }))
+      });
+      
       const notifications: Notification[] = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data()
       } as Notification));
       
+      console.log('[NotificationFirestore] Processed notifications:', {
+        total: notifications.length,
+        unread: notifications.filter(n => !n.isRead).length
+      });
+      
       callback(notifications);
     },
     (error) => {
+      console.error('[NotificationFirestore] ❌ Snapshot error:', {
+        code: error.code,
+        message: error.message
+      });
+      
       // Gracefully handle permission denied errors
       if (error.code === 'permission-denied') {
         console.warn('[NotificationFirestore] Permission denied for notifications query. User may not have full permissions yet.');

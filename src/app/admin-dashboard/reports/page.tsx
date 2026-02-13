@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   AlertTriangle,
   Search,
@@ -18,106 +18,143 @@ import {
   Download,
   TrendingUp,
   Flag,
+  RefreshCw,
+  Loader2,
+  Shield,
 } from "lucide-react";
-import { useAdminAnalytics } from "@/hooks/useAdminAnalytics";
+import { useAdminAuth } from "@/hooks/useAdminAuth";
 
-type ReportStatus = "all" | "pending" | "inProgress" | "resolved";
-type ReportType = "all" | "inappropriate" | "safety" | "payment" | "behavior" | "other";
+type ReportStatus = "all" | "pending" | "investigating" | "resolved";
+type ReportCategory = "all" | "misbehavior" | "safety" | "fraud" | "app_issue";
+
+interface Report {
+  id: string;
+  reporterName: string;
+  reporterEmail: string;
+  reporterUniversity: string;
+  category: string;
+  status: string;
+  createdAt: string;
+  description: string;
+  reportedBy?: any;
+  againstUserUid?: string;
+  rideId?: string;
+  priority?: string;
+}
 
 export default function AdminReportsPage() {
-  const analytics = useAdminAnalytics();
+  // 🔒 SECURITY: Verify admin authentication
+  const { loading: authLoading, isAdmin, error: authError } = useAdminAuth();
+  
+  const [reports, setReports] = useState<Report[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<ReportStatus>("all");
-  const [filterType, setFilterType] = useState<ReportType>("all");
+  const [filterCategory, setFilterCategory] = useState<ReportCategory>("all");
   const [sortBy, setSortBy] = useState<"date" | "status">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
 
-  const mockReports = useMemo(() => {
-    const reports = [
-      {
-        id: "report1",
-        reportId: "RP001",
-        reporter: "Ahmed Hassan",
-        reportedUser: "Unknown Driver",
-        type: "safety",
-        status: "pending" as const,
-        date: new Date(2026, 1, 4, 15, 30),
-        description: "Driver was speeding and rash driving",
-        rideId: "ride1",
-        university: "FAST",
-        severity: "high",
-      },
-      {
-        id: "report2",
-        reportId: "RP002",
-        reporter: "Fatima Khan",
-        reportedUser: "Zain Khan",
-        type: "behavior",
-        status: "inProgress" as const,
-        date: new Date(2026, 1, 3, 14, 15),
-        description: "Rude behavior during ride",
-        rideId: "ride2",
-        university: "NED",
-        severity: "medium",
-      },
-      {
-        id: "report3",
-        reportId: "RP003",
-        reporter: "Ali Raza",
-        reportedUser: "Maha Ali",
-        type: "payment",
-        status: "resolved" as const,
-        date: new Date(2026, 1, 2, 12, 45),
-        description: "Payment discrepancy resolved",
-        rideId: "ride3",
-        university: "FAST",
-        severity: "low",
-      },
-    ];
+  const fetchReports = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await fetch('/api/admin/reports?limit=200');
+      if (!res.ok) throw new Error('Failed to fetch reports');
+      const data = await res.json();
+      setReports(data.reports || []);
+    } catch (err: any) {
+      console.error('Failed to fetch reports:', err);
+      setError(err.message || 'Failed to load reports');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
-    return reports.filter((r) => {
-      const matchesSearch =
-        r.reporter.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.reportedUser.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.reportId.toLowerCase().includes(searchTerm.toLowerCase());
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
-      const matchesStatus = filterStatus === "all" || r.status === filterStatus;
-      const matchesType = filterType === "all" || r.type === filterType;
-
-      return matchesSearch && matchesStatus && matchesType;
-    });
-  }, [searchTerm, filterStatus, filterType]);
-
-  const sortedReports = useMemo(() => {
-    return [...mockReports].sort((a, b) => {
-      if (sortBy === "date") {
-        const aTime = a.date.getTime();
-        const bTime = b.date.getTime();
-        return sortOrder === "asc" ? aTime - bTime : bTime - aTime;
-      } else {
-        const statusOrder = { pending: 0, inProgress: 1, resolved: 2 };
-        const aStatus = statusOrder[a.status as keyof typeof statusOrder];
-        const bStatus = statusOrder[b.status as keyof typeof statusOrder];
-        return sortOrder === "asc" ? aStatus - bStatus : bStatus - aStatus;
-      }
-    });
-  }, [mockReports, sortBy, sortOrder]);
-
-  const stats = {
-    total: analytics.reports.total,
-    pending: analytics.reports.pending,
-    inProgress: analytics.reports.inProgress,
-    resolved: analytics.reports.resolved,
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchReports();
   };
 
-  const reportTypes = analytics.reports.types;
+  const filteredReports = useMemo(() => {
+    return reports
+      .filter((r) => {
+        const matchesSearch =
+          r.reporterName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          r.reporterEmail?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          r.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          r.id?.toLowerCase().includes(searchTerm.toLowerCase());
 
-  if (analytics.loading) {
+        const matchesStatus = filterStatus === "all" || r.status === filterStatus;
+        const matchesCategory = filterCategory === "all" || r.category === filterCategory;
+
+        return matchesSearch && matchesStatus && matchesCategory;
+      })
+      .sort((a, b) => {
+        if (sortBy === "date") {
+          const dateA = new Date(a.createdAt).getTime();
+          const dateB = new Date(b.createdAt).getTime();
+          return sortOrder === "asc" ? dateA - dateB : dateB - dateA;
+        }
+        return 0;
+      });
+  }, [reports, searchTerm, filterStatus, filterCategory, sortBy, sortOrder]);
+
+  const stats = useMemo(() => ({
+    total: reports.length,
+    pending: reports.filter(r => r.status === 'pending').length,
+    investigating: reports.filter(r => r.status === 'investigating').length,
+    resolved: reports.filter(r => r.status === 'resolved').length,
+  }), [reports]);
+
+  const statusColors = {
+    pending: "text-yellow-600",
+    investigating: "text-blue-600",
+    resolved: "text-green-600",
+  };
+
+  const statusBgColors = {
+    pending: "bg-yellow-50",
+    investigating: "bg-blue-50",
+    resolved: "bg-green-50",
+  };
+
+  const categoryColors: Record<string, string> = {
+    misbehavior: "text-red-600 bg-red-50",
+    safety: "text-orange-600 bg-orange-50",
+    fraud: "text-purple-600 bg-purple-50",
+    app_issue: "text-pink-600 bg-pink-50",
+  };
+
+  // 🔒 SECURITY: Block rendering until admin verification completes
+  if (authLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-950">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-slate-700 border-t-primary rounded-full animate-spin mx-auto mb-4" />
+          <Shield className="w-12 h-12 animate-pulse text-primary mx-auto mb-4" />
+          <p className="text-slate-400">Verifying admin credentials...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 🔒 SECURITY: Block access if not admin
+  if (!isAdmin || authError) {
+    return null; // Will redirect automatically
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto mb-4" />
           <p className="text-slate-400">Loading reports...</p>
         </div>
       </div>
@@ -136,41 +173,35 @@ export default function AdminReportsPage() {
             </h1>
             <p className="text-slate-400">Review and manage user reports</p>
           </div>
-          <button className="px-6 py-3 bg-primary hover:bg-primary/80 text-white rounded-xl font-medium transition-all flex items-center gap-2">
-            <Download className="w-4 h-4" />
-            Export Reports
-          </button>
+          <div className="flex gap-3">
+            <button 
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="px-6 py-3 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-900 disabled:opacity-50 text-white rounded-xl font-medium transition-all flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button className="px-6 py-3 bg-primary hover:bg-primary/80 text-white rounded-xl font-medium transition-all flex items-center gap-2">
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+          </div>
         </div>
+        {error && (
+          <div className="bg-red-500/10 border border-red-500 text-red-500 rounded-xl p-4 mb-6">
+            {error}
+          </div>
+        )}
       </div>
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <StatBox label="Total Reports" value={stats.total} color="red" icon={AlertTriangle} />
         <StatBox label="Pending" value={stats.pending} color="yellow" icon={Clock} />
-        <StatBox label="In Progress" value={stats.inProgress} color="blue" icon={AlertCircle} />
+        <StatBox label="Investigating" value={stats.investigating} color="blue" icon={AlertCircle} />
         <StatBox label="Resolved" value={stats.resolved} color="green" icon={CheckCircle} />
       </div>
-
-      {/* Report Types */}
-      {Object.keys(reportTypes).length > 0 && (
-        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 mb-8">
-          <h2 className="text-lg font-bold text-white mb-4">Report Types</h2>
-          <div className="flex flex-wrap gap-3">
-            {Object.entries(reportTypes).map(([type, count]) => (
-              <div
-                key={type}
-                className="px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg flex items-center gap-2"
-              >
-                <Flag className="w-4 h-4 text-primary" />
-                <span className="text-white font-medium capitalize">{type}</span>
-                <span className="px-2 py-1 bg-primary/20 text-primary rounded font-bold text-sm">
-                  {count as number}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left - Reports List */}
@@ -187,7 +218,7 @@ export default function AdminReportsPage() {
                   <Search className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
                   <input
                     type="text"
-                    placeholder="Reporter, reported user, report ID..."
+                    placeholder="Reporter, email, category..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-primary transition-all"
@@ -204,104 +235,116 @@ export default function AdminReportsPage() {
                   className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-primary transition-all"
                 >
                   <option value="all">All Reports</option>
-                  <option value="pending">Pending Only</option>
-                  <option value="inProgress">In Progress</option>
-                  <option value="resolved">Resolved Only</option>
+                  <option value="pending">Pending</option>
+                  <option value="investigating">Investigating</option>
+                  <option value="resolved">Resolved</option>
                 </select>
               </div>
             </div>
 
-            {/* Type Filter */}
+            {/* Category Filter */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Type</label>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Category</label>
               <select
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value as ReportType)}
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value as ReportCategory)}
                 className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-primary transition-all"
               >
-                <option value="all">All Types</option>
+                <option value="all">All Categories</option>
+                <option value="misbehavior">Misbehavior</option>
                 <option value="safety">Safety</option>
-                <option value="behavior">Behavior</option>
-                <option value="payment">Payment</option>
-                <option value="inappropriate">Inappropriate</option>
-                <option value="other">Other</option>
+                <option value="fraud">Fraud</option>
+                <option value="app_issue">App Issue</option>
               </select>
             </div>
           </div>
 
           {/* Reports List */}
           <div className="space-y-4">
-            {sortedReports.map((report) => (
-              <div
-                key={report.id}
-                onClick={() => setSelectedReport(report.id)}
-                className={`bg-slate-900/50 border rounded-xl p-6 cursor-pointer transition-all hover:border-primary ${
-                  selectedReport === report.id ? "border-primary bg-slate-800/50" : "border-slate-800"
-                }`}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="font-mono text-sm font-bold text-primary">{report.reportId}</span>
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          report.severity === "high"
-                            ? "bg-red-500/20 text-red-300"
-                            : report.severity === "medium"
-                              ? "bg-yellow-500/20 text-yellow-300"
-                              : "bg-green-500/20 text-green-300"
-                        }`}
-                      >
-                        {report.severity.charAt(0).toUpperCase() + report.severity.slice(1)}
-                      </span>
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          report.status === "pending"
-                            ? "bg-yellow-500/20 text-yellow-300"
-                            : report.status === "inProgress"
-                              ? "bg-blue-500/20 text-blue-300"
-                              : "bg-green-500/20 text-green-300"
-                        }`}
-                      >
-                        {report.status === "inProgress" ? "In Progress" : report.status.charAt(0).toUpperCase() + report.status.slice(1)}
-                      </span>
+            {filteredReports.length === 0 ? (
+              <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-12 text-center">
+                <AlertTriangle className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                <p className="text-slate-400 text-lg">No reports found</p>
+              </div>
+            ) : (
+              filteredReports.map((report) => (
+                <div
+                  key={report.id}
+                  onClick={() => setSelectedReport(report.id)}
+                  className={`bg-slate-900/50 border rounded-xl p-6 cursor-pointer transition-all hover:border-primary ${
+                    selectedReport === report.id ? "border-primary bg-slate-800/50" : "border-slate-800"
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-mono text-sm font-bold text-primary">
+                          {report.id.slice(0, 8).toUpperCase()}
+                        </span>
+                        {report.priority && (
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              report.priority === "high"
+                                ? "bg-red-500/20 text-red-300"
+                                : report.priority === "medium"
+                                  ? "bg-yellow-500/20 text-yellow-300"
+                                  : "bg-green-500/20 text-green-300"
+                            }`}
+                          >
+                            {report.priority.charAt(0).toUpperCase() + report.priority.slice(1)}
+                          </span>
+                        )}
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                            statusBgColors[report.status as keyof typeof statusBgColors]
+                          } ${statusColors[report.status as keyof typeof statusColors]}`}
+                        >
+                          {report.status.charAt(0).toUpperCase() + report.status.slice(1)}
+                        </span>
+                      </div>
+
+                      <h3 className="text-lg font-bold text-white mb-2">
+                        {report.reporterName || 'Unknown User'}
+                      </h3>
+
+                      <div className="grid grid-cols-3 gap-4 mb-3">
+                        <div>
+                          <p className="text-xs text-slate-400">Category</p>
+                          <p className="text-sm text-white font-medium capitalize">
+                            {report.category?.replace('_', ' ')}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">University</p>
+                          <p className="text-sm text-white font-medium">
+                            {report.reporterUniversity || 'N/A'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Date</p>
+                          <p className="text-sm text-white font-medium">
+                            {new Date(report.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-slate-300 line-clamp-2">
+                        {report.description || 'No description provided'}
+                      </p>
                     </div>
 
-                    <h3 className="text-lg font-bold text-white mb-2">
-                      {report.reporter} reported {report.reportedUser}
-                    </h3>
-
-                    <div className="grid grid-cols-3 gap-4 mb-3">
-                      <div>
-                        <p className="text-xs text-slate-400">Type</p>
-                        <p className="text-sm text-white font-medium capitalize">{report.type}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-400">University</p>
-                        <p className="text-sm text-white font-medium">{report.university}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-400">Date</p>
-                        <p className="text-sm text-white font-medium">
-                          {report.date.toLocaleDateString()}
-                        </p>
-                      </div>
+                    <div className="flex gap-2 ml-4">
+                      <button className="p-2 hover:bg-slate-800 rounded-lg transition-all text-slate-400 hover:text-white">
+                        <Eye className="w-5 h-5" />
+                      </button>
+                      <button className="p-2 hover:bg-slate-800 rounded-lg transition-all text-slate-400 hover:text-white">
+                        <MoreVertical className="w-5 h-5" />
+                      </button>
                     </div>
-
-                    <p className="text-sm text-slate-300">{report.description}</p>
-                  </div>
-
-                  <div className="flex gap-2 ml-4">
-                    <button className="p-2 hover:bg-slate-800 rounded-lg transition-all text-slate-400 hover:text-white">
-                      <Eye className="w-5 h-5" />
-                    </button>
-                    <button className="p-2 hover:bg-slate-800 rounded-lg transition-all text-slate-400 hover:text-white">
-                      <MoreVertical className="w-5 h-5" />
-                    </button>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 

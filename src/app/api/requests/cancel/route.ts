@@ -3,6 +3,12 @@
  * 
  * SECURITY: This endpoint requires authentication and verifies
  * that the authenticated user is either the passenger or the driver.
+ * 
+ * Enhanced with:
+ * - Departure time validation (cannot cancel after ride starts)
+ * - Account lock detection and enforcement
+ * - Comprehensive cancellation tracking
+ * - Duplicate cancellation prevention
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -18,6 +24,14 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
+import {
+  validateCancellationPermission,
+  isAccountLocked,
+  isLateCancellation,
+  isDuplicateCancellation,
+  shouldLockAccount,
+  getLockExpirationDate,
+} from '@/lib/rideCancellationService';
 import { notifyRideCancelled } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
@@ -64,6 +78,54 @@ export async function POST(req: NextRequest) {
     const db = adminDb;
     const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
     const bookingRef = db.doc(`universities/${validUniversity}/bookings/${requestId}`);
+
+    // ===== PRE-TRANSACTION VALIDATION: Check permissions and business rules =====
+    // Step 1: Validate cancellation permission (departure time check)
+    const rideSnap = await db.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+    if (!rideSnap.exists) {
+      return errorResponse('Ride not found', 404);
+    }
+    const ride = rideSnap.data() as any;
+    
+    // Check if ride has already departed
+    if (ride.departureTime) {
+      const departureTime = ride.departureTime.toDate ? ride.departureTime.toDate() : ride.departureTime;
+      const now = new Date();
+      if (now >= departureTime) {
+        return errorResponse('Cannot cancel after ride has departed', 400);
+      }
+    }
+
+    // Step 2: Check if account is locked
+    const userSnap = await db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
+    let userData: any = {};
+    if (userSnap.exists) {
+      userData = userSnap.data() as any;
+      if (userData.accountLockUntil) {
+        const lockUntil = userData.accountLockUntil.toDate ? userData.accountLockUntil.toDate() : userData.accountLockUntil;
+        if (new Date() < lockUntil) {
+          const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
+          return errorResponse(`Account locked. Try again in ${minutesRemaining} minutes`, 403);
+        }
+      }
+
+      // Step 3: Check for duplicate cancellation (idempotency)
+      const reqSnap = await db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`).get();
+      const bookingSnap = !reqSnap.exists ? await db.doc(`universities/${validUniversity}/bookings/${requestId}`).get() : null;
+      
+      if (reqSnap.exists) {
+        const reqStatus = String(reqSnap.data()?.status || '').toUpperCase();
+        if (reqStatus === 'CANCELLED') {
+          return errorResponse('Request already cancelled', 400);
+        }
+      }
+      if (bookingSnap?.exists) {
+        const bookingStatus = String(bookingSnap.data()?.status || '').toUpperCase();
+        if (bookingStatus === 'CANCELLED') {
+          return errorResponse('Booking already cancelled', 400);
+        }
+      }
+    }
 
     const result = await db.runTransaction(async (tx) => {
       const reqSnap = await tx.get(requestRef);
@@ -112,20 +174,55 @@ export async function POST(req: NextRequest) {
           const userData = userSnap.data() as any;
           const lateCancellations = (userData.lateCancellations ?? 0) + 1;
           const totalCancellations = (userData.totalCancellations ?? 0) + 1;
+          const totalParticipations = (userData.totalParticipations ?? 0) + 1;
           
-          tx.update(userRef, {
+          // Calculate cancellation rate
+          const cancellationRate = totalParticipations > 0 
+            ? (totalCancellations / totalParticipations) * 100 
+            : 0;
+
+          // Determine if account should be locked
+          const shouldLock = cancellationRate > 35 && totalParticipations >= 3;
+          
+          const updates: any = {
             lateCancellations,
             totalCancellations,
+            totalParticipations,
             lastCancellationAt: now,
-          });
+          };
 
-          // Apply cooldown if threshold exceeded
+          // Apply auto-lock if threshold exceeded
+          if (shouldLock) {
+            const lockUntil = admin.firestore.Timestamp.fromDate(
+              new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+            );
+            updates.accountLockUntil = lockUntil;
+          }
+
+          // Apply cooldown if late cancellation threshold exceeded
           if (lateCancellations >= 3) {
             const cooldownUntil = admin.firestore.Timestamp.fromDate(
               new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
             );
-            tx.update(userRef, { cooldownUntil });
+            updates.cooldownUntil = cooldownUntil;
           }
+
+          tx.update(userRef, updates);
+        }
+      } else {
+        // For non-late cancellations, just increment total count
+        const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
+        const userSnap = await tx.get(userRef);
+        if (userSnap.exists) {
+          const userData = userSnap.data() as any;
+          const totalCancellations = (userData.totalCancellations ?? 0) + 1;
+          const totalParticipations = (userData.totalParticipations ?? 0) + 1;
+          
+          tx.update(userRef, {
+            totalCancellations,
+            totalParticipations,
+            lastCancellationAt: now,
+          });
         }
       }
 

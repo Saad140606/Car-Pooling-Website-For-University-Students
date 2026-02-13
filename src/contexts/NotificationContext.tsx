@@ -111,10 +111,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   // Initialize Firestore notifications
   useEffect(() => {
     if (!firestore || !user?.uid || !user?.university) {
+      console.log('[NotificationProvider] Missing prerequisites:', {
+        hasFirestore: !!firestore,
+        hasUser: !!user?.uid,
+        hasUniversity: !!user?.university
+      });
       setNotifications([]);
       setLoading(false);
       return;
     }
+
+    console.log('[NotificationProvider] Initializing notifications for user:', {
+      userId: user.uid,
+      university: user.university
+    });
 
     setLoading(true);
     isInitialLoadRef.current = true;
@@ -126,6 +136,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         user.university,
         user.uid,
         (updatedNotifications) => {
+          console.log('[NotificationProvider] Received notification update:', {
+            count: updatedNotifications.length,
+            unread: updatedNotifications.filter(n => !n.isRead).length,
+            latest: updatedNotifications[0]?.type || 'none'
+          });
+          
           // Detect new notifications
           if (!isInitialLoadRef.current && updatedNotifications.length > 0) {
             const latestNotification = updatedNotifications[0];
@@ -134,6 +150,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             if (latestNotification.id !== lastNotificationIdRef.current && 
                 !latestNotification.isRead &&
                 shouldShowNotification(latestNotification.id)) {
+              
+              console.log('[NotificationProvider] 🔔 NEW NOTIFICATION:', {
+                id: latestNotification.id,
+                type: latestNotification.type,
+                title: latestNotification.title
+              });
               
               // Show premium notification
               const premiumNotif: PremiumNotificationProps = {
@@ -164,6 +186,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             lastNotificationIdRef.current = latestNotification.id;
           } else if (updatedNotifications.length > 0) {
             // Initial load - just store the latest ID
+            console.log('[NotificationProvider] Initial load complete');
             lastNotificationIdRef.current = updatedNotifications[0].id;
           }
           
@@ -173,11 +196,14 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         }
       );
     } catch (error) {
-      console.error('[NotificationProvider] Error subscribing to notifications:', error);
+      console.error('[NotificationProvider] ❌ Error subscribing to notifications:', error);
       setLoading(false);
     }
 
-    return () => unsubscribe();
+    return () => {
+      console.log('[NotificationProvider] Cleaning up notification subscription');
+      unsubscribe();
+    };
   }, [firestore, user?.uid, user?.university]);
 
   // Initialize FCM listener for push notifications

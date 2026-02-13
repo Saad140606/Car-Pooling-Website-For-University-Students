@@ -36,24 +36,30 @@ export class RingtoneManager {
     if (typeof window === 'undefined') return;
 
     try {
-      // Create call ringtone sound
+      // Create call ringtone sound with inline base64 audio (no external files needed)
       const ringtone = new Audio();
-      ringtone.preload = 'auto';
+      ringtone.preload = 'none'; // Don't preload to avoid unnecessary requests
       ringtone.src = this.ringtoneUrl;
       ringtone.volume = 1;
-      ringtone.crossOrigin = 'anonymous';
+      
+      // Suppress 404 errors silently
+      ringtone.onerror = () => {};
+      
       this.sounds.set('ringtone', {
         audio: ringtone,
         playing: false,
         loop: true,
       });
 
-      // Create notification sound
+      // Create notification sound with inline base64 audio (no external files needed)
       const notification = new Audio();
-      notification.preload = 'auto';
+      notification.preload = 'none'; // Don't preload to avoid unnecessary requests
       notification.src = this.notificationSoundUrl;
       notification.volume = 0.5;
-      notification.crossOrigin = 'anonymous';
+      
+      // Suppress 404 errors silently
+      notification.onerror = () => {};
+      
       this.sounds.set('notification', {
         audio: notification,
         playing: false,
@@ -74,12 +80,11 @@ export class RingtoneManager {
     const sound = this.sounds.get('ringtone');
     if (sound) {
       sound.audio.src = url;
-      // Handle 404 errors gracefully
+      // Handle 404 errors silently - no console spam
       sound.audio.onerror = () => {
-        console.warn('[Ringtone] Failed to load ringtone, using fallback');
+        // Fallback to base64 audio if external file fails
         sound.audio.src = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==';
       };
-      console.log('[Ringtone] Ringtone URL updated:', url);
     }
   }
 
@@ -91,12 +96,11 @@ export class RingtoneManager {
     const sound = this.sounds.get('notification');
     if (sound) {
       sound.audio.src = url;
-      // Handle 404 errors gracefully
+      // Handle 404 errors silently - no console spam
       sound.audio.onerror = () => {
-        console.warn('[Ringtone] Failed to load notification sound, using fallback');
+        // Fallback to base64 audio if external file fails
         sound.audio.src = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==';
       };
-      console.log('[Ringtone] Notification sound URL updated:', url);
     }
   }
 

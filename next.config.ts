@@ -1,17 +1,36 @@
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
-  // Disable React Strict Mode during development to avoid double-mount issues
-  // with third-party libraries like Leaflet that re-initialize DOM containers.
-  // Re-enable if you need strict-mode checks.
   reactStrictMode: false,
-  /* config options here */
   typescript: {
     ignoreBuildErrors: true,
   },
   eslint: {
     ignoreDuringBuilds: true,
   },
+
+  // ── Performance: compress output ──
+  compress: true,
+
+  // ── Performance: tree-shake server/client boundary ──
+  experimental: {
+    optimizePackageImports: [
+      'lucide-react',
+      'date-fns',
+      'recharts',
+      'framer-motion',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-tooltip',
+      '@radix-ui/react-tabs',
+      '@radix-ui/react-toast',
+      '@radix-ui/react-popover',
+      '@radix-ui/react-select',
+      '@radix-ui/react-accordion',
+      '@radix-ui/react-avatar',
+    ],
+  },
+
   images: {
     remotePatterns: [
       {
@@ -40,6 +59,14 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+
+  // ── Performance: strip console.debug/log in production ──
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production'
+      ? { exclude: ['error', 'warn'] }
+      : false,
+  },
+
   // Gracefully handle env vars for build process
   env: {
     NEXT_PUBLIC_FIREBASE_API_KEY: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,

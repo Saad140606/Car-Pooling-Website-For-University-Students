@@ -6,6 +6,7 @@ import { onSnapshot } from 'firebase/firestore';
 import type { DocumentReference, DocumentData } from 'firebase/firestore';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError } from '../errors';
+import { emitNetworkError } from '@/components/NetworkErrorListener';
 
 interface UseDocOptions {
   listen?: boolean;
@@ -49,6 +50,8 @@ export function useDoc<T extends DocumentData>(
             errorEmitter.emit('permission-error', permissionError);
             setError(permissionError);
           } else {
+            // Emit network error for non-permission errors
+            emitNetworkError(err);
             setError(err);
           }
           setLoading(false);
@@ -69,6 +72,8 @@ export function useDoc<T extends DocumentData>(
            errorEmitter.emit('permission-error', permissionError);
            setError(permissionError);
          } else {
+           // Emit network error for non-permission errors
+           emitNetworkError(err);
            setError(err);
          }
          setLoading(false);

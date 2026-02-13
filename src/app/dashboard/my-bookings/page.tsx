@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { collection, query, where, orderBy, doc, updateDoc, serverTimestamp, getDoc, getDocs, runTransaction } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, doc, updateDoc, serverTimestamp, getDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { useFirestore, useUser } from '@/firebase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -21,6 +21,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { ErrorState, EmptyState, LoadingState } from '@/components/StateComponents';
 import { safeGet } from '@/lib/safeApi';
+import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 
 /**
  * Safe array helper
@@ -71,6 +72,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   
   const [confirming, setConfirming] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
+  const [showCancelDialog, setShowCancelDialog] = React.useState(false);
   const [confirmationProcessed, setConfirmationProcessed] = React.useState(booking.status === 'CONFIRMED');
   const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
   const [departureTimer, setDepartureTimer] = React.useState<string>('');
@@ -319,14 +321,10 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to cancel this booking? This may affect your cancellation rate (${cancellationRate}%).`)) {
-      return;
-    }
-
     setCancelling(true);
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch('/api/requests/cancel', {
+      const res = await fetch('/api/bookings/cancel', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -335,31 +333,46 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         body: JSON.stringify({
           university,
           rideId: ride.id,
-          requestId: booking.id,
-          cancelledBy: user.uid,
-          reason: 'Passenger cancelled booking'
+          bookingId: booking.id,
+          reason: 'Passenger cancelled booking',
+          isDriverCancel: false // Passenger is canceling their own booking
         })
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || data.message || 'Failed to cancel ride');
+        // Handle specific error messages
+        if (res.status === 403) {
+          toast({
+            variant: 'destructive',
+            title: 'Account Locked',
+            description: data.message || 'Your account has been temporarily locked due to high cancellation rates.'
+          });
+        } else {
+          toast({
+            variant: 'destructive',
+            title: 'Cancellation Failed',
+            description: data.message || data.error || 'Failed to cancel booking'
+          });
+        }
+        return;
       }
 
       toast({
-        title: 'Ride Cancelled',
-        description: 'Your booking has been cancelled. The seat has been released.'
+        title: 'Booking Cancelled',
+        description: 'Your booking has been cancelled and the seat has been released.'
       });
 
       // Update local state
       setLocalBookingStatus('CANCELLED');
       setConfirmationProcessed(false);
+      setShowCancelDialog(false);
     } catch (err: any) {
       console.error('Error cancelling ride:', err);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: err?.message || 'Failed to cancel ride'
+        description: err?.message || 'Failed to cancel booking'
       });
     } finally {
       setCancelling(false);
@@ -546,7 +559,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                 <ChatButton chatId={chatId} university={university} label="Chat" className="h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
               )}
               <Button
-                onClick={handleCancelRide}
+                onClick={() => setShowCancelDialog(true)}
                 disabled={cancelling}
                 variant="destructive"
                 size="sm"
@@ -564,7 +577,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
               <ChatButton chatId={chatId} university={university} label="Chat" className="h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
             )}
             <Button
-              onClick={handleCancelRide}
+              onClick={() => setShowCancelDialog(true)}
               disabled={cancelling}
               variant="destructive"
               size="sm"
@@ -587,7 +600,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                 <ChatButton chatId={chatId} university={university} label="Chat" className="flex-1 h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
               )}
               <Button
-                onClick={handleCancelRide}
+                onClick={() => setShowCancelDialog(true)}
                 disabled={cancelling}
                 variant="destructive"
                 size="sm"
@@ -613,6 +626,20 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
           </div>
         )}
       </CardFooter>
+
+      {/* Cancellation Confirmation Dialog */}
+      <CancellationConfirmDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        onConfirm={handleCancelRide}
+        onCancel={() => setShowCancelDialog(false)}
+        isLoading={cancelling}
+        cancellerRole="passenger"
+        cancellationRate={cancellationRate}
+        minutesUntilDeparture={departureTimer ? parseInt(departureTimer.split(':')[0] || '0') : 0}
+        showRateWarning={cancellationRate > 30}
+        isBookingConfirmed={localBookingStatus === 'CONFIRMED' || booking.status === 'CONFIRMED'}
+      />
     </Card>
   );
 }
@@ -629,7 +656,8 @@ export default function MyBookingsPage() {
   const bookingsQuery = hasRequiredData ? query(
     collection(firestore, 'universities', userData.university, 'bookings'),
     where('passengerId', '==', user.uid),
-    orderBy('createdAt', 'desc')
+    orderBy('createdAt', 'desc'),
+    limit(100) // ── PERF: Limit to last 100 bookings ──
   ) : null;
 
   const { data: bookingsData, loading, error: queryError } = useCollection<BookingType>(
@@ -638,12 +666,33 @@ export default function MyBookingsPage() {
   );
 
   // Safe bookings array
-  const bookings = toArray(bookingsData).filter((b) => b && b.id);
-  const cancelledCount = bookings.filter(
+  const allBookings = toArray(bookingsData).filter((b) => b && b.id);
+  
+  // Filter out bookings from rides that departed more than 2 hours ago
+  const bookings = allBookings.filter((b) => {
+    if (!b.ride?.departureTime) return true; // Keep if no departure time
+    
+    try {
+      const departureTime = b.ride.departureTime.seconds 
+        ? new Date(b.ride.departureTime.seconds * 1000)
+        : new Date(b.ride.departureTime);
+      
+      const now = new Date();
+      const hoursSinceDeparture = (now.getTime() - departureTime.getTime()) / (1000 * 60 * 60);
+      
+      // Keep booking only if ride hasn't departed yet or departed less than 2 hours ago
+      return hoursSinceDeparture < 2;
+    } catch (err) {
+      console.debug('[MyBookings] Error checking departure time:', err);
+      return true; // Keep booking if there's an error
+    }
+  });
+  
+  const cancelledCount = allBookings.filter(
     (b) => b.status === 'cancelled' || b.status === 'CANCELLED'
   ).length;
-  const cancellationRate = bookings.length > 0
-    ? Math.round((cancelledCount / bookings.length) * 100)
+  const cancellationRate = allBookings.length > 0
+    ? Math.round((cancelledCount / allBookings.length) * 100)
     : 0;
 
   const isLoading = userLoading || loading;

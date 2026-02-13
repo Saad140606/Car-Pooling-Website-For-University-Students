@@ -16,7 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { AlertTriangle, ShieldCheck, AlertOctagon, Bug, Check } from 'lucide-react';
 
 export default function ReportPage() {
-  const { user, initialized } = useUser();
+  const { user, initialized, data: userData } = useUser();
   const firestore = useFirestore();
   const router = useRouter();
   const { toast } = useToast();
@@ -72,13 +72,22 @@ export default function ReportPage() {
     setSent(false);
     try {
       const doc = {
-        reportedBy: { uid: user.uid, role },
+        reportedBy: { 
+          uid: user.uid, 
+          role,
+          name: user.displayName || userData?.fullName || 'Unknown User',
+          email: user.email || userData?.email || 'No email'
+        },
+        reporterName: user.displayName || userData?.fullName || 'Unknown User',
+        reporterEmail: user.email || userData?.email || 'No email',
+        reporterUniversity: userData?.university || university || 'Not specified',
         againstUserUid: againstUserUid || null,
         rideId: rideId || null,
         category,
         description: description.trim(),
         createdAt: serverTimestamp(),
         status: 'pending' as const,
+        priority: 'medium',
       };
       await addDoc(safeCollection(firestore!, 'reports'), doc);
       toast({ 

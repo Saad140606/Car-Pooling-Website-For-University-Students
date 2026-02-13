@@ -7,7 +7,7 @@ import type { Auth } from 'firebase/auth';
 import type { Firestore } from 'firebase/firestore';
 import { initializeFirebase } from './init';
 import { FirebaseErrorListener } from '@/components/FirebaseErrorListener';
-import { initMessaging } from './messaging';
+import { NetworkErrorListener } from '@/components/NetworkErrorListener';
 
 interface FirebaseContextValue {
   firebaseApp: FirebaseApp | undefined;
@@ -18,9 +18,7 @@ interface FirebaseContextValue {
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
 
 export function FirebaseProvider({ children }: { children: React.ReactNode }) {
-  // Initialize synchronously during render on the client so consuming components
-  // (like auth forms) can access `auth`/`firestore` immediately and avoid
-  // race conditions with `useEffect` initialization.
+  // Initialize synchronously during render on the client 
   const initial = typeof window !== 'undefined' ? initializeFirebase() : { firebaseApp: undefined, auth: undefined, firestore: undefined };
   const [firebaseInstances] = useState<FirebaseContextValue>({
     firebaseApp: initial.firebaseApp as any,
@@ -28,36 +26,23 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     firestore: initial.firestore as any,
   });
 
-  // Register service worker for push notifications if available
+  // Register service worker (fire-and-forget, non-blocking)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!('serviceWorker' in navigator)) return;
-    // Register a minimal firebase messaging service worker if present in /public
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
     navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js').then((reg) => {
       if (!reg) {
-        navigator.serviceWorker.register('/firebase-messaging-sw.js').then(() => {
-          console.debug('Registered firebase-messaging-sw.js');
-        }).catch((e) => console.debug('SW registration failed (optional):', e));
-      } else {
-        console.debug('firebase-messaging-sw.js already registered');
+        navigator.serviceWorker.register('/firebase-messaging-sw.js').catch(() => {});
       }
-    }).catch((e) => {
-      console.debug('SW getRegistration failed:', e);
-    });
+    }).catch(() => {});
   }, []);
 
-  // Initialize foreground messaging listener
-  useEffect(() => {
-    try {
-      initMessaging();
-    } catch (e) {
-      console.debug('initMessaging failed (non-fatal):', e);
-    }
-  }, []);
+  // ── PERF: Removed duplicate initMessaging() call ──
+  // FCM foreground listener is already in NotificationContext
 
   return (
     <FirebaseContext.Provider value={firebaseInstances}>
       <FirebaseErrorListener />
+      <NetworkErrorListener />
       {children}
     </FirebaseContext.Provider>
   );

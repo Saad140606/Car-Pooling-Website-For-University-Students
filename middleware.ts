@@ -3,6 +3,12 @@
  * 
  * This middleware adds security headers to all responses and
  * implements basic protection for the application.
+ * 
+ * ADMIN ROUTE PROTECTION:
+ * - /admin-dashboard/* routes are protected by useAdminAuth() hook on client-side
+ * - All /api/admin/* endpoints verify admin role via requireAdmin() function
+ * - Middleware cannot directly verify Firebase auth state, so protection is
+ *   enforced at the component and API level for better security control
  */
 
 import { NextResponse } from 'next/server';

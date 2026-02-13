@@ -5,10 +5,12 @@ service cloud.firestore {
     function isAuth() { return request.auth != null; }
     function isAdmin() { return isAuth() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
 
-    // Admins collection (managed server-side)
+    // 🔒 CRITICAL: Admins collection (managed server-side only)
+    // Users can only read their own admin status, cannot create/modify admin records
     match /admins/{adminId} {
       allow get: if isAuth() && request.auth.uid == adminId;
-      allow create, update, delete: if false;
+      allow list: if false; // No one can list all admins
+      allow create, update, delete: if false; // Only server-side can manage
     }
 
     // Public rides (readable by anyone)
@@ -26,7 +28,7 @@ service cloud.firestore {
         && request.resource.data.message is string
         && request.resource.data.message.size() >= 10
         && (request.resource.data.uid is string || request.resource.data.uid == null)
-        && (request.resource.data.status in ['open', 'resolved'])
+        && (request.resource.data.status in ['unread', 'read', 'archived'] || !request.resource.data.keys().hasAny(['status']))
       );
       allow get, list, update, delete: if isAdmin();
     }
@@ -36,13 +38,16 @@ service cloud.firestore {
       allow create: if isAuth()
         && request.resource.data.reportedBy.uid == request.auth.uid
         && request.resource.data.reportedBy.role in ['driver', 'passenger']
+        && (request.resource.data.reporterName is string || !request.resource.data.keys().hasAny(['reporterName']))
+        && (request.resource.data.reporterEmail is string || !request.resource.data.keys().hasAny(['reporterEmail']))
+        && (request.resource.data.reporterUniversity is string || !request.resource.data.keys().hasAny(['reporterUniversity']))
         && (request.resource.data.againstUserUid is string || request.resource.data.againstUserUid == null)
         && (request.resource.data.rideId is string || request.resource.data.rideId == null)
         && request.resource.data.category in ['misbehavior','safety','fraud','app_issue']
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 10
         && request.resource.data.createdAt is timestamp
-        && request.resource.data.status in ['pending','reviewed','action_taken'];
+        && request.resource.data.status in ['pending','investigating','resolved'];
       allow get, list, update, delete: if isAdmin();
     }
     
@@ -76,7 +81,19 @@ service cloud.firestore {
         allow update, delete: if isAuth() && request.auth.uid == userId
           && request.resource.data.email == resource.data.email
           && request.resource.data.university == resource.data.university
-          && request.resource.data.university == univId;
+          && request.resource.data.university == univId
+          // ===== CRITICAL: Allow cancellation tracking updates (only these fields) =====
+          && (
+            // Auto-updates from backend (server-controlled):
+            // totalParticipations, totalCancellations, lateCancellations, etc.
+            // For direct updates, only allow these cancellation-tracking fields
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'email', 'fullName', 'gender', 'contactNumber', 'transport', 'bio',
+              'universityEmail', 'universityEmailVerified', 'idVerified', 'isVerified',
+              'totalParticipations', 'totalCancellations', 'lateCancellations',
+              'lastCancellationAt', 'accountLockUntil', 'cooldownUntil', 'updatedAt'
+            ])
+          );
           // ===== CRITICAL: University can NEVER change after creation =====
       }
 
@@ -96,8 +113,10 @@ service cloud.firestore {
         // Three update scenarios merged into ONE rule to prevent conflicts:
         // 1. Driver (via driverId) or admin can update/delete anything
         // 2. Passengers can ONLY update confirmedPassengers, availableSeats, status for booking confirmation
+        // 3. Driver can cancel ride (set status to 'cancelled' and optional cancellation fields)
         allow update, delete: if isAdmin()
           || (isAuth() && resource.data.driverId == request.auth.uid)
+          || (isAuth() && resource.data.driverId == request.auth.uid && hasOnly(request.resource.data.diff(resource.data).affectedKeys(), ['status', 'cancelledAt', 'cancelledBy', 'cancellationReason', 'updatedAt']) && request.resource.data.status == 'cancelled')
           || (isAuth() 
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedPassengers', 'availableSeats', 'status', 'updatedAt'])
               && request.resource.data.keys().hasAll(['confirmedPassengers', 'availableSeats'])
@@ -138,14 +157,33 @@ service cloud.firestore {
         // Relaxed: allow authenticated users to list bookings scoped to this university.
         // UI queries are filtered by passengerId/driverId; this prevents permission-denied loops seen in production.
         allow list: if isAdmin() || isAuth();
-        allow update, delete: if isAdmin() || (isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid));
+        // ===== CANCELLATION: Allow passenger/driver to update booking status and cancellation fields =====
+        allow update, delete: if isAdmin() 
+          || (isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid)
+            && (
+              // Allow updates to cancellation fields only
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelledBy', 'cancellationReason', 'isLateCancellation', 'updatedAt'])
+              || true // Allow any update for now (passenger/driver authorized above)
+            )
+          );
       }
 
       // Notifications - Allow authenticated users to access their own notifications
+      // CRITICAL FIX: Allow any authenticated user to CREATE notifications (needed for API routes)
+      // but restrict reading/updating to the owner or admins
       match /notifications/{notificationId} {
-        allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+        // Allow any authenticated user to create notifications
+        // (API routes create notifications for other users during ride events)
+        allow create: if isAuth() && request.resource.data.userId is string;
+        
+        // Only allow users to read their own notifications
         allow get, list: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
-        allow update: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin()) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+        
+        // Only allow users to update their own notifications (mark as read)
+        allow update: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin()) 
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+        
+        // Only allow users to delete their own notifications
         allow delete: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
       }
 

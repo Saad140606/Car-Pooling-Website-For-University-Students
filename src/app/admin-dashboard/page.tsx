@@ -14,14 +14,45 @@ import {
   Building2,
   ArrowUpRight,
   Zap,
+  Shield,
+  Loader2,
 } from "lucide-react";
 import { useAdminAnalytics, UniversityStats } from "@/hooks/useAdminAnalytics";
+import { useAdminAuth } from "@/hooks/useAdminAuth";
 
 type FilterType = "all" | "fast" | "ned" | "karachi";
 
 export default function AdminDashboardPage() {
+  // 🔒 SECURITY: Verify admin authentication
+  const { loading: authLoading, isAdmin, error: authError } = useAdminAuth();
   const analytics = useAdminAnalytics();
   const [filter, setFilter] = useState<FilterType>("all");
+
+  // 🔒 SECURITY: Block rendering until admin verification completes
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+        <div className="text-center">
+          <Shield className="w-12 h-12 animate-pulse text-primary mx-auto mb-4" />
+          <p className="text-slate-400 text-lg">Verifying admin credentials...</p>
+          <p className="text-slate-500 text-sm mt-2">Authenticating with backend...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 🔒 SECURITY: Block access if not admin (will auto-redirect)
+  if (!isAdmin || authError) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+        <div className="text-center">
+          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <p className="text-red-400 text-lg">Unauthorized Access</p>
+          <p className="text-slate-500 text-sm mt-2">Redirecting to login...</p>
+        </div>
+      </div>
+    );
+  }
 
   const getStats = (): UniversityStats => {
     switch (filter) {

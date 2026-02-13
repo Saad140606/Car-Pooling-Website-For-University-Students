@@ -7,6 +7,7 @@ import type { DocumentData, Query } from 'firebase/firestore';
 import { useFirestore } from '../provider';
 import { errorEmitter } from '../error-emitter';
 import { FirestorePermissionError } from '../errors';
+import { emitNetworkError } from '@/components/NetworkErrorListener';
 
 interface UseCollectionOptions {
   listen?: boolean;
@@ -101,25 +102,39 @@ export function useCollection<T extends DocumentData>(
         }).filter(Boolean) as string[])];
 
         if (userIds.length > 0) {
-          // Instead of running a collection query against /users (which requires list permissions),
-          // fetch each user doc individually. This avoids triggering a global permission denied
-          // error when the rules intentionally prevent listing the users collection.
+          // OPTIMIZED: Fetch user documents in batches with concurrency limit
+          // Get the current user's university from context if available
+          const userUniversity = (firestore as any)?.app?.options?.projectId?.includes('fast') ? 'fast' : 'fast'; // Default to 'fast'
+          
           const userMap = new Map<string, any>();
-          await Promise.all(userIds.map(async (uid: string) => {
-            try {
-              // Try university-scoped paths: users/{uni}/{uid}
-              const fastRef = doc(firestore, 'universities', 'fast', 'users', uid);
-              const fastSnap = await getDoc(fastRef);
-              if (fastSnap.exists()) { userMap.set(uid, fastSnap.data()); return; }
-              const nedRef = doc(firestore, 'universities', 'ned', 'users', uid);
-              const nedSnap = await getDoc(nedRef);
-              if (nedSnap.exists()) { userMap.set(uid, nedSnap.data()); return; }
-            } catch (err) {
-              // Likely a permission-denied for this user; skip details for this uid but do not
-              // emit a global permission error as that's noisy and expected in many setups.
-              console.debug('Skipping user details for', uid, 'due to fetch error:', err);
-            }
-          }));
+          
+          // Fetch users in batches of 5 to avoid overwhelming Firebase
+          const BATCH_SIZE = 5;
+          for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+            const batch = userIds.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async (uid: string) => {
+              try {
+                // Try primary university first (most likely)
+                const primaryRef = doc(firestore, 'universities', userUniversity, 'users', uid);
+                const primarySnap = await getDoc(primaryRef);
+                if (primarySnap.exists()) { 
+                  userMap.set(uid, primarySnap.data()); 
+                  return; 
+                }
+                
+                // Fallback to alternative universities if primary doesn't have user
+                const altRef = doc(firestore, 'universities', userUniversity === 'fast' ? 'ned' : 'fast', 'users', uid);
+                const altSnap = await getDoc(altRef);
+                if (altSnap.exists()) { 
+                  userMap.set(uid, altSnap.data()); 
+                  return; 
+                }
+              } catch (err) {
+                // Skip this user on error (expected if no permissions)
+                console.debug('Skipping user details for', uid, 'due to fetch error:', err);
+              }
+            }));
+          }
 
           items = items.map((item: any) => ({
             ...item,
@@ -163,6 +178,8 @@ export function useCollection<T extends DocumentData>(
             errorEmitter.emit('permission-error', permissionError);
             setError(permissionError);
           } else {
+            // Emit network error for non-permission errors
+            emitNetworkError(err);
             setError(err);
           }
           setLoading(false);
@@ -188,6 +205,8 @@ export function useCollection<T extends DocumentData>(
             errorEmitter.emit('permission-error', permissionError);
             setError(permissionError);
           } else {
+            // Emit network error for non-permission errors
+            emitNetworkError(err);
             setError(err);
           }
           setLoading(false);

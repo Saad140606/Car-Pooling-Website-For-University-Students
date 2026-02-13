@@ -1,16 +1,27 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { signInWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { Shield, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 
 export default function AdminLoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Check for error parameter in URL
+  useEffect(() => {
+    const errorParam = searchParams.get('error');
+    if (errorParam === 'unauthorized') {
+      setError('Unauthorized access. Only verified administrators can access the admin portal.');
+    } else if (errorParam === 'verification-failed') {
+      setError('Failed to verify admin status. Please try again.');
+    }
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,11 +31,41 @@ export default function AdminLoginPage() {
     try {
       const auth = getAuth();
       
-      // Sign in with Firebase - that's it
-      await signInWithEmailAndPassword(auth, email, password);
-      
-      // If sign in succeeds, redirect to dashboard immediately
-      console.log('[AdminLogin] ✅ Login successful');
+      // STEP 1: Authenticate with Firebase
+      console.log('[AdminLogin] Step 1: Authenticating with Firebase...');
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      console.log('[AdminLogin] ✅ Firebase authentication successful:', user.uid);
+
+      // STEP 2: Get Firebase ID token
+      console.log('[AdminLogin] Step 2: Getting ID token...');
+      const idToken = await user.getIdToken();
+
+      // STEP 3: Verify admin role with backend
+      console.log('[AdminLogin] Step 3: Verifying admin role...');
+      const response = await fetch('/api/admin/isAdmin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ email: user.email }),
+      });
+
+      const data = await response.json();
+
+      // STEP 4: Check if user is admin
+      if (!data.isAdmin) {
+        // ❌ NOT AN ADMIN - Block access immediately
+        console.error('[AdminLogin] ❌ User is not an admin:', user.email);
+        await auth.signOut(); // Force sign out
+        setError('Admin account not found or unauthorized access. Only verified administrators can access this portal.');
+        setLoading(false);
+        return;
+      }
+
+      // ✅ ADMIN VERIFIED - Allow access
+      console.log('[AdminLogin] ✅ Admin role verified, redirecting to dashboard');
       router.replace('/admin-dashboard');
       return;
     } catch (err: any) {

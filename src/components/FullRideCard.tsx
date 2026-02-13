@@ -3,6 +3,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import RideCard from './RideCard';
+import RideDetailModal from './RideDetailModal';
 import StopsViewer from './StopsViewer';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
@@ -12,6 +13,7 @@ import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore
 import { decodePolyline } from '@/lib/route';
 import { detectUniversityFromString } from '@/lib/universities';
 import { parseTimestamp } from '@/lib/timestampUtils';
+import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
@@ -20,6 +22,7 @@ function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
 
 export default function FullRideCard({ ride, user, userData, firestore, myBookings, openBookingOnMount, selectedUniversity }: { ride: any; user: any; userData: any; firestore: any; myBookings?: any[]; openBookingOnMount?: boolean; selectedUniversity?: string }) {
   const router = useRouter();
+  const [openDetail, setOpenDetail] = useState(false);
   const [openView, setOpenView] = useState(false);
   const [openBook, setOpenBook] = useState(false);
   const [openStops, setOpenStops] = useState(false);
@@ -34,6 +37,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
   const [confirmCountdown, setConfirmCountdown] = useState<string | null>(null);
   const [showConfirmWarning, setShowConfirmWarning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   const isDriver = user && ride.driverId === user.uid;
   const isFull = (ride.availableSeats ?? 0) <= 0;
@@ -409,8 +413,16 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to cancel');
-      toast({ title: 'Request Cancelled', description: 'Your request has been cancelled.' });
+      if (!res.ok) {
+        if (res.status === 403) {
+          toast({ variant: 'destructive', title: 'Account Locked', description: data.message || 'Your account has been locked due to high cancellation rates.' });
+        } else {
+          throw new Error(data.error || 'Failed to cancel');
+        }
+      } else {
+        toast({ title: 'Request Cancelled', description: 'Your request has been cancelled.' });
+        setShowCancelDialog(false);
+      }
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Cancellation Failed', description: err?.message || String(err) });
     } finally {
@@ -484,6 +496,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
         onViewRoute={() => setOpenView(true)}
         onViewStops={() => setOpenStops(true)}
+        onCardClick={() => setOpenDetail(true)}
         onBook={() => {
           if (!user) {
             router.push('/auth/select-university');
@@ -666,7 +679,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
                         {loading ? 'Setting...' : 'Confirm Later'}
                       </button>
                       <button
-                        onClick={handleCancelRequest}
+                        onClick={() => setShowCancelDialog(true)}
                         disabled={cancelling}
                         className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
                       >
@@ -686,7 +699,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
                         Confirm Ride
                       </button>
                       <button
-                        onClick={handleCancelRequest}
+                        onClick={() => setShowCancelDialog(true)}
                         disabled={cancelling}
                         className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
                       >
@@ -708,7 +721,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
                 Your request is waiting for the ride provider to respond.
               </p>
               <button
-                onClick={handleCancelRequest}
+                onClick={() => setShowCancelDialog(true)}
                 disabled={cancelling}
                 className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
               >
@@ -831,6 +844,51 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Ride Detail Modal */}
+      <RideDetailModal
+        open={openDetail}
+        onOpenChange={setOpenDetail}
+        ride={ride}
+        driverName={ride.driverInfo?.fullName || 'Provider'}
+        driverVerified={ride.driverInfo?.isVerified || ride.driverInfo?.universityEmailVerified || false}
+        startLocation={start}
+        endLocation={end}
+        rideDateTime={departure}
+        price={ride.price}
+        seatsLeft={ride.availableSeats}
+        genderPreference={ride.genderAllowed === 'both' ? 'Both' : ride.genderAllowed}
+        transport={ride.transportMode || ride.transport}
+        university={ride.universe}
+        hideUniversity={userData?.university === ride.university}
+        statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
+        onViewStops={() => {
+          setOpenDetail(false);
+          setOpenStops(true);
+        }}
+        onBook={() => {
+          if (!user) {
+            router.push('/auth/select-university');
+            return;
+          }
+          setOpenDetail(false);
+          setOpenBook(true);
+        }}
+        disabled={!existingChecked ? true : !!disabledReason}
+        disabledReason={!existingChecked ? 'Checking...' : disabledReason}
+      />
+
+      {/* Cancellation Confirmation Dialog */}
+      <CancellationConfirmDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        onConfirm={handleCancelRequest}
+        onCancel={() => setShowCancelDialog(false)}
+        isLoading={cancelling}
+        cancellerRole="passenger"
+        cancellationRate={0} // Not tracked in find-rides view
+        minutesUntilDeparture={0}
+      />
     </div>
   );
 }

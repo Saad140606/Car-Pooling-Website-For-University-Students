@@ -22,6 +22,19 @@ export interface UserProfile {
   // Password rate limiting
   passwordChangeCount?: number;
   passwordChangeWindowStart?: number;
+  
+  // ===== RIDE CANCELLATION TRACKING =====
+  // Track participation and cancellation metrics
+  totalParticipations?: number; // Total rides offered or booked
+  totalCancellations?: number; // Total times cancelled (any status)
+  lateCancellations?: number; // Cancellations after CONFIRMED status
+  lastCancellationAt?: Timestamp; // When user last cancelled a ride
+  
+  // ===== ABUSE PREVENTION =====
+  // Auto-lock account if cancellation rate exceeds 35% (after 3+ participations)
+  accountLockUntil?: Timestamp; // Account locked until this timestamp
+  // Cooldown period after 3 late cancellations
+  cooldownUntil?: Timestamp; // User cannot cancel again until this time
 }
 
 // Canonical user profile used for new hierarchical storage under
@@ -77,6 +90,16 @@ export interface Ride {
     idVerified?: boolean;
     isVerified?: boolean;
   };
+  
+  // ===== CANCELLATION FIELDS =====
+  // When ride was cancelled by driver
+  cancelledAt?: Timestamp;
+  // ID of user who cancelled (driver)
+  cancelledBy?: string;
+  // Reason for cancellation
+  cancellationReason?: string;
+  // Runtime: passengers who have confirmed booking (used during confirmation flow)
+  confirmedPassengers?: string[];
 }
 
 export interface Booking {
@@ -84,7 +107,7 @@ export interface Booking {
   rideId: string;
   driverId: string;
   passengerId: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'CONFIRMED' | 'declined';
+  status: 'pending' | 'accepted' | 'rejected' | 'CONFIRMED' | 'declined' | 'CANCELLED';
   price?: number;
   pickupPlaceName?: string;
   createdAt: Timestamp;
@@ -92,6 +115,16 @@ export interface Booking {
   passengerDetails?: UserProfile;
   driverDetails?: UserProfile;
   pickupPoint?: { lat: number, lng: number };
+  
+  // ===== CANCELLATION FIELDS =====
+  // When booking was cancelled
+  cancelledAt?: Timestamp;
+  // ID of user who cancelled (driver or passenger)
+  cancelledBy?: string;
+  // Reason for cancellation
+  cancellationReason?: string;
+  // Whether this was a late cancellation (status was CONFIRMED when cancelled)
+  isLateCancellation?: boolean;
 }
 
 // Ride Request status lifecycle for multi-request flow

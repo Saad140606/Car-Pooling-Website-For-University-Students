@@ -187,53 +187,71 @@ export async function fetchUserAnalyticsData(
     console.debug('[Analytics] Could not fetch bookings:', e);
   }
 
-  // CRITICAL FIX: Enrich bookings with ride data to check completion status
+  // CRITICAL FIX: Batch fetch rides for passenger bookings instead of sequential getDoc
   const rideMap = new Map<string, RawRideData>();
   
   // Add driver rides to map
   driverRides.forEach(ride => rideMap.set(ride.id, ride));
   
-  // Fetch rides for passenger bookings and build enriched booking data
+  // Collect all missing ride IDs that need to be fetched
+  const missingRideIds: string[] = [];
   for (const booking of bookingsRaw) {
-    let enrichedBooking: RawBookingData & { rideData?: RawRideData } = { ...booking };
-    
-    if (booking.rideId) {
-      if (rideMap.has(booking.rideId)) {
-        enrichedBooking.rideData = rideMap.get(booking.rideId);
-      } else {
-        // Try to fetch the ride individually
-        try {
-          const rideRef = doc(firestore, `universities/${university}/rides/${booking.rideId}`);
-          const rideSnapshot = await getDoc(rideRef);
-          if (rideSnapshot.exists()) {
-            const rideData = { id: rideSnapshot.id, ...rideSnapshot.data() } as RawRideData;
-            enrichedBooking.rideData = rideData;
-            rideMap.set(booking.rideId, rideData);
-          }
-        } catch (e) {
-          console.debug(`[Analytics] Could not fetch ride ${booking.rideId}:`, e);
-        }
+    if (booking.rideId && !rideMap.has(booking.rideId)) {
+      if (!missingRideIds.includes(booking.rideId)) {
+        missingRideIds.push(booking.rideId);
       }
     }
-    passengerBookings.push(enrichedBooking);
   }
+  
+  // OPTIMIZED: Fetch missing rides in batches instead of sequential awaits
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < missingRideIds.length; i += BATCH_SIZE) {
+    const batch = missingRideIds.slice(i, i + BATCH_SIZE);
+    const rideSnapshots = await Promise.all(
+      batch.map(rideId =>
+        getDoc(doc(firestore, `universities/${university}/rides`, rideId)).catch(() => null)
+      )
+    );
+    
+    rideSnapshots.forEach(snapshot => {
+      if (snapshot?.exists()) {
+        const rideData = { id: snapshot.id, ...snapshot.data() } as RawRideData;
+        rideMap.set(snapshot.id, rideData);
+      }
+    });
+  }
+  
+  // Enrich bookings with cached ride data
+  const passengerBookings: (RawBookingData & { rideData?: RawRideData })[] = bookingsRaw.map(booking => {
+    const enrichedBooking: RawBookingData & { rideData?: RawRideData } = { ...booking };
+    if (booking.rideId && rideMap.has(booking.rideId)) {
+      enrichedBooking.rideData = rideMap.get(booking.rideId);
+    }
+    return enrichedBooking;
+  });
 
-  // For requests, we need to check ride subcollections
+  // For requests, we need to check ride subcollections - OPTIMIZED: Batch fetch with max 5 concurrent
   const passengerRequests: RawRequestData[] = [];
   const receivedRequests: RawRequestData[] = [];
 
-  // Fetch requests from all rides for this user as driver (received requests)
-  for (const ride of driverRides) {
-    try {
-      const requestsRef = collection(firestore, `universities/${university}/rides/${ride.id}/requests`);
-      const requestsSnapshot = await getDocs(requestsRef);
-      requestsSnapshot.docs.forEach(doc => {
-        const data = doc.data() as RawRequestData;
-        receivedRequests.push({ id: doc.id, ...data });
-      });
-    } catch (e) {
-      // Skip if can't read requests
-    }
+  // Fetch requests from all driver rides (received requests) - limit concurrency
+  const REQUEST_CONCURRENCY = 5;
+  for (let i = 0; i < driverRides.length; i += REQUEST_CONCURRENCY) {
+    const batch = driverRides.slice(i, i + REQUEST_CONCURRENCY);
+    const requestSnapshots = await Promise.all(
+      batch.map(ride =>
+        getDocs(collection(firestore, `universities/${university}/rides/${ride.id}/requests`)).catch(() => null)
+      )
+    );
+    
+    requestSnapshots.forEach(snapshot => {
+      if (snapshot) {
+        snapshot.docs.forEach(doc => {
+          const data = doc.data() as RawRequestData;
+          receivedRequests.push({ id: doc.id, ...data });
+        });
+      }
+    });
   }
 
   return {

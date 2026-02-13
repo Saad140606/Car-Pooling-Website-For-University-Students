@@ -78,27 +78,56 @@ async function createNotificationDoc(
   university: string,
   payload: NotificationPayload
 ): Promise<void> {
+  console.log('[RideNotificationService] Creating notification:', {
+    userId: payload.userId,
+    type: payload.type,
+    title: payload.title,
+    university
+  });
+  
   // Check for duplicate
   if (isDuplicate(payload.userId, payload.type, payload.relatedRideId)) {
     console.debug('[RideNotificationService] Skipping duplicate notification:', payload.type);
     return;
   }
   
-  const notificationsRef = collection(firestore, 'universities', university, 'notifications');
-  
-  await addDoc(notificationsRef, {
-    userId: payload.userId,
-    type: payload.type,
-    title: payload.title,
-    message: payload.message,
-    relatedRideId: payload.relatedRideId,
-    relatedBookingId: payload.relatedBookingId || null,
-    relatedChatId: null,
-    isRead: false,
-    priority: payload.priority || 'normal',
-    createdAt: serverTimestamp(),
-    metadata: payload.metadata || {}
-  });
+  try {
+    const notificationsRef = collection(firestore, 'universities', university, 'notifications');
+    
+    const docData = {
+      userId: payload.userId,
+      type: payload.type,
+      title: payload.title,
+      message: payload.message,
+      relatedRideId: payload.relatedRideId,
+      relatedBookingId: payload.relatedBookingId || null,
+      relatedChatId: null,
+      isRead: false,
+      priority: payload.priority || 'normal',
+      createdAt: serverTimestamp(),
+      metadata: payload.metadata || {}
+    };
+    
+    console.log('[RideNotificationService] Writing notification to Firestore:', docData);
+    
+    const docRef = await addDoc(notificationsRef, docData);
+    
+    console.log('[RideNotificationService] ✅ Notification created successfully:', {
+      notificationId: docRef.id,
+      userId: payload.userId,
+      type: payload.type
+    });
+  } catch (error: any) {
+    console.error('[RideNotificationService] ❌ FAILED to create notification:', {
+      error: error.message,
+      code: error.code,
+      userId: payload.userId,
+      type: payload.type,
+      stack: error.stack
+    });
+    // Re-throw to propagate the error
+    throw error;
+  }
 }
 
 /**

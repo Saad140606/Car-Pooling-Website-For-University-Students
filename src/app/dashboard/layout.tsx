@@ -41,16 +41,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [verificationChecked, setVerificationChecked] = useState(false);
 
-  // ===== CRITICAL SECURITY: Verify email verification status =====
-  // This is a safety check to ensure unverified users can't access dashboard
-  // even if they somehow bypass the login flow
+  // ═══ PERF: Cache verification status in sessionStorage to avoid repeated checks ═══
+  const VERIFICATION_CACHE_KEY = 'campus_rides_verification_checked';
+  
   useEffect(() => {
-    // Skip check until user data is loaded
-    if (!user || !userData || !initialized || !firestore || verificationChecked) return;
-
+    if (!user || !userData || !initialized || !firestore) return;
     
+    // Check cache first (per session)
+    if (sessionStorage.getItem(VERIFICATION_CACHE_KEY)) {
+      setVerificationChecked(true);
+      return;
+    }
 
-    // Check if email is verified
     const checkVerification = async () => {
       try {
         const university = userData?.university;
@@ -81,7 +83,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             description: 'Please verify your email to access the dashboard.',
           });
           
-          // Sign out and redirect to verification
           try {
             await auth?.signOut();
           } catch (e) {
@@ -92,6 +93,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           return;
         }
 
+        // ── PERF: Cache verification success ──
+        sessionStorage.setItem(VERIFICATION_CACHE_KEY, 'true');
         setVerificationChecked(true);
       } catch (error) {
         console.error('[Dashboard] Verification check failed:', error);
@@ -100,8 +103,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
 
     checkVerification();
-  }, [user, userData, initialized, firestore, verificationChecked, auth, router, toast]);
-  // ===== END CRITICAL SECURITY CHECK =====
+  }, [user, userData, initialized, firestore, auth, router, toast]);
+  // ===== END VERIFICATION CHECK =====
 
   // Auth redirect logic - only redirect unauthenticated users to login for certain pages
   useEffect(() => {

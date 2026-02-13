@@ -1,6 +1,9 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+// ── PERF: Import Leaflet CSS only when map components are actually used ──
+import 'leaflet/dist/leaflet.css';
+
 // Defensive patch: wrap Leaflet's Map.remove to ignore benign "being reused" errors
 if (typeof window !== 'undefined') {
   try {

@@ -1,6 +1,6 @@
 'use client';
 import { useUser, useFirestore } from '@/firebase';
-import { query, where, orderBy, doc, runTransaction, serverTimestamp, addDoc, getDoc, Timestamp } from 'firebase/firestore';
+import { query, where, orderBy, doc, runTransaction, serverTimestamp, addDoc, getDoc, Timestamp, limit } from 'firebase/firestore';
 import { safeCollection } from '@/firebase/helpers';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -873,26 +873,40 @@ function RidesPageInner() {
 
   // === ALL HOOK DEFINITIONS MUST HAPPEN BEFORE ANY NON-HOOK CODE ===
 
-  // Build queries - always execute unconditionally
+  // Build queries - OPTIMIZED: Add LIMIT to prevent fetching all rides at once
+  // Only show upcoming rides (30 days window) sorted by departure time
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 1);
+  
   const fastRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'fast', 'rides'),
-    where('status', '==', 'active')
+    where('status', '==', 'active'),
+    where('departureTime', '>=', thirtyDaysAgo),
+    orderBy('departureTime', 'asc'),
+    limit(50) // ── PERF: Limit initial load ──
   ) : null;
 
   const nedRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'ned', 'rides'),
-    where('status', '==', 'active')
+    where('status', '==', 'active'),
+    where('departureTime', '>=', thirtyDaysAgo),
+    orderBy('departureTime', 'asc'),
+    limit(50) // ── PERF: Limit initial load ──
   ) : null;
 
   const karachiRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'karachi', 'rides'),
-    where('status', '==', 'active')
+    where('status', '==', 'active'),
+    where('departureTime', '>=', thirtyDaysAgo),
+    orderBy('departureTime', 'asc'),
+    limit(50) // ── PERF: Limit initial load ──
   ) : null;
 
-  // Custom hooks - MUST be called unconditionally and in same order
-  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQuery);
-  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQuery);
-  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQuery);
+  // ── PERF: Use listen: false for search pages ──
+  // Rides search doesn't need real-time updates; user can refresh to see new rides
+  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQuery, { listen: false });
+  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQuery, { listen: false });
+  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQuery, { listen: false });
 
   // myBookingsQuery hook
   // CRITICAL FIX: Only fetch ACTIVE bookings at query level

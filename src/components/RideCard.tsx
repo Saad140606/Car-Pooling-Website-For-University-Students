@@ -22,6 +22,7 @@ type RideCardProps = {
   onViewRoute?: () => void;
   onViewStops?: () => void;
   onBook?: () => void;
+  onCardClick?: () => void;
   disabled?: boolean;
   disabledReason?: string;
   className?: string;
@@ -45,6 +46,7 @@ export default function RideCard({
   onViewRoute,
   onViewStops,
   onBook,
+  onCardClick,
   disabled,
   disabledReason,
   className,
@@ -92,10 +94,12 @@ export default function RideCard({
 
   return (
     <div
+      onClick={onCardClick}
       className={clsx(
         'w-full min-w-0 rounded-xl bg-[#1e2340] border border-white/10 shadow-lg text-white flex flex-col overflow-hidden h-full',
         'animate-bounce-in transition-all duration-300 hover-card-lift hover:shadow-2xl hover:shadow-primary/20',
         'hover:border-primary/40',
+        onCardClick ? 'cursor-pointer' : '',
         className
       )}
       onMouseEnter={() => setIsHovering(true)}
@@ -167,7 +171,10 @@ export default function RideCard({
 
         {/* Map - clickable */}
         <button
-          onClick={onViewRoute}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onViewRoute) onViewRoute();
+          }}
           className="relative h-14 md:h-16 rounded-lg overflow-hidden bg-[#0f172a] w-full cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-primary/20 group"
         >
           <img
@@ -209,7 +216,10 @@ export default function RideCard({
         <div className="flex items-center justify-between gap-2 mt-1.5 animate-slide-and-fade">
           <div className="flex gap-1.5">
             <button
-              onClick={onViewStops}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onViewStops) onViewStops();
+              }}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 hover:shadow-md text-xs transition-all duration-200 btn-press"
             >
               <Search className="w-3 h-3" />
@@ -218,7 +228,10 @@ export default function RideCard({
           </div>
 
           <button
-            onClick={(e) => { if (!disabled && onBook) onBook(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!disabled && onBook) onBook();
+            }}
             className={`rounded-md py-1 text-xs font-semibold flex items-center justify-center gap-1 transition-all duration-200 btn-press ${disabled ? 'bg-white/10 text-white/60 cursor-not-allowed' : 'bg-gradient-to-r from-[#3b4cca] to-primary hover:shadow-lg hover:shadow-primary/40 text-white hover-glow'}`}
             style={{ minWidth: '6rem' }}
             title={disabled && disabledReason ? disabledReason : undefined}

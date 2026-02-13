@@ -21,7 +21,8 @@ export interface NotificationPayload {
 class NotificationManager {
   private listeners: Set<(payload: NotificationPayload) => void> = new Set();
   private notificationCounts: Map<string, number> = new Map();
-  private soundUrl: string = '/notification-sound.mp3';
+  // Use base64 audio to avoid 404 errors from missing sound files
+  private soundUrl: string = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==';
 
   /**
    * Subscribe to notification events
@@ -53,11 +54,13 @@ class NotificationManager {
     try {
       const audio = new Audio(this.soundUrl);
       audio.volume = 0.5;
+      // Suppress loading errors silently
+      audio.onerror = () => {};
       audio.play().catch(() => {
-        console.debug('[NotificationManager] Could not play notification sound');
+        // Silent fail - don't spam console
       });
     } catch (error) {
-      console.debug('[NotificationManager] Sound play error:', error);
+      // Silent fail - audio not supported or blocked
     }
   }
 

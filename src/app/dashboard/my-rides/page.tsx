@@ -1,6 +1,6 @@
 'use client';
 
-import { collection, query, where, orderBy, doc, writeBatch, runTransaction, getDocs, getDoc, serverTimestamp, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, doc, writeBatch, runTransaction, getDocs, getDoc, serverTimestamp, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { useFirestore, useUser } from '@/firebase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -24,6 +24,9 @@ import { useNotifications } from '@/contexts/NotificationContext';
 import { InlineVerifiedBadge } from '@/components/VerificationBadge';
 import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { isUserVerified } from '@/lib/verificationUtils';
+import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
+import PassengerDetailModal from '@/components/PassengerDetailModal';
+import { notifyRequestAccepted } from '@/lib/rideNotificationService';
 import React from 'react';
 
 // Fix for default icon not showing in Leaflet
@@ -63,8 +66,10 @@ function formatPickupLabel(booking: { id?: string; pickupPlaceName?: string | nu
 
 function BookingRequests({ ride, university, onProcessed }: { ride: RideType, university: string, onProcessed?: (bookingId: string, status: 'accepted' | 'rejected') => void }) {
   const firestore = useFirestore();
-  const { user } = useUser();
+  const { user, data: userData } = useUser();
   const { toast } = useToast();
+  const [selectedRequest, setSelectedRequest] = React.useState<any | null>(null);
+  const [showRequestDetail, setShowRequestDetail] = React.useState(false);
 
   console.log('[BookingRequests] Component mounted with ride:', { 
     rideId: ride?.id, 
@@ -75,12 +80,22 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   // Read requests from the ride-scoped `requests` subcollection so ride owners
   // can safely list only requests for their ride (rules allow listing here).
   // CRITICAL: Only create query if ride.id is defined to prevent invalid collection paths
+  // listen: true (default) enables real-time updates via onSnapshot
   const bookingsQuery = (firestore && ride?.id) ? query(
     collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
     where('status', 'in', ['PENDING', 'pending'])
   ) : null;
 
-  const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId' });
+  const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId', listen: true });
+  
+  // Query accepted bookings to filter out duplicate requests from same passenger
+  const acceptedBookingsQuery = (firestore && ride?.id) ? query(
+    collection(firestore, `universities/${university}/bookings`),
+    where('rideId', '==', ride.id),
+    where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED'])
+  ) : null;
+  const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery, { listen: true });
+  
   const [processingIds, setProcessingIds] = React.useState<string[]>([]);
   const [shownBookings, setShownBookings] = React.useState<BookingType[]>([]);
   const [placeNames, setPlaceNames] = React.useState<Record<string, string>>({});
@@ -88,10 +103,22 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   // Keep local shown list in sync with upstream bookings, but allow optimistic
   // removal immediately after an accept/reject so the UI does not permit
   // duplicate accepts while waiting for Firestore listeners to update.
+  // CRITICAL FIX: Filter out requests from passengers who already have accepted bookings
   React.useEffect(() => {
     if (!bookings) return setShownBookings([]);
-    setShownBookings(bookings);
-  }, [bookings]);
+    
+    // Create a Set of passenger IDs who already have accepted bookings
+    const acceptedPassengerIds = new Set(
+      acceptedBookings?.map(b => b.passengerId).filter(Boolean) || []
+    );
+    
+    // Filter out any pending requests from passengers who are already accepted
+    const filteredBookings = bookings.filter(
+      booking => !acceptedPassengerIds.has(booking.passengerId)
+    );
+    
+    setShownBookings(filteredBookings);
+  }, [bookings, acceptedBookings]);
   
   // Fetch place names for bookings that have coordinates but no place name
   React.useEffect(() => {
@@ -261,6 +288,57 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
         });
 
         console.log('[handleBooking] Acceptance processed successfully via transaction');
+        
+        // CRITICAL: Send notification to passenger about acceptance
+        try {
+          console.log('[handleBooking] Sending acceptance notification to passenger:', booking.passengerId);
+          await notifyRequestAccepted(
+            firestore,
+            university,
+            booking.passengerId,
+            rideId,
+            booking.id,
+            {
+              from: ride.from,
+              to: ride.to,
+              departureTime: ride.departureTime,
+              driverName: user?.displayName || userData?.fullName || 'Driver'
+            }
+          );
+          console.log('[handleBooking] ✅ Notification sent successfully');
+        } catch (notifError) {
+          console.error('[handleBooking] ❌ Failed to send notification:', notifError);
+          // Non-critical - don't fail the whole operation
+        }
+        
+        // CRITICAL: Reject all other pending requests from the same passenger to prevent double-booking
+        try {
+          const otherRequestsQuery = query(
+            collection(firestore, `universities/${university}/rides/${rideId}/requests`),
+            where('passengerId', '==', booking.passengerId),
+            where('status', 'in', ['PENDING', 'pending'])
+          );
+          const otherRequestsSnapshot = await getDocs(otherRequestsQuery);
+          
+          if (!otherRequestsSnapshot.empty) {
+            const batch = writeBatch(firestore);
+            otherRequestsSnapshot.docs.forEach(docSnap => {
+              if (docSnap.id !== booking.id) {
+                console.log('[handleBooking] Auto-rejecting duplicate request:', docSnap.id);
+                batch.update(docSnap.ref, { 
+                  status: 'rejected', 
+                  rejectionReason: 'Passenger already accepted for this ride',
+                  updatedAt: serverTimestamp()
+                });
+              }
+            });
+            await batch.commit();
+            console.log('[handleBooking] Auto-rejected other pending requests from same passenger');
+          }
+        } catch (cleanupError) {
+          console.warn('[handleBooking] Failed to auto-reject duplicate requests:', cleanupError);
+          // Non-critical - the UI filter will prevent showing them anyway
+        }
       } else {
         // For rejects: use direct Firestore update
         console.log('[handleBooking] Processing rejection...');
@@ -343,51 +421,177 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   if (!bookings || bookings.length === 0) return <p className="text-slate-400 text-sm mt-4">No pending requests.</p>
 
   return (
-    <div className="mt-4 space-y-3">
-      <h4 className="font-semibold text-slate-200">Booking Requests</h4>
-      {shownBookings.map((booking: any) => (
-        <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-800/40 backdrop-blur-sm rounded-lg">
-          <div>
-            <div className="mb-2">
-              <UserNameWithBadge 
-                name={booking.passengerDetails?.fullName || 'User'} 
-                verified={isUserVerified(booking.passengerDetails)}
-                size="md"
-                truncate={false}
-              />
-            </div>
-            {booking.passengerDetails?.phone ? (
-              <p className="text-sm text-slate-300">{booking.passengerDetails.phone}</p>
-            ) : null}
-             <p className="text-xs text-accent flex items-center mt-1">
-               <MapPin className="h-3 w-3 mr-1"/> {formatPickupLabel(booking, placeNames)}
-             </p>
-          </div>
-          <div className="flex gap-2">
-            <Button 
-              size="icon" 
-              variant="outline" 
-              className="h-8 w-8 bg-green-500/10 text-green-500 hover:bg-green-500/20" 
-              onClick={() => handleBooking(booking, 'accepted')} 
-              disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
-              title="Accept request"
-            >
-              <Check className="h-4 w-4" />
-            </Button>
-            <Button 
-              size="icon" 
-              variant="outline" 
-              className="h-8 w-8 bg-red-500/10 text-red-500 hover:bg-red-500/20" 
-              onClick={() => handleBooking(booking, 'rejected')} 
-              disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
-              title="Reject request"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+    <>
+      <div className="mt-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="font-bold text-sm text-white flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+            Booking Requests
+            <Badge className="bg-amber-500/20 text-amber-300 text-xs">{shownBookings.length}</Badge>
+          </h4>
         </div>
-      ))}
-    </div>
+        {shownBookings.map((booking: any) => (
+          <div 
+            key={booking.id} 
+            onClick={() => {
+              setSelectedRequest(booking);
+              setShowRequestDetail(true);
+            }}
+            className="group relative flex items-center justify-between p-4 bg-gradient-to-br from-slate-800/60 via-slate-800/40 to-slate-900/60 backdrop-blur-sm rounded-xl border border-slate-700/50 hover:border-amber-500/50 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 hover:-translate-y-0.5"
+          >
+            {/* Gradient overlay on hover */}
+            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/5 to-amber-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
+            
+            <div className="relative z-10 flex-1 min-w-0">
+              <div className="mb-2 flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center font-semibold text-xs text-amber-300 flex-shrink-0">
+                  {(booking.passengerDetails?.fullName || 'U').split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase()}
+                </div>
+                <UserNameWithBadge 
+                  name={booking.passengerDetails?.fullName || 'User'} 
+                  verified={isUserVerified(booking.passengerDetails)}
+                  size="md"
+                  truncate={false}
+                />
+              </div>
+              <div className="flex items-start gap-2 mt-2">
+                <MapPin className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-amber-200/90 font-medium line-clamp-2">
+                  {formatPickupLabel(booking, placeNames)}
+                </p>
+              </div>
+              <p className="text-xs text-slate-400 mt-1.5 ml-6">Click to view full details</p>
+            </div>
+            
+            <div className="relative z-10 flex gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+              <Button 
+                size="icon" 
+                variant="outline" 
+                className="h-9 w-9 bg-green-500/10 text-green-400 hover:bg-green-500/20 hover:text-green-300 border-green-500/30 hover:border-green-500/50 transition-all duration-300 hover:scale-110" 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleBooking(booking, 'accepted');
+                }} 
+                disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
+                title="Accept request"
+              >
+                <Check className="h-5 w-5" />
+              </Button>
+              <Button 
+                size="icon" 
+                variant="outline" 
+                className="h-9 w-9 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 border-red-500/30 hover:border-red-500/50 transition-all duration-300 hover:scale-110" 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleBooking(booking, 'rejected');
+                }} 
+                disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
+                title="Reject request"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Passenger Request Detail Modal */}
+      {selectedRequest && (
+        <Dialog open={showRequestDetail} onOpenChange={setShowRequestDetail}>
+          <DialogContent className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border-slate-700 max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-white text-lg flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                Request Details
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-4 mt-4">
+              {/* Passenger Info */}
+              <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <h3 className="text-xs text-slate-400 mb-2">PASSENGER</h3>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center font-semibold text-sm text-amber-300">
+                    {(selectedRequest.passengerDetails?.fullName || 'U').split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase()}
+                  </div>
+                  <div>
+                    <UserNameWithBadge 
+                      name={selectedRequest.passengerDetails?.fullName || 'User'} 
+                      verified={isUserVerified(selectedRequest.passengerDetails)}
+                      size="lg"
+                    />
+                    {selectedRequest.passengerDetails?.gender && (
+                      <p className="text-xs text-slate-400 mt-1">{selectedRequest.passengerDetails.gender}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Pickup Location */}
+              <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <h3 className="text-xs text-slate-400 mb-2">PICKUP LOCATION</h3>
+                <div className="flex items-start gap-2">
+                  <MapPin className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-amber-200/90 font-medium break-words">
+                    {selectedRequest.pickupPlaceName || placeNames?.[selectedRequest.id] || 'Pickup not set'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Ride Details */}
+              <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <h3 className="text-xs text-slate-400 mb-3">RIDE DETAILS</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Price:</span>
+                    <span className="font-semibold text-primary">PKR {ride.price}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Date & Time:</span>
+                    <span className="text-slate-300">{formatTimestamp(ride.departureTime, { format: 'short' })}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Contact Info - Only shown after acceptance */}
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                <p className="text-xs text-amber-200/80 flex items-start gap-2">
+                  <span className="text-amber-400 mt-0.5">ℹ️</span>
+                  Contact information will be available after accepting the request.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-2">
+                <Button
+                  onClick={() => {
+                    handleBooking(selectedRequest, 'accepted');
+                    setShowRequestDetail(false);
+                  }}
+                  disabled={processingIds.includes(selectedRequest.id)}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Check className="h-4 w-4 mr-2" />
+                  Accept Request
+                </Button>
+                <Button
+                  onClick={() => {
+                    handleBooking(selectedRequest, 'rejected');
+                    setShowRequestDetail(false);
+                  }}
+                  disabled={processingIds.includes(selectedRequest.id)}
+                  variant="outline"
+                  className="flex-1 border-red-500/50 text-red-400 hover:bg-red-500/10"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Reject
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 
@@ -414,6 +618,10 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const pickupPoints = [...acceptedPoints, ...pendingPoints];
     const [isDeleting, setIsDeleting] = React.useState(false);
     const [deleteOpen, setDeleteOpen] = React.useState(false);
+    const [isCancelling, setIsCancelling] = React.useState(false);
+    const [showCancelDialog, setShowCancelDialog] = React.useState(false);
+    const [selectedPassenger, setSelectedPassenger] = React.useState<any | null>(null);
+    const [showPassengerDetail, setShowPassengerDetail] = React.useState(false);
     const acceptedCount = acceptedBookings?.length || 0;
     const [availableSeats, setAvailableSeats] = React.useState<number>(ride.availableSeats ?? 0);
 
@@ -469,57 +677,97 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 
       setIsDeleting(true);
       try {
-        const bookingsQuery = query(collection(firestore, `universities/${university}/bookings`), where('rideId', '==', ride.id));
-        const bookingsSnap = await getDocs(bookingsQuery);
-        const batch = writeBatch(firestore);
-        bookingsSnap.forEach((b) => batch.delete(doc(firestore, `universities/${university}/bookings`, b.id)));
-        // Also remove any ride-scoped requests
-        try {
-          const requestsSnap = await getDocs(collection(firestore, `universities/${university}/rides/${ride.id}/requests`));
-          requestsSnap.forEach((r) => batch.delete(doc(firestore, `universities/${university}/rides/${ride.id}/requests`, r.id)));
-        } catch (_) {
-          // ignore — some environments may not have requests yet
-        }
-        // Also remove any chats linked to this ride (created when bookings were accepted)
-        try {
-          const chatsQuery = query(collection(firestore, `universities/${university}/chats`), where('rideId', '==', ride.id));
-          const chatsSnap = await getDocs(chatsQuery);
-          chatsSnap.forEach((c) => batch.delete(doc(firestore, `universities/${university}/chats`, c.id)));
-        } catch (_) {
-          // ignore — chats may not exist
-        }
-        batch.delete(doc(firestore, `universities/${university}/rides`, ride.id));
-        await batch.commit();
+        // Call the new backend delete API instead of client-side Firestore
+        const response = await fetch('/api/rides/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            university,
+            rideId: ride.id,
+          }),
+        });
 
-        toast({ title: 'Deleted', description: 'Ride and pending bookings (if any) have been deleted.' });
+        const data = await response.json();
+
+        if (!response.ok) {
+          // Handle specific errors
+          if (response.status === 403) {
+            toast({ variant: 'destructive', title: 'Permission Denied', description: data.message || 'You do not have permission to delete this ride.' });
+          } else if (response.status === 400) {
+            toast({ variant: 'destructive', title: 'Cannot Delete', description: data.message || 'This ride cannot be deleted. It may have accepted bookings.' });
+          } else if (response.status === 404) {
+            toast({ variant: 'destructive', title: 'Not Found', description: 'Ride not found. It may have already been deleted.' });
+          } else {
+            toast({ variant: 'destructive', title: 'Delete Failed', description: data.message || 'An error occurred while deleting the ride.' });
+          }
+          setDeleteOpen(false);
+          return;
+        }
+
+        toast({ title: 'Deleted', description: 'Ride has been deleted successfully.' });
         setDeleteOpen(false);
       } catch (err: any) {
         console.error('Delete ride failed', err);
-        // Map Firestore permission-denied to an actionable message
-        if (err?.code === 'permission-denied' || String(err?.message).includes('permission-denied')) {
-          // Fetch the ride doc again to get more info for the user (debug help)
-          try {
-            const rSnap = await getDoc(doc(firestore, `universities/${university}/rides`, ride.id));
-            const rideData = rSnap.exists() ? rSnap.data() as any : null;
-            const ownerId = rideData?.driverId || rideData?.createdBy || 'unknown';
-            toast({ variant: 'destructive', title: 'Could not delete ride', description: `Missing or insufficient permissions. Driver ID: ${ownerId}. Ensure your account has access or run the Firestore emulator to test rules (see docs/firestore-rules.md).` });
-          } catch (e) {
-            toast({ variant: 'destructive', title: 'Could not delete ride', description: 'Missing or insufficient permissions. Ensure your account has access or run the Firestore emulator to test rules (see docs/firestore-rules.md).' });
-          }
-        } else {
-          toast({ variant: 'destructive', title: 'Could not delete ride', description: err?.message || 'An error occurred while deleting the ride.' });
-        }
-
-        try {
-          const permissionError = new FirestorePermissionError({ path: `universities/${university}/rides`, operation: 'delete' });
-          setTimeout(() => errorEmitter.emit('permission-error', permissionError), 50);
-        } catch (emitErr) {
-          console.error('Failed to emit permission-error:', emitErr);
-        }
+        toast({ variant: 'destructive', title: 'Error', description: err?.message || 'An error occurred while deleting the ride.' });
       } finally {
         setIsDeleting(false);
       }
     }; 
+
+    const handleCancelRide = async () => {
+      if (!user || user.uid !== ride.driverId) {
+        toast({ variant: 'destructive', title: 'Not allowed', description: 'Only the driver can cancel this ride.' });
+        return;
+      }
+
+      setIsCancelling(true);
+      try {
+        const response = await fetch('/api/rides/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            university,
+            rideId: ride.id,
+            reason: 'Driver cancelled ride',
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          // Handle specific error messages
+          if (response.status === 403) {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Account Locked', 
+              description: data.message || 'Your account has been temporarily locked due to high cancellation rates.'
+            });
+          } else {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Cancellation Failed', 
+              description: data.message || 'Failed to cancel ride. Please try again.' 
+            });
+          }
+          return;
+        }
+
+        toast({ 
+          title: 'Ride Cancelled', 
+          description: `${data.data?.passengersAffected || 0} passengers have been notified.` 
+        });
+        setShowCancelDialog(false);
+      } catch (error: any) {
+        console.error('Cancel ride error:', error);
+        toast({ 
+          variant: 'destructive', 
+          title: 'Error', 
+          description: error?.message || 'Failed to cancel ride. Please try again.' 
+        });
+      } finally {
+        setIsCancelling(false);
+      }
+    };
 
     return (
         <Card className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative">
@@ -557,9 +805,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             </CardHeader>
             <CardContent className="p-0">
 
-              <div className="mb-2">
+              <div className="mb-3">
                 {ride.route && ride.route.length > 0 && (
-                  <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
+                  <div className="mt-0">
+                    <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
+                  </div>
                 )}
               </div>
 
@@ -569,19 +819,31 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
               {acceptedBookings && acceptedBookings.filter(b => b.status === 'CONFIRMED').length > 0 && (
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center gap-2 relative">
-                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    <CheckCircle2 className="h-5 w-5 text-green-400" />
                     <h4 className="font-bold text-sm text-white">Confirmed Passengers</h4>
-                    <Badge className="bg-green-600/80 text-white text-xs py-0.5 px-2">{acceptedBookings.filter(b => b.status === 'CONFIRMED').length}</Badge>
+                    <Badge className="bg-green-500/20 text-green-300 text-xs py-0.5 px-2 border border-green-500/30">{acceptedBookings.filter(b => b.status === 'CONFIRMED').length}</Badge>
                     {getUnreadForRide(ride.id) > 0 && (
                       <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
                     )}
                   </div>
                   {acceptedBookings.filter(b => b.status === 'CONFIRMED').map((b) => (
-                    <div key={b.id} className="p-4 bg-gradient-to-br from-green-900/20 to-slate-900/50 rounded-lg border border-green-700/50 hover:border-green-600/70 transition-all duration-200">
-                      <div className="flex items-start justify-between gap-4">
+                    <div 
+                      key={b.id}
+                      onClick={() => {
+                        setSelectedPassenger(b);
+                        setShowPassengerDetail(true);
+                      }}
+                      className="group relative p-4 bg-gradient-to-br from-green-900/20 via-green-800/10 to-slate-900/50 rounded-xl border border-green-700/40 hover:border-green-500/60 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-green-500/10 hover:-translate-y-0.5"
+                    >
+                      {/* Gradient overlay on hover */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-green-500/0 via-green-500/5 to-green-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
+                      
+                      <div className="relative z-10 flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
-                            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500/30 to-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                              <CheckCircle2 className="h-5 w-5 text-green-400" />
+                            </div>
                             <div className="flex-1 min-w-0">
                               <UserNameWithBadge 
                                 name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
@@ -591,20 +853,16 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                               />
                             </div>
                           </div>
-                          <div className="space-y-2 text-xs text-slate-400">
+                          <div className="space-y-2 text-xs ml-10">
                             <div className="flex items-start gap-2">
-                              <MapPin className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                              <span className="text-slate-300 line-clamp-2">
+                              <MapPin className="h-4 w-4 text-green-400 flex-shrink-0 mt-0.5" />
+                              <span className="text-green-200/90 font-medium line-clamp-2">
                                 {formatPickupLabel(b as any)}
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 ml-5">
-                              <span className="text-slate-400">Price: </span>
-                              <span className="font-semibold text-primary">PKR {(b.ride as any)?.price ?? (b as any).price ?? ride.price}</span>
-                            </div>
-                            <div className="flex items-center gap-2 ml-5 text-slate-500">
-                              <Clock className="h-3.5 w-3.5" />
-                              <span>{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3.5 w-3.5 text-slate-400" />
+                              <span className="text-slate-400">{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
                                 month: 'short',
                                 day: 'numeric',
                                 hour: '2-digit',
@@ -612,10 +870,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                               })) || 'Time TBD'}</span>
                             </div>
                           </div>
+                          <p className="text-xs text-slate-500 mt-2 ml-10">Click for contact info</p>
                         </div>
-                        <div className="flex flex-col gap-2 flex-shrink-0">
+                        <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                           {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-colors">Call</a>
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105">Call</a>
                           ) : null}
                           {((b as any).chatId || b.id) ? (
                             <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
@@ -631,19 +890,31 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
               {acceptedBookings && acceptedBookings.filter(b => b.status === 'accepted').length > 0 && (
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center gap-2 relative">
-                    <Clock className="h-5 w-5 text-amber-500" />
+                    <Clock className="h-5 w-5 text-amber-400" />
                     <h4 className="font-bold text-sm text-white">Pending Confirmation</h4>
-                    <Badge className="bg-amber-600/80 text-white text-xs py-0.5 px-2">{acceptedBookings.filter(b => b.status === 'accepted').length}</Badge>
+                    <Badge className="bg-amber-500/20 text-amber-300 text-xs py-0.5 px-2 border border-amber-500/30">{acceptedBookings.filter(b => b.status === 'accepted').length}</Badge>
                     {getUnreadForRide(ride.id) > 0 && (
                       <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
                     )}
                   </div>
                   {acceptedBookings.filter(b => b.status === 'accepted').map((b) => (
-                    <div key={b.id} className="p-4 bg-gradient-to-br from-slate-800/50 to-slate-900/50 rounded-lg border border-slate-700 hover:border-slate-600 transition-all duration-200">
-                      <div className="flex items-start justify-between gap-4">
+                    <div 
+                      key={b.id} 
+                      onClick={() => {
+                        setSelectedPassenger(b);
+                        setShowPassengerDetail(true);
+                      }}
+                      className="group relative p-4 bg-gradient-to-br from-amber-900/20 via-amber-800/10 to-slate-900/50 rounded-xl border border-amber-700/40 hover:border-amber-500/60 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 hover:-translate-y-0.5"
+                    >
+                      {/* Gradient overlay on hover */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/5 to-amber-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
+                      
+                      <div className="relative z-10 flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
-                            <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center flex-shrink-0">
+                              <Clock className="h-5 w-5 text-amber-400" />
+                            </div>
                             <div className="flex-1 min-w-0">
                               <UserNameWithBadge 
                                 name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
@@ -652,22 +923,17 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                                 truncate
                               />
                             </div>
-                            <Badge className="bg-amber-600/80 text-white text-[10px] py-0 px-1.5">Awaiting Confirmation</Badge>
                           </div>
-                          <div className="space-y-2 text-xs text-slate-400">
+                          <div className="space-y-2 text-xs ml-10">
                             <div className="flex items-start gap-2">
-                              <MapPin className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                              <span className="text-slate-300 line-clamp-2">
+                              <MapPin className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                              <span className="text-amber-200/90 font-medium line-clamp-2">
                                 {formatPickupLabel(b as any)}
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 ml-5">
-                              <span className="text-slate-400">Price: </span>
-                              <span className="font-semibold text-primary">PKR {(b.ride as any)?.price ?? (b as any).price ?? ride.price}</span>
-                            </div>
-                            <div className="flex items-center gap-2 ml-5 text-slate-500">
-                              <Clock className="h-3.5 w-3.5" />
-                              <span>{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3.5 w-3.5 text-slate-400" />
+                              <span className="text-slate-400">{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
                                 month: 'short',
                                 day: 'numeric',
                                 hour: '2-digit',
@@ -675,10 +941,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                               })) || 'Time TBD'}</span>
                             </div>
                           </div>
+                          <p className="text-xs text-slate-500 mt-2 ml-10">Waiting for passenger to confirm</p>
                         </div>
-                        <div className="flex flex-col gap-2 flex-shrink-0">
+                        <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                           {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-colors">Call</a>
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105" onClick={(e) => e.stopPropagation()}>Call</a>
                           ) : null}
                           {((b as any).chatId || b.id) ? (
                             <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
@@ -692,13 +959,49 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             </CardContent>
 
             <CardFooter className="p-0 mt-2">
-              <div className="flex justify-end w-full">
-                <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="destructive" size="sm" className="flex items-center gap-2" disabled={!user || user.uid !== ride.driverId} title={!user ? 'Sign in to delete this ride' : user.uid !== ride.driverId ? 'You are not the owner of this ride' : ''}>
-                      <Trash className="h-4 w-4" /> Delete
+              <div className="flex justify-end w-full gap-2">
+                {/* Cancel Ride Button */}
+                {ride.status !== 'cancelled' && (
+                  <>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="flex items-center gap-2 border-red-700/50 hover:bg-red-900/20 hover:text-red-400"
+                      onClick={() => setShowCancelDialog(true)}
+                      disabled={!user || user.uid !== ride.driverId || isCancelling}
+                      title={!user ? 'Sign in to cancel this ride' : user.uid !== ride.driverId ? 'Only the driver can cancel' : ''}
+                    >
+                      <X className="h-4 w-4" /> Cancel Ride
                     </Button>
-                  </DialogTrigger>
+                    <CancellationConfirmDialog
+                      open={showCancelDialog}
+                      onOpenChange={setShowCancelDialog}
+                      cancellationRate={0} // Not tracked for driver yet
+                      minutesUntilDeparture={0} // Will be calculated in dialog
+                      onConfirm={handleCancelRide}
+                      isLoading={isCancelling}
+                      cancellerRole="driver"
+                    />
+                  </>
+                )}
+                
+                {acceptedCount === 0 && (
+                  <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                    <DialogTrigger asChild>
+                      <Button 
+                        variant="destructive" 
+                        size="sm" 
+                        className="flex items-center gap-2" 
+                        disabled={!user || user.uid !== ride.driverId}
+                        title={
+                          !user ? 'Sign in to delete this ride' 
+                          : user.uid !== ride.driverId ? 'You are not the owner of this ride'
+                          : ''
+                        }
+                      >
+                        <Trash className="h-4 w-4" /> Delete
+                      </Button>
+                    </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
                       <DialogTitle>Delete Ride</DialogTitle>
@@ -710,14 +1013,38 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       <DialogClose asChild>
                         <Button variant="ghost">Cancel</Button>
                       </DialogClose>
-                      <Button variant="destructive" onClick={handleDeleteRide} disabled={isDeleting || acceptedCount > 0}>
+                      <Button variant="destructive" onClick={handleDeleteRide} disabled={isDeleting}>
                         {isDeleting ? 'Deleting...' : 'Delete Ride'}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+                )}
               </div>
             </CardFooter>
+
+            {/* Passenger Detail Modal */}
+            {selectedPassenger && (
+              <PassengerDetailModal
+                open={showPassengerDetail}
+                onOpenChange={setShowPassengerDetail}
+                booking={selectedPassenger}
+                passengerName={selectedPassenger.passengerDetails?.fullName || selectedPassenger.passengerDetails?.displayName || 'Unknown'}
+                passengerVerified={isUserVerified(selectedPassenger.passengerDetails)}
+                pickupLocation={formatPickupLabel(selectedPassenger as any)}
+                dropoffLocation={selectedPassenger.dropoffPlaceName || selectedPassenger.ride?.to || 'Unknown'}
+                rideDateTime={selectedPassenger.ride?.departureTime ?? ride.departureTime}
+                price={selectedPassenger.price ?? selectedPassenger.ride?.price ?? ride.price}
+                phoneNumber={(selectedPassenger.passengerDetails as any)?.contactNumber || (selectedPassenger.passengerDetails as any)?.phone}
+                university={university}
+                rideId={ride.id}
+                bookingId={selectedPassenger.id}
+                onCancelSuccess={() => {
+                  setShowPassengerDetail(false);
+                  setSelectedPassenger(null);
+                }}
+              />
+            )}
         </Card>
     )
 }
@@ -765,13 +1092,13 @@ export default function MyRidesPage() {
     }
   }, [userLoading, user, userData]);
 
-  // Only create query if we have ALL required data (user, firestore, AND userData with university)
-  // Query by driverId to get rides offered by the current user
-  // NOTE: All rides should have driverId set (canonical field)
-  // createdBy is kept for backwards compatibility but queries use driverId
+  // ── PERF: Add orderBy and limit to my-rides query ──
   const ridesQuery = (user && firestore && userData && userData.university) ? query(
     collection(firestore, 'universities', userData.university, 'rides'),
-    where('driverId', '==', user.uid)
+    where('driverId', '==', user.uid),
+    // Note: Would prefer orderBy('departureTime', 'desc') but that requires a composite index
+    // For now, sort client-side; consider adding index later for better performance
+    limit(100) // Limit to last 100 rides to avoid loading entire history
   ) : null;
 
   const { data: ridesRaw, loading: ridesLoading, error: ridesError } = useCollection<RideType>(ridesQuery);

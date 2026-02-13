@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { Shield, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  // useSearchParams can cause CSR bailout during prerender - use window.location fallback
+  const searchParams = null;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -15,7 +16,13 @@ export default function AdminLoginPage() {
 
   // Check for error parameter in URL
   useEffect(() => {
-    const errorParam = searchParams.get('error');
+    let errorParam = null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      errorParam = params.get('error');
+    } catch (e) {
+      // ignore in non-browser contexts
+    }
     if (errorParam === 'unauthorized') {
       setError('Unauthorized access. Only verified administrators can access the admin portal.');
     } else if (errorParam === 'verification-failed') {

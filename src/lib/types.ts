@@ -11,7 +11,7 @@ export interface UserProfile {
   bio?: string;
   createdAt: Timestamp;
   // University email verification
-  universityEmail?: string; // @nu.edu.pk or @neduet.edu.pk
+  universityEmail?: string; // @nu.edu.pk or @cloud.neduet.edu.pk
   universityEmailVerified?: boolean;
   universityEmailVerifiedAt?: Timestamp;
   // ID verification (e.g., CNIC or Student ID)

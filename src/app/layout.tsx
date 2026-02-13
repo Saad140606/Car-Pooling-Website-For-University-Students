@@ -4,39 +4,12 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseClientProvider } from '@/firebase/client-provider';
 import dynamic from 'next/dynamic';
+import ClientSideProviders from '@/components/ClientSideProviders';
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 import SafeConsolePatch from '@/components/SafeConsolePatch';
 import { PWAServiceWorkerRegistration } from '@/components/pwa/PWAServiceWorkerRegistration';
 
-// ── PERF: Lazy load heavy providers that are only needed when user is authenticated ──
-const NotificationProvider = dynamic(
-  () => import('@/contexts/NotificationContext').then(m => ({ default: m.NotificationProvider })),
-  { ssr: false }
-);
-const CallingProvider = dynamic(
-  () => import('@/contexts/CallingContext').then(m => ({ default: m.CallingProvider })),
-  { ssr: false }
-);
-const BackgroundCallHandler = dynamic(
-  () => import('@/components/calling/BackgroundCallHandler').then(m => ({ default: m.BackgroundCallHandler })),
-  { ssr: false }
-);
-const IncomingCallScreen = dynamic(
-  () => import('@/components/calling/IncomingCallScreen').then(m => ({ default: m.IncomingCallScreen })),
-  { ssr: false }
-);
-const ActiveCallScreen = dynamic(
-  () => import('@/components/calling/ActiveCallScreen').then(m => ({ default: m.ActiveCallScreen })),
-  { ssr: false }
-);
-const RingtoneInitializer = dynamic(
-  () => import('@/hooks/useRingtoneInitializer').then(m => ({ default: m.RingtoneInitializer })),
-  { ssr: false }
-);
-const PWAInstallPromptHandler = dynamic(
-  () => import('@/components/pwa/PWAInstallPromptHandler').then(m => ({ default: m.PWAInstallPromptHandler })),
-  { ssr: false }
-);
+// Client-side providers moved into a client component to satisfy next/dynamic SSR rules.
 
 // ── PERF: Use next/font instead of <link> for zero-FOUT font loading ──
 const inter = Inter({
@@ -126,18 +99,11 @@ export default function RootLayout({
       <body className="font-body antialiased">
         <SafeConsolePatch />
         <PWAServiceWorkerRegistration />
-        <PWAInstallPromptHandler />
-        <RingtoneInitializer />
         <GlobalErrorBoundary>
           <FirebaseClientProvider>
-            <CallingProvider>
-              <NotificationProvider>
-                <BackgroundCallHandler />
-                <IncomingCallScreen />
-                <ActiveCallScreen />
-                {children}
-              </NotificationProvider>
-            </CallingProvider>
+            <ClientSideProviders>
+              {children}
+            </ClientSideProviders>
           </FirebaseClientProvider>
         </GlobalErrorBoundary>
         <Toaster />

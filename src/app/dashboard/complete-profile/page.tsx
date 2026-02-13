@@ -64,9 +64,9 @@ export default function CompleteProfilePage() {
 
     // try to infer university from email when not set (used as authoritative if user didn't register with a university field)
     if (user && user.email && !university) {
-      if (user.email.endsWith('@nu.edu.pk')) setUniversity('fast');
-      if (user.email.endsWith('@neduet.edu.pk')) setUniversity('ned');
-      if (user.email.endsWith('@uok.edu.pk')) setUniversity('karachi');
+      if (isValidUniversityEmail(user.email, 'fast')) setUniversity('fast');
+      if (isValidUniversityEmail(user.email, 'ned')) setUniversity('ned');
+      if (isValidUniversityEmail(user.email, 'karachi')) setUniversity('karachi');
     }
     if (user && user.displayName && !fullName) {
       setFullName(user.displayName);

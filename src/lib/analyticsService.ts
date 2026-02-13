@@ -222,7 +222,7 @@ export async function fetchUserAnalyticsData(
   }
   
   // Enrich bookings with cached ride data
-  const passengerBookings: (RawBookingData & { rideData?: RawRideData })[] = bookingsRaw.map(booking => {
+  passengerBookings = bookingsRaw.map(booking => {
     const enrichedBooking: RawBookingData & { rideData?: RawRideData } = { ...booking };
     if (booking.rideId && rideMap.has(booking.rideId)) {
       enrichedBooking.rideData = rideMap.get(booking.rideId);

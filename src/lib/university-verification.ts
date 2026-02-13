@@ -4,7 +4,7 @@ export function getUniversityEmailDomain(university: 'fast' | 'ned' | 'karachi')
     case 'fast':
       return '@nu.edu.pk';
     case 'ned':
-      return '@neduet.edu.pk';
+      return '@cloud.neduet.edu.pk';
     case 'karachi':
       return '@uok.edu.pk';
     default:

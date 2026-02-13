@@ -40,7 +40,7 @@ type AuthFormProps = {
 };
 
 const universityConfig = {
-  ned: { name: "NED University", domain: "neduet.edu.pk" },
+  ned: { name: "NED University", domain: "cloud.neduet.edu.pk" },
   fast: { name: "FAST University", domain: "nu.edu.pk" },
   karachi: { name: "Karachi University", domain: "uok.edu.pk" },
 };

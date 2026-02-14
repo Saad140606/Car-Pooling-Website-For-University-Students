@@ -12,13 +12,12 @@ import { useUser, useAuth } from '@/firebase';
 
 interface PendingRating {
   rideId: string;
-  bookingId: string;
-  driverId: string;
-  driverName: string;
+  ratedUserId: string;
+  targetName: string;
+  role: 'driver' | 'passenger';
   from: string;
   to: string;
   departureTime: string;
-  rideCompletedAt: string;
   price: number;
 }
 
@@ -49,7 +48,7 @@ export default function RatingPopup({ onRatingComplete }: RatingPopupProps) {
       
       if (!token) return;
       
-      const response = await fetch(`/api/rating/pending?university=${encodeURIComponent(userData.university)}`, {
+      const response = await fetch(`/api/ride-lifecycle/pending-ratings?university=${encodeURIComponent(userData.university)}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -92,16 +91,15 @@ export default function RatingPopup({ onRatingComplete }: RatingPopupProps) {
         throw new Error('Authentication required');
       }
       
-      const response = await fetch('/api/rating/submit', {
+      const response = await fetch('/api/ride-lifecycle/rate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          bookingId: currentRating.bookingId,
           rideId: currentRating.rideId,
-          driverId: currentRating.driverId,
+          ratedUserId: currentRating.ratedUserId,
           rating: selectedStars,
           university: userData.university,
         }),
@@ -114,7 +112,7 @@ export default function RatingPopup({ onRatingComplete }: RatingPopupProps) {
         
         // Wait for animation, then move to next rating or close
         setTimeout(() => {
-          const remainingRatings = pendingRatings.filter(r => r.bookingId !== currentRating.bookingId);
+          const remainingRatings = pendingRatings.filter(r => r.ratedUserId !== currentRating.ratedUserId || r.rideId !== currentRating.rideId);
           setPendingRatings(remainingRatings);
           
           if (remainingRatings.length > 0) {
@@ -206,7 +204,7 @@ export default function RatingPopup({ onRatingComplete }: RatingPopupProps) {
         <DialogHeader>
           <DialogTitle className="text-xl font-semibold flex items-center gap-2">
             <Star className="w-5 h-5 text-yellow-400" />
-            Rate Your Ride
+            {currentRating.role === 'driver' ? 'Rate Your Passenger' : 'Rate Your Driver'}
           </DialogTitle>
           <DialogDescription className="text-gray-400">
             How was your experience with this ride?
@@ -251,7 +249,7 @@ export default function RatingPopup({ onRatingComplete }: RatingPopupProps) {
                     <Car className="w-4 h-4 text-emerald-400" />
                   </div>
                   <span className="font-medium text-white">
-                    {currentRating.driverName}
+                    {currentRating.targetName}
                   </span>
                 </div>
                 

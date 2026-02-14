@@ -5,10 +5,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { UserNameWithBadge } from '@/components/UserNameWithBadge';
-import { MapContainer, TileLayer, Marker, Polyline, Tooltip } from '@/components/map';
 import { parseTimestamp } from '@/lib/timestampUtils';
-import L, { LatLngExpression } from 'leaflet';
-import { Calendar, Clock, Users, MapPin, Car, ArrowRight, X } from 'lucide-react';
+import { Calendar, Users, MapPin, Car, ArrowRight, X, Banknote } from 'lucide-react';
 
 interface RideDetailModalProps {
   open: boolean;
@@ -78,7 +76,6 @@ export default function RideDetailModal({
     .join('')
     .toUpperCase();
 
-  const hasRoute = ride?.route && Array.isArray(ride.route) && ride.route.length > 0;
   const start = startLocation || ride?.from || 'Unknown';
   const end = endLocation || ride?.to || 'Unknown';
 
@@ -97,6 +94,29 @@ export default function RideDetailModal({
 
         {/* Main Content */}
         <div className="space-y-6 px-1">
+          {/* Price + quick stats */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="md:col-span-2 rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+              <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">Fare</div>
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
+                  <Banknote className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-white">PKR {price}</div>
+                  <p className="text-xs text-slate-400">per seat</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+              <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">Seats Left</div>
+              <div className="text-2xl font-bold text-white">
+                {seatsLeft}
+              </div>
+              <p className="text-xs text-slate-400">available</p>
+            </div>
+          </div>
+
           {/* Provider Section */}
           <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
             <h3 className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-3">Provider</h3>
@@ -152,60 +172,6 @@ export default function RideDetailModal({
               </div>
             </div>
           </div>
-
-          {/* Map Section */}
-          {hasRoute && (
-            <div className="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
-              <h3 className="text-xs text-slate-400 font-semibold uppercase tracking-wider p-4 pb-2">Route Map</h3>
-              <div className="h-64 w-full">
-                <MapContainer
-                  bounds={L.latLngBounds(ride.route as LatLngExpression[])}
-                  style={{ height: '100%', width: '100%' }}
-                >
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution="&copy; OpenStreetMap contributors"
-                  />
-                  <Polyline
-                    positions={ride.route as LatLngExpression[]}
-                    color="#60A5FA"
-                    weight={4}
-                    opacity={0.9}
-                  />
-                  {ride.route.length > 0 && (
-                    <>
-                      <Marker
-                        position={ride.route[0] as any}
-                        icon={L.icon({
-                          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-                          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                          iconSize: [25, 41],
-                          iconAnchor: [12, 41],
-                          popupAnchor: [1, -34],
-                          shadowSize: [41, 41],
-                        })}
-                      >
-                        <Tooltip>Start: {start}</Tooltip>
-                      </Marker>
-                      <Marker
-                        position={ride.route[ride.route.length - 1] as any}
-                        icon={L.icon({
-                          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-                          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                          iconSize: [25, 41],
-                          iconAnchor: [12, 41],
-                          popupAnchor: [1, -34],
-                          shadowSize: [41, 41],
-                        })}
-                      >
-                        <Tooltip>End: {end}</Tooltip>
-                      </Marker>
-                    </>
-                  )}
-                </MapContainer>
-              </div>
-            </div>
-          )}
 
           {/* Ride Details */}
           <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">

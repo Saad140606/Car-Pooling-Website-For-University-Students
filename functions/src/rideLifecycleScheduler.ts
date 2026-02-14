@@ -17,6 +17,9 @@ import * as admin from 'firebase-admin';
 // STATUS CONSTANTS (duplicated here to keep functions self-contained)
 // ============================================================================
 
+const COMPLETION_WINDOW_OPEN_MINUTES = 5;
+const COMPLETION_WINDOW_HOURS = 1;
+
 const RideStatus = {
   CREATED: 'CREATED',
   OPEN: 'OPEN',
@@ -62,6 +65,48 @@ function toMs(ts: any): number {
   if (ts.toMillis) return ts.toMillis();
   if (ts.seconds) return ts.seconds * 1000;
   return new Date(ts).getTime();
+}
+
+function normalizeConfirmedPassengers(raw: any[]): Array<{
+  userId: string;
+  driverReview?: 'arrived' | 'no-show';
+  passengerCompletion?: 'completed' | 'cancelled';
+  completionReason?: string;
+}> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((p) => {
+      if (typeof p === 'string') {
+        return { userId: p };
+      }
+      if (!p || typeof p !== 'object') return null;
+      return {
+        userId: p.userId,
+        driverReview: p.driverReview,
+        passengerCompletion: p.passengerCompletion,
+        completionReason: p.completionReason,
+      };
+    })
+    .filter(Boolean) as Array<{
+      userId: string;
+      driverReview?: 'arrived' | 'no-show';
+      passengerCompletion?: 'completed' | 'cancelled';
+      completionReason?: string;
+    }>;
+}
+
+function areCompletionRequirementsMet(data: any): boolean {
+  const confirmed = normalizeConfirmedPassengers(data.confirmedPassengers || []);
+  if (confirmed.length === 0) return true;
+  return confirmed.every((p) => {
+    if (!p.driverReview) return false;
+    if (p.driverReview === 'no-show') return true;
+    if (!p.passengerCompletion) return false;
+    if (p.passengerCompletion === 'cancelled') {
+      return Boolean(p.completionReason && String(p.completionReason).trim().length > 0);
+    }
+    return p.passengerCompletion === 'completed';
+  });
 }
 
 function getLifecycleStatus(data: any): RideStatusType {
@@ -164,7 +209,7 @@ export const lifecycleLockRides = functions.pubsub
         const currentStatus = getLifecycleStatus(data);
 
         // Skip already locked/terminal rides
-        const skipStatuses = [
+        const skipStatuses: RideStatusType[] = [
           RideStatus.LOCKED,
           RideStatus.IN_PROGRESS,
           RideStatus.COMPLETION_WINDOW,
@@ -227,7 +272,7 @@ export const lifecycleLockRides = functions.pubsub
           };
 
           if (postLockStatus === RideStatus.IN_PROGRESS) {
-            const windowEnd = departureMs + 1 * 60 * 60 * 1000; // 1 hour
+            const windowEnd = departureMs + COMPLETION_WINDOW_HOURS * 60 * 60 * 1000;
             updates.completionWindowEnd = admin.firestore.Timestamp.fromMillis(windowEnd);
             totalLocked++;
           } else {
@@ -334,12 +379,12 @@ export const lifecycleCompletionManager = functions.pubsub
       for (const rideDoc of inProgressSnap.docs) {
         const data = rideDoc.data();
         const departureMs = toMs(data.departureTime);
-        const windowEnd = departureMs + 1 * 60 * 60 * 1000; // 1 hour after departure
+        const windowEnd = departureMs + COMPLETION_WINDOW_HOURS * 60 * 60 * 1000;
 
         // Transition to COMPLETION_WINDOW if reasonable time has passed
         // (at least 10 minutes after departure, or driver can mark early)
         const minutesAfterDeparture = (nowMs - departureMs) / (60 * 1000);
-        if (minutesAfterDeparture >= 10) {
+        if (minutesAfterDeparture >= COMPLETION_WINDOW_OPEN_MINUTES) {
           try {
             const transitionLog = Array.isArray(data.transitionLog) ? [...data.transitionLog] : [];
             transitionLog.push({
@@ -392,6 +437,10 @@ export const lifecycleCompletionManager = functions.pubsub
       for (const rideDoc of windowSnap.docs) {
         try {
           const data = rideDoc.data();
+          if (!areCompletionRequirementsMet(data)) {
+            console.log(`[LifecycleCompletionManager] Ride ${rideDoc.id}: completion requirements not met`);
+            continue;
+          }
           const transitionLog = Array.isArray(data.transitionLog) ? [...data.transitionLog] : [];
           transitionLog.push({
             from: RideStatus.COMPLETION_WINDOW,

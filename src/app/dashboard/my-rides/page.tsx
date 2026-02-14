@@ -622,6 +622,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const [showCancelDialog, setShowCancelDialog] = React.useState(false);
     const [selectedPassenger, setSelectedPassenger] = React.useState<any | null>(null);
     const [showPassengerDetail, setShowPassengerDetail] = React.useState(false);
+    const [isCompleting, setIsCompleting] = React.useState(false);
+    const [reviewingPassengerId, setReviewingPassengerId] = React.useState<string | null>(null);
     const acceptedCount = acceptedBookings?.length || 0;
     const [availableSeats, setAvailableSeats] = React.useState<number>(ride.availableSeats ?? 0);
 
@@ -630,6 +632,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     }, [ride.availableSeats]);
 
     const { toast } = useToast();
+    const lifecycleStatus = (ride as any)?.lifecycleStatus;
+    const needsCompletion = lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW';
 
     const handleDeleteRide = async () => {
       if (!firestore) {
@@ -773,6 +777,80 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
       }
     };
 
+    const handleDriverReview = async (passengerId: string, review: 'arrived' | 'no-show') => {
+      if (!user || user.uid !== ride.driverId) {
+        toast({ variant: 'destructive', title: 'Not allowed', description: 'Only the driver can review passengers.' });
+        return;
+      }
+
+      setReviewingPassengerId(passengerId);
+      try {
+        const idToken = await user.getIdToken();
+        const response = await fetch('/api/ride-lifecycle/transition', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            university,
+            rideId: ride.id,
+            action: 'driver_review',
+            passengerId,
+            review,
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          toast({ variant: 'destructive', title: 'Review Failed', description: data.error || 'Failed to review passenger.' });
+          return;
+        }
+
+        toast({ title: 'Review Saved', description: `Marked passenger as ${review}.` });
+      } catch (error: any) {
+        toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to review passenger.' });
+      } finally {
+        setReviewingPassengerId(null);
+      }
+    };
+
+    const handleMarkRideComplete = async () => {
+      if (!user || user.uid !== ride.driverId) {
+        toast({ variant: 'destructive', title: 'Not allowed', description: 'Only the driver can complete this ride.' });
+        return;
+      }
+
+      setIsCompleting(true);
+      try {
+        const idToken = await user.getIdToken();
+        const response = await fetch('/api/ride-lifecycle/transition', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            university,
+            rideId: ride.id,
+            action: 'complete',
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          toast({ variant: 'destructive', title: 'Completion Failed', description: data.error || 'Failed to complete ride.' });
+          return;
+        }
+
+        toast({ title: 'Ride Completed', description: 'Ratings are now open for this ride.' });
+      } catch (error: any) {
+        toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to complete ride.' });
+      } finally {
+        setIsCompleting(false);
+      }
+    };
+
     return (
         <Card className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative">
             <CardHeader className="p-0 mb-2">
@@ -887,6 +965,60 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Completion Required (driver reviews) */}
+              {needsCompletion && acceptedBookings && acceptedBookings.filter(b => b.status === 'CONFIRMED').length > 0 && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                    <h4 className="font-bold text-sm text-white">Completion Required</h4>
+                  </div>
+                  {acceptedBookings.filter(b => b.status === 'CONFIRMED').map((b) => (
+                    <div key={`completion-${b.id}`} className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-950/20">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <UserNameWithBadge 
+                            name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
+                            verified={isUserVerified(b.passengerDetails)}
+                            size="sm"
+                            truncate
+                          />
+                          <p className="text-xs text-slate-400 mt-1">
+                            {b.driverReview ? `Driver review: ${b.driverReview}` : 'Awaiting driver review'}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-8"
+                            disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
+                            onClick={() => handleDriverReview(b.passengerId, 'arrived')}
+                          >
+                            Arrived
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
+                            onClick={() => handleDriverReview(b.passengerId, 'no-show')}
+                          >
+                            No-show
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    onClick={handleMarkRideComplete}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500"
+                    disabled={isCompleting}
+                  >
+                    {isCompleting ? 'Completing...' : 'Mark Ride Complete'}
+                  </Button>
                 </div>
               )}
 

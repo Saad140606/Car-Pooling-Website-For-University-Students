@@ -174,11 +174,19 @@ export function calculateCompletionWindowEnd(departureTimeMs: number): number {
 }
 
 /**
+ * Calculate when the completion window should open.
+ */
+export function calculateCompletionWindowOpenTime(departureTimeMs: number): number {
+  return departureTimeMs + LIFECYCLE_CONSTANTS.COMPLETION_WINDOW_OPEN_MINUTES * 60 * 1000;
+}
+
+/**
  * Check if we are within the completion window.
  */
 export function isInCompletionWindow(departureTimeMs: number, nowMs: number): boolean {
+  const windowOpen = calculateCompletionWindowOpenTime(departureTimeMs);
   const windowEnd = calculateCompletionWindowEnd(departureTimeMs);
-  return nowMs >= departureTimeMs && nowMs <= windowEnd;
+  return nowMs >= windowOpen && nowMs <= windowEnd;
 }
 
 // ============================================================================

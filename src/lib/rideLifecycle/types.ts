@@ -76,6 +76,7 @@ export enum PassengerStatus {
   CONFIRMED  = 'confirmed',
   CANCELLED  = 'cancelled',
   NO_SHOW    = 'no-show',
+  COMPLETED  = 'completed',
 }
 
 // ============================================================================
@@ -89,6 +90,11 @@ export interface RidePassenger {
   requestId?: string;
   pickupPoint?: { lat: number; lng: number } | null;
   pickupPlaceName?: string | null;
+  driverReview?: 'arrived' | 'no-show';
+  driverReviewAt?: any;
+  passengerCompletion?: 'completed' | 'cancelled';
+  passengerCompletionAt?: any;
+  completionReason?: string;
 }
 
 // ============================================================================
@@ -148,6 +154,8 @@ export interface StateTransition {
 export const LIFECYCLE_CONSTANTS = {
   /** Hours after departure for completion window to open */
   COMPLETION_WINDOW_HOURS: 1,
+  /** Minutes after departure to open completion window (testing default) */
+  COMPLETION_WINDOW_OPEN_MINUTES: 5,
   /** Maximum hours after departure to allow rating */
   MAX_RATING_HOURS: 168, // 7 days
   /** Minutes before departure to lock the ride */

@@ -31,6 +31,7 @@ import {
   shouldLockRide,
   determinePostLockStatus,
   calculateCompletionWindowEnd,
+  calculateCompletionWindowOpenTime,
   createTransitionEntry,
   toLegacyStatus,
   fromLegacyStatus,
@@ -54,6 +55,44 @@ function now(): Timestamp {
 
 function nowMs(): number {
   return Date.now();
+}
+
+function normalizeConfirmedPassengers(raw: any[]): RidePassenger[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((p) => {
+      if (typeof p === 'string') {
+        return {
+          userId: p,
+          status: PassengerStatus.CONFIRMED,
+          timestamp: now(),
+        } as RidePassenger;
+      }
+      if (!p || typeof p !== 'object') return null;
+      return p as RidePassenger;
+    })
+    .filter(Boolean) as RidePassenger[];
+}
+
+function isCompletionReady(confirmedPassengers: RidePassenger[]): { ready: boolean; missing: string[] } {
+  const missing: string[] = [];
+  for (const p of confirmedPassengers) {
+    if (!p.driverReview) {
+      missing.push(p.userId);
+      continue;
+    }
+    if (p.driverReview === 'no-show') {
+      continue;
+    }
+    if (!p.passengerCompletion) {
+      missing.push(p.userId);
+      continue;
+    }
+    if (p.passengerCompletion === 'cancelled' && !p.completionReason) {
+      missing.push(p.userId);
+    }
+  }
+  return { ready: missing.length === 0, missing };
 }
 
 function toMs(ts: any): number {
@@ -814,9 +853,13 @@ export async function openCompletionWindow(
       return; // Only IN_PROGRESS rides can enter completion window
     }
 
-    // Check if we've reached the window
     const departureMs = toMs(data.departureTime);
+    const windowOpen = calculateCompletionWindowOpenTime(departureMs);
     const windowEnd = calculateCompletionWindowEnd(departureMs);
+
+    if (nowMs() < windowOpen) {
+      return;
+    }
 
     // The window opens once the ride has been in progress for a reasonable time
     // For now, we open it immediately after IN_PROGRESS for driver action
@@ -874,6 +917,12 @@ export async function markRideCompleted(
       throw new Error(`Cannot complete ride in status: ${currentStatus}`);
     }
 
+    const normalized = normalizeConfirmedPassengers(data.confirmedPassengers || []);
+    const completionCheck = isCompletionReady(normalized);
+    if (!completionCheck.ready) {
+      throw new Error(`Cannot complete ride — pending passenger actions: ${completionCheck.missing.join(', ')}`);
+    }
+
     const transLog = logTransition(
       data,
       currentStatus,
@@ -886,6 +935,7 @@ export async function markRideCompleted(
       lifecycleStatus: RideStatus.COMPLETED,
       status: 'completed',
       legacyStatus: 'completed',
+      confirmedPassengers: normalized,
       ratingsOpen: true,
       transitionLog: transLog,
       updatedAt: now(),
@@ -935,7 +985,13 @@ export async function markPassengerNoShow(
     const confirmedPassengers: RidePassenger[] = (data.confirmedPassengers || []).map(
       (p: RidePassenger) => {
         if (p.userId === passengerId) {
-          return { ...p, status: PassengerStatus.NO_SHOW, timestamp: now() };
+          return {
+            ...p,
+            status: PassengerStatus.NO_SHOW,
+            timestamp: now(),
+            driverReview: 'no-show',
+            driverReviewAt: now(),
+          };
         }
         return p;
       }
@@ -954,6 +1010,122 @@ export async function markPassengerNoShow(
   });
 
   console.log(`[RideLifecycle] Passenger ${passengerId} marked as NO_SHOW on ride ${rideId}`);
+  return { success: true };
+}
+
+// ============================================================================
+// SERVICE: DRIVER REVIEW PASSENGER (ARRIVED / NO-SHOW)
+// ============================================================================
+
+export async function reviewPassengerArrival(
+  db: Firestore,
+  university: string,
+  rideId: string,
+  driverId: string,
+  passengerId: string,
+  review: 'arrived' | 'no-show'
+): Promise<{ success: boolean }> {
+  const ref = rideRef(db, university, rideId);
+
+  await db.runTransaction(async (tx: Transaction) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error('Ride not found');
+
+    const data = snap.data()!;
+    const currentStatus = getLifecycleStatus(data);
+
+    const rideDriver = data.driverId || data.createdBy;
+    if (rideDriver !== driverId) {
+      throw new Error('FORBIDDEN: Only the driver can review passengers');
+    }
+
+    if (currentStatus !== RideStatus.COMPLETION_WINDOW && currentStatus !== RideStatus.IN_PROGRESS) {
+      throw new Error(`Cannot review passengers in status: ${currentStatus}`);
+    }
+
+    const normalized = normalizeConfirmedPassengers(data.confirmedPassengers || []);
+    let found = false;
+
+    const updated = normalized.map((p) => {
+      if (p.userId !== passengerId) return p;
+      found = true;
+      return {
+        ...p,
+        status: review === 'no-show' ? PassengerStatus.NO_SHOW : PassengerStatus.CONFIRMED,
+        driverReview: review,
+        driverReviewAt: now(),
+      };
+    });
+
+    if (!found) {
+      throw new Error('Passenger not found in confirmed list');
+    }
+
+    tx.update(ref, {
+      confirmedPassengers: updated,
+      updatedAt: now(),
+    });
+  });
+
+  console.log(`[RideLifecycle] Driver reviewed passenger ${passengerId} as ${review} on ride ${rideId}`);
+  return { success: true };
+}
+
+// ============================================================================
+// SERVICE: PASSENGER COMPLETION / CANCEL WITH REASON
+// ============================================================================
+
+export async function submitPassengerCompletion(
+  db: Firestore,
+  university: string,
+  rideId: string,
+  passengerId: string,
+  action: 'completed' | 'cancelled',
+  reason?: string
+): Promise<{ success: boolean }> {
+  const ref = rideRef(db, university, rideId);
+
+  if (action === 'cancelled' && (!reason || !String(reason).trim())) {
+    throw new Error('Cancellation reason required');
+  }
+
+  await db.runTransaction(async (tx: Transaction) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error('Ride not found');
+
+    const data = snap.data()!;
+    const currentStatus = getLifecycleStatus(data);
+
+    if (currentStatus !== RideStatus.COMPLETION_WINDOW && currentStatus !== RideStatus.IN_PROGRESS) {
+      throw new Error(`Cannot submit completion in status: ${currentStatus}`);
+    }
+
+    const normalized = normalizeConfirmedPassengers(data.confirmedPassengers || []);
+    let found = false;
+
+    const updated = normalized.map((p) => {
+      if (p.userId !== passengerId) return p;
+      found = true;
+      return {
+        ...p,
+        status: action === 'cancelled' ? PassengerStatus.CANCELLED : PassengerStatus.COMPLETED,
+        passengerCompletion: action,
+        passengerCompletionAt: now(),
+        completionReason: action === 'cancelled' ? reason : undefined,
+      };
+    });
+
+    if (!found) {
+      throw new Error('Passenger not found in confirmed list');
+    }
+
+    tx.update(ref, {
+      confirmedPassengers: updated,
+      updatedAt: now(),
+    });
+  });
+
+  console.log(`[RideLifecycle] Passenger ${passengerId} submitted ${action} for ride ${rideId}`);
   return { success: true };
 }
 

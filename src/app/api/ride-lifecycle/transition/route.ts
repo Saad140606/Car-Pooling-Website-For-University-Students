@@ -11,9 +11,13 @@
  *   - complete: Driver marks ride as completed
  *   - cancel: Driver cancels entire ride
  *   - no_show: Driver marks passenger as no-show (requires passengerId)
+ *   - driver_review: Driver marks passenger arrived/no-show (requires passengerId, review)
+ *   - passenger_complete: Passenger confirms completion
+ *   - passenger_cancel: Passenger cancels with reason (requires reason)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import admin from 'firebase-admin';
 import { adminDb } from '@/firebase/firebaseAdmin';
 import {
   requireAuth,
@@ -29,6 +33,8 @@ import {
   markPassengerNoShow,
   cancelRide,
   getRideLifecycleState,
+  reviewPassengerArrival,
+  submitPassengerCompletion,
 } from '@/lib/rideLifecycle/lifecycleService';
 import {
   notifyRideCompleted,
@@ -56,7 +62,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { university, rideId, action, reason, passengerId } = body;
+    const { university, rideId, action, reason, passengerId, review } = body;
 
     const validUniversity = validateUniversity(university);
     if (!validUniversity) {
@@ -137,6 +143,111 @@ export async function POST(req: NextRequest) {
           await notifyPassengerNoShow(db, validUniversity, passengerId, rideId);
         } catch (notifErr) {
           console.error('[RideLifecycle] Notification error (non-critical):', notifErr);
+        }
+
+        return successResponse({ ok: true, ...result });
+      }
+      
+      case 'driver_review': {
+        if (!passengerId || !isValidDocId(passengerId)) {
+          return errorResponse('Passenger ID required for driver_review action', 400);
+        }
+        if (review !== 'arrived' && review !== 'no-show') {
+          return errorResponse('Review must be arrived or no-show', 400);
+        }
+
+        const result = await reviewPassengerArrival(
+          db,
+          validUniversity,
+          rideId,
+          authenticatedUserId,
+          passengerId,
+          review
+        );
+
+        // Update booking with driver review
+        try {
+          const bookingSnap = await db
+            .collection(`universities/${validUniversity}/bookings`)
+            .where('rideId', '==', rideId)
+            .where('passengerId', '==', passengerId)
+            .limit(1)
+            .get();
+          if (!bookingSnap.empty) {
+            await bookingSnap.docs[0].ref.update({
+              driverReview: review,
+              driverReviewAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        } catch (updateErr) {
+          console.error('[RideLifecycle] Failed to update booking driver review:', updateErr);
+        }
+
+        return successResponse({ ok: true, ...result });
+      }
+
+      case 'passenger_complete': {
+        const result = await submitPassengerCompletion(
+          db,
+          validUniversity,
+          rideId,
+          authenticatedUserId,
+          'completed'
+        );
+
+        try {
+          const bookingSnap = await db
+            .collection(`universities/${validUniversity}/bookings`)
+            .where('rideId', '==', rideId)
+            .where('passengerId', '==', authenticatedUserId)
+            .limit(1)
+            .get();
+          if (!bookingSnap.empty) {
+            await bookingSnap.docs[0].ref.update({
+              passengerCompletion: 'completed',
+              passengerCompletionAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        } catch (updateErr) {
+          console.error('[RideLifecycle] Failed to update booking completion:', updateErr);
+        }
+
+        return successResponse({ ok: true, ...result });
+      }
+
+      case 'passenger_cancel': {
+        if (!reason || !String(reason).trim()) {
+          return errorResponse('Cancellation reason required', 400);
+        }
+
+        const result = await submitPassengerCompletion(
+          db,
+          validUniversity,
+          rideId,
+          authenticatedUserId,
+          'cancelled',
+          reason
+        );
+
+        try {
+          const bookingSnap = await db
+            .collection(`universities/${validUniversity}/bookings`)
+            .where('rideId', '==', rideId)
+            .where('passengerId', '==', authenticatedUserId)
+            .limit(1)
+            .get();
+          if (!bookingSnap.empty) {
+            await bookingSnap.docs[0].ref.update({
+              passengerCompletion: 'cancelled',
+              passengerCompletionAt: admin.firestore.FieldValue.serverTimestamp(),
+              completionReason: reason,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        } catch (updateErr) {
+          console.error('[RideLifecycle] Failed to update booking cancellation:', updateErr);
         }
 
         return successResponse({ ok: true, ...result });

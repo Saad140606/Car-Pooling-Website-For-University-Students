@@ -107,9 +107,15 @@ export default function RideCard({
     >
       <div className="p-3.5 sm:p-3 space-y-2.5 sm:space-y-2 relative">
 
-        {/* Price and University */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {university && !hideUniversity && <span className="bg-white/10 px-2 py-0.5 rounded text-xs font-semibold">{university.toUpperCase()}</span>}
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-2">
+          {university && !hideUniversity ? (
+            <span className="bg-white/10 px-2 py-0.5 rounded text-xs font-semibold">
+              {university.toUpperCase()}
+            </span>
+          ) : (
+            <span />
+          )}
           <span className="bg-[#3b4cca] px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-sm">
             PKR {price}
           </span>

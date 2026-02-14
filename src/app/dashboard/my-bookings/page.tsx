@@ -15,7 +15,7 @@ import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { isUserVerified } from '@/lib/verificationUtils';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { MapPin, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -73,6 +73,9 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const [confirming, setConfirming] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
+  const [isCompleting, setIsCompleting] = React.useState(false);
+  const [cancelReason, setCancelReason] = React.useState('');
+  const [showCompletionCancel, setShowCompletionCancel] = React.useState(false);
   const [confirmationProcessed, setConfirmationProcessed] = React.useState(booking.status === 'CONFIRMED');
   const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
   const [departureTimer, setDepartureTimer] = React.useState<string>('');
@@ -83,6 +86,8 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const { user } = useUser();
   const { toast } = useToast();
   const { getUnreadForRide } = useNotifications();
+  const lifecycleStatus = (ride as any)?.lifecycleStatus;
+  const needsCompletion = booking.status === 'CONFIRMED' && (lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW');
 
   // Safe ride status check
   const checkRideStatus = React.useCallback(async () => {
@@ -308,6 +313,78 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       }
     } finally {
       setConfirming(false);
+    }
+  };
+
+  const handlePassengerComplete = async () => {
+    if (!user) return;
+    setIsCompleting(true);
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/ride-lifecycle/transition', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          university,
+          rideId: ride?.id || booking.rideId,
+          action: 'passenger_complete',
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast({ variant: 'destructive', title: 'Completion Failed', description: data.error || 'Failed to complete ride.' });
+        return;
+      }
+
+      toast({ title: 'Completion Confirmed', description: 'Thanks for confirming your ride.' });
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to confirm completion.' });
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const handlePassengerCancel = async () => {
+    if (!user) return;
+    if (!cancelReason.trim()) {
+      toast({ variant: 'destructive', title: 'Reason Required', description: 'Please provide a cancellation reason.' });
+      return;
+    }
+
+    setIsCompleting(true);
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/ride-lifecycle/transition', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          university,
+          rideId: ride?.id || booking.rideId,
+          action: 'passenger_cancel',
+          reason: cancelReason,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast({ variant: 'destructive', title: 'Cancellation Failed', description: data.error || 'Failed to cancel completion.' });
+        return;
+      }
+
+      toast({ title: 'Cancellation Submitted', description: 'Your cancellation has been recorded.' });
+      setShowCompletionCancel(false);
+      setCancelReason('');
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to submit cancellation.' });
+    } finally {
+      setIsCompleting(false);
     }
   };
 
@@ -668,25 +745,7 @@ export default function MyBookingsPage() {
   // Safe bookings array
   const allBookings = toArray(bookingsData).filter((b) => b && b.id);
   
-  // Filter out bookings from rides that departed more than 2 hours ago
-  const bookings = allBookings.filter((b) => {
-    if (!b.ride?.departureTime) return true; // Keep if no departure time
-    
-    try {
-      const departureTime = b.ride.departureTime.seconds 
-        ? new Date(b.ride.departureTime.seconds * 1000)
-        : new Date(b.ride.departureTime);
-      
-      const now = new Date();
-      const hoursSinceDeparture = (now.getTime() - departureTime.getTime()) / (1000 * 60 * 60);
-      
-      // Keep booking only if ride hasn't departed yet or departed less than 2 hours ago
-      return hoursSinceDeparture < 2;
-    } catch (err) {
-      console.debug('[MyBookings] Error checking departure time:', err);
-      return true; // Keep booking if there's an error
-    }
-  });
+  const bookings = allBookings;
   
   const cancelledCount = allBookings.filter((b) => {
     try {
@@ -1135,6 +1194,50 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
           <div className="flex items-center gap-2 pt-1 border-t border-slate-700/30">
             <CheckCircle2 className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
             <div className="text-xs text-green-400 font-medium">Ride confirmed - Check in when ready</div>
+          </div>
+        )}
+
+        {/* Completion required */}
+        {needsCompletion && (
+          <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-950/20 p-3">
+            <div className="text-xs text-slate-300 font-medium">Completion required</div>
+            <p className="text-[11px] text-slate-400 mt-1">Confirm you completed the ride or cancel with a reason.</p>
+            <div className="flex gap-2 mt-3">
+              <Button
+                onClick={handlePassengerComplete}
+                disabled={isCompleting}
+                className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-500"
+              >
+                {isCompleting ? 'Submitting...' : 'Confirm Completion'}
+              </Button>
+              <Dialog open={showCompletionCancel} onOpenChange={setShowCompletionCancel}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="h-9">Cancel</Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Cancel Completion</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-2">
+                    <label className="text-sm text-slate-300">Reason (required)</label>
+                    <textarea
+                      className="w-full min-h-[90px] rounded-md border border-slate-700 bg-slate-900/80 p-2 text-sm text-slate-100"
+                      value={cancelReason}
+                      onChange={(e) => setCancelReason(e.target.value)}
+                      placeholder="Explain why you are cancelling..."
+                    />
+                  </div>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button variant="ghost">Close</Button>
+                    </DialogClose>
+                    <Button onClick={handlePassengerCancel} disabled={isCompleting} className="bg-red-600 hover:bg-red-500">
+                      {isCompleting ? 'Submitting...' : 'Submit Cancellation'}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
         )}
       </CardContent>

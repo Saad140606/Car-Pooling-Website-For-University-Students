@@ -81,7 +81,11 @@ function generateUniqueId(): string {
  * CRITICAL: Check if a ride is completed based on departure time
  * A ride is completed if its departureTime has passed (is in the past)
  */
-function isRideCompleted(departureTime: any): boolean {
+function isRideCompleted(departureTime: any, status?: string, lifecycleStatus?: string): boolean {
+  if (lifecycleStatus === 'COMPLETED') return true;
+  if (lifecycleStatus === 'CANCELLED' || lifecycleStatus === 'FAILED') return false;
+  if (status === 'completed') return true;
+  if (status === 'cancelled' || status === 'expired') return false;
   if (!departureTime) return false;
   
   const date = toDate(departureTime);
@@ -356,7 +360,7 @@ function computeDriverMetrics(
 
   // CRITICAL FIX: Filter rides where departure time has passed for "completed" metrics
   const completedRides = rides.filter(r => 
-    (r.status === 'completed' || r.status === 'confirmed') && isRideCompleted(r.departureTime)
+    (r.status === 'completed' || r.status === 'confirmed') && isRideCompleted(r.departureTime, r.status, (r as any).lifecycleStatus)
   );
   
   // Calculate passengers served
@@ -517,7 +521,7 @@ function computePassengerMetrics(
   // Filter for completed rides (ride departure time has passed)
   // ONLY these rides should count toward spending analytics
   const completedBookings = confirmedBookings.filter(
-    b => b.rideData && isRideCompleted(b.rideData.departureTime)
+    b => b.rideData && isRideCompleted(b.rideData.departureTime, b.rideData.status, (b.rideData as any).lifecycleStatus)
   );
   
   const totalRidesTaken = completedBookings.length;

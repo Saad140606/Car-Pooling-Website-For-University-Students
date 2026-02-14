@@ -1,7 +1,6 @@
 // src/firebase/init.ts
 import { getApps, initializeApp } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
@@ -25,14 +24,26 @@ function initializeFirebase(): { firebaseApp?: ReturnType<typeof initializeApp>;
     // Set persistence (fire-and-forget, non-blocking)
     setPersistence(a, browserLocalPersistence).catch(() => {});
     
-    // Use the modern persistent cache API instead of deprecated enableIndexedDbPersistence
+    // Initialize Firestore and attempt to enable persistence if available
     let fs: ReturnType<typeof getFirestore>;
     try {
-      fs = initializeFirestore(app, {
-        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-      });
+      fs = getFirestore(app);
+      // Try enabling persistence via dynamic import if supported
+      import('firebase/firestore').then((m: any) => {
+        try {
+          if (typeof m.enableIndexedDbPersistence === 'function') {
+            m.enableIndexedDbPersistence(fs).catch((err: any) => {
+              if (err?.code === 'failed-precondition') {
+                console.warn('[Firebase] Multiple tabs open, persistence disabled');
+              } else if (err?.code === 'unimplemented') {
+                console.warn('[Firebase] Browser does not support persistence');
+              }
+            });
+          }
+        } catch (_) {}
+      }).catch(() => {});
     } catch (e) {
-      // If Firestore was already initialized (e.g. by another module), fall back to getFirestore
+      // If any error, fall back to getFirestore
       fs = getFirestore(app);
     }
 

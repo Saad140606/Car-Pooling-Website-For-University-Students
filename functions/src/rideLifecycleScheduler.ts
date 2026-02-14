@@ -31,6 +31,8 @@ const RideStatus = {
   CANCELLED: 'CANCELLED',
 } as const;
 
+// Concrete type representing the string literal union of RideStatus values
+type RideStatusType = typeof RideStatus[keyof typeof RideStatus];
 /** Map lifecycle status to legacy status */
 function toLegacyStatus(status: string): string {
   switch (status) {
@@ -62,8 +64,8 @@ function toMs(ts: any): number {
   return new Date(ts).getTime();
 }
 
-function getLifecycleStatus(data: any): string {
-  if (data.lifecycleStatus) return data.lifecycleStatus;
+function getLifecycleStatus(data: any): RideStatusType {
+  if (data.lifecycleStatus) return data.lifecycleStatus as RideStatusType;
   // Map from legacy
   switch (data.status) {
     case 'active': return RideStatus.OPEN;

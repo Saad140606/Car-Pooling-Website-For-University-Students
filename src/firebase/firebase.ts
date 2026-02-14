@@ -2,7 +2,7 @@
 // exports ready-to-use `auth` and `firestore` instances.
 import { initializeApp as initApp, getApps } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, enableLogging } from 'firebase/firestore';
+import { getFirestore } from 'firebase/firestore';
 import { firebaseConfig } from './config';
 
 let app: ReturnType<typeof initApp> | undefined;
@@ -38,29 +38,32 @@ export function initializeFirebaseClient() {
         };
         
         // Try to enable persistence (fails gracefully if not supported)
-        import('firebase/firestore').then(() => {
+        import('firebase/firestore').then((m: any) => {
           try {
-            // Enable persistence
-            import('firebase/firestore').then(({ enableIndexedDbPersistence }) => {
-              enableIndexedDbPersistence(firestore!).catch((err) => {
-                if (err.code === 'failed-precondition') {
+            if (typeof m.enableIndexedDbPersistence === 'function') {
+              m.enableIndexedDbPersistence(firestore!).catch((err: any) => {
+                if (err?.code === 'failed-precondition') {
                   console.warn('[Firebase] Multiple tabs open, persistence disabled');
-                } else if (err.code === 'unimplemented') {
+                } else if (err?.code === 'unimplemented') {
                   console.warn('[Firebase] Browser does not support persistence');
                 }
               });
-            });
+            }
           } catch (error) {
             console.debug('[Firebase] Persistence setup skipped:', error);
           }
-        });
+        }).catch(() => {});
       } catch (error) {
         console.debug('[Firebase] Could not configure persistence:', error);
       }
       
-      // Enable logging in development for debugging
+      // Enable logging in development for debugging (optional)
       if (process.env.NODE_ENV === 'development') {
-        enableLogging(true);
+        import('firebase/firestore').then((m: any) => {
+          try {
+            if (typeof m.enableLogging === 'function') m.enableLogging(true);
+          } catch (_) {}
+        }).catch(() => {});
       }
     }
   } else if (!app) {

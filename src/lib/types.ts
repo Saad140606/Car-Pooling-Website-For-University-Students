@@ -4,7 +4,7 @@ export interface UserProfile {
   uid: string;
   email: string;
   fullName: string;
-  university: 'ned' | 'fast';
+  university: 'ned' | 'fast' | 'karachi';
   gender: 'male' | 'female';
   contactNumber?: string;
   transport?: 'car' | 'bike';
@@ -45,7 +45,7 @@ export interface CanonicalUserProfile {
   uid: string;
   name: string; // display name / short name
   email: string | null;
-  university: 'ned' | 'fast';
+  university: 'ned' | 'fast' | 'karachi';
   role: 'driver' | 'passenger';
   createdAt: Timestamp;
   // Optional legacy-compatible fields

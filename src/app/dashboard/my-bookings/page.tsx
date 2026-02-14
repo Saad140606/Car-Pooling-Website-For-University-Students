@@ -688,9 +688,13 @@ export default function MyBookingsPage() {
     }
   });
   
-  const cancelledCount = allBookings.filter(
-    (b) => b.status === 'cancelled' || b.status === 'CANCELLED'
-  ).length;
+  const cancelledCount = allBookings.filter((b) => {
+    try {
+      return String(b.status).toLowerCase() === 'cancelled';
+    } catch (_) {
+      return false;
+    }
+  }).length;
   const cancellationRate = allBookings.length > 0
     ? Math.round((cancelledCount / allBookings.length) * 100)
     : 0;

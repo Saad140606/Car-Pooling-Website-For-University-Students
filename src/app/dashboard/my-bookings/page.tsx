@@ -680,7 +680,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                     ✗ Report Issue
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-slate-700">
+                <DialogContent
+                  className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-slate-700"
+                  onClick={(e) => { e.stopPropagation(); }}
+                  onPointerDown={(e) => { e.stopPropagation(); }}
+                >
                   <DialogHeader>
                     <DialogTitle className="text-white">Report Ride Issue</DialogTitle>
                   </DialogHeader>
@@ -723,21 +727,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                     </Button>
                   </DialogFooter>
                 </DialogContent>
-                          onClick={(e) => { e.stopPropagation(); }}
-                          onPointerDown={(e) => { e.stopPropagation(); }}
-                        >
+              </Dialog>
             </div>
-                <DialogContent
-                  className="max-w-3xl"
-                  onClick={(e) => { e.stopPropagation(); }}
-                  onPointerDown={(e) => { e.stopPropagation(); }}
-                >
+            <p className="text-xs text-slate-400 mt-3 text-center">
               This helps maintain ride quality and safety for all users
-                      <DialogContent
-                        className="max-w-3xl"
-                        onClick={(e) => { e.stopPropagation(); }}
-                        onPointerDown={(e) => { e.stopPropagation(); }}
-                      >
+            </p>
           </div>
         )}
 

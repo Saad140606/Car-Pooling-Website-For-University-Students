@@ -111,11 +111,11 @@ export default function FiltersPage() {
         <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.1s' }}>
           {/* Show a locked label only for valid logged-in universities */}
           <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">
-            {(user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? 'University (Locked to Portal)' : 'University'}
+            {(user && userData && (userData.university === 'fast' || userData.university === 'ned' || userData.university === 'karachi')) ? 'University (Locked to Portal)' : 'University'}
           </div>
 
           {/* Lock only when the authenticated user has a valid university value */}
-          { (user && userData && (userData.university === 'fast' || userData.university === 'ned')) ? (
+          { (user && userData && (userData.university === 'fast' || userData.university === 'ned' || userData.university === 'karachi')) ? (
             <div className="flex items-center gap-2">
               <Input
                 value={getUniversityShortLabel(userData.university) || userData.university}

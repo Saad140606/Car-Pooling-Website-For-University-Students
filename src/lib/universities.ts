@@ -13,7 +13,7 @@ export function getUniversityShortLabel(university?: string | null) {
   if (!university) return 'Unknown';
   if (university === 'ned') return 'NED University';
   if (university === 'fast') return 'FAST University';
-  if (university === 'karachi') return 'Karachi University';
+  if (university === 'karachi') return 'University of Karachi';
   return university;
 }
 

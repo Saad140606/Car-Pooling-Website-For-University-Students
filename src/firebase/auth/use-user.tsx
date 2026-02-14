@@ -160,7 +160,8 @@ export function useUser() {
   }, [auth, initialized]);
 
   // User profile subscription via useDoc (real-time)
-  const userUniversity = user ? (getSelectedUniversity() || 'fast') : null;
+  // CRITICAL: Use selected university if available, else pending (from auth portal), else default to fast
+  const userUniversity = user ? (getSelectedUniversity() || getPendingUniversity() || 'fast') : null;
   const userRef = user && firestore ? doc(firestore, 'universities', userUniversity || 'fast', 'users', user.uid) : null;
   const { data: userData, loading: userLoading, error: userError } = useDoc<UserProfile>(userRef);
 

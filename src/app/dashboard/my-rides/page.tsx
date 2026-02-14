@@ -1290,7 +1290,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                   {acceptedBookings.filter(b => b.status === 'CONFIRMED').map((b) => (
                     <div 
                       key={b.id}
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setSelectedPassenger(b);
                         setShowPassengerDetail(true);
                       }}
@@ -1403,7 +1404,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 
               {/* Pending Confirmation: accepted but not yet confirmed */}
               {acceptedBookings && acceptedBookings.filter(b => b.status === 'accepted').length > 0 && (
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 space-y-3" onClick={(e) => { e.stopPropagation(); }}>
                   <div className="flex items-center gap-2 relative">
                     <Clock className="h-5 w-5 text-amber-400" />
                     <h4 className="font-bold text-sm text-white">Pending Confirmation</h4>
@@ -1415,7 +1416,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                   {acceptedBookings.filter(b => b.status === 'accepted').map((b) => (
                     <div 
                       key={b.id} 
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setSelectedPassenger(b);
                         setShowPassengerDetail(true);
                       }}

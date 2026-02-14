@@ -1,13 +1,15 @@
 "use client";
 
 import React from 'react';
+import dynamic from 'next/dynamic';
 import { collection, query, where, orderBy, limit, doc, updateDoc, serverTimestamp, getDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
 import { useFirestore, useUser } from '@/firebase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import MapLeaflet from '@/components/MapLeaflet';
+import L from 'leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from '@/components/map';
 import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
 import { InlineVerifiedBadge } from '@/components/VerificationBadge';
@@ -25,6 +27,12 @@ import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialo
 import { BookingDetailDialog } from './BookingDetailDialog';
 import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
 import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
+import { decodePolyline } from '@/lib/route';
+
+const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
+  ssr: false,
+  loading: () => <div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>
+});
 
 /**
  * Safe array helper
@@ -78,6 +86,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
   const [isCompleting, setIsCompleting] = React.useState(false);
   const [cancelReason, setCancelReason] = React.useState('');
+  const [showRoutePickup, setShowRoutePickup] = React.useState(false);
   const [showCompletionCancel, setShowCompletionCancel] = React.useState(false);
   const [confirmationProcessed, setConfirmationProcessed] = React.useState(booking.status === 'CONFIRMED');
   const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
@@ -519,6 +528,68 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const pickupPlaceName = safeGet(booking, 'pickupPlaceName', '');
   const dropoffPlaceName = safeGet(booking, 'dropoffPlaceName', '');
 
+  const normalizePoint = React.useCallback((pt: any) => {
+    if (!pt) return null;
+    if (Array.isArray(pt) && pt.length >= 2) return { lat: Number(pt[0]), lng: Number(pt[1]) };
+    if (typeof pt === 'object' && pt !== null && typeof pt.lat === 'number' && typeof pt.lng === 'number') {
+      return { lat: Number(pt.lat), lng: Number(pt.lng) };
+    }
+    return null;
+  }, []);
+
+  const pickupLatLng = normalizePoint(pickupPoint);
+
+  const routeFromPolyline = React.useMemo(() => {
+    if (ride?.routePolyline && typeof ride.routePolyline === 'string') {
+      return decodePolyline(ride.routePolyline).map((p) => [p.lat, p.lng]) as [number, number][];
+    }
+    return [] as [number, number][];
+  }, [ride?.routePolyline]);
+
+  const routeFromArray = React.useMemo(() => {
+    if (Array.isArray(ride?.route) && ride.route.length > 0) {
+      return ride.route
+        .map((p: any) => {
+          if (Array.isArray(p) && p.length >= 2) return [Number(p[0]), Number(p[1])] as [number, number];
+          if (p && typeof p.lat === 'number' && typeof p.lng === 'number') return [Number(p.lat), Number(p.lng)] as [number, number];
+          return null;
+        })
+        .filter(Boolean) as [number, number][];
+    }
+    return [] as [number, number][];
+  }, [ride?.route]);
+
+  const dropoffLatLng = React.useMemo(() => {
+    const directDrop = normalizePoint((booking as any)?.dropoffPoint);
+    if (directDrop) return directDrop;
+    if (routeFromArray.length > 0) {
+      const last = routeFromArray[routeFromArray.length - 1];
+      return { lat: last[0], lng: last[1] };
+    }
+    if (routeFromPolyline.length > 0) {
+      const last = routeFromPolyline[routeFromPolyline.length - 1];
+      return { lat: last[0], lng: last[1] };
+    }
+    return null;
+  }, [booking, normalizePoint, routeFromArray, routeFromPolyline]);
+
+  const routePath = React.useMemo(() => {
+    if (routeFromPolyline.length > 0) return routeFromPolyline;
+    if (routeFromArray.length > 0) return routeFromArray;
+    if (pickupLatLng && dropoffLatLng) return [[pickupLatLng.lat, pickupLatLng.lng], [dropoffLatLng.lat, dropoffLatLng.lng]] as [number, number][];
+    return [] as [number, number][];
+  }, [routeFromPolyline, routeFromArray, pickupLatLng, dropoffLatLng]);
+
+  const mapBounds = React.useMemo(() => {
+    if (routePath.length > 0) return L.latLngBounds(routePath as any);
+    if (pickupLatLng && dropoffLatLng) return L.latLngBounds([
+      [pickupLatLng.lat, pickupLatLng.lng],
+      [dropoffLatLng.lat, dropoffLatLng.lng]
+    ] as any);
+    if (pickupLatLng) return L.latLngBounds([[pickupLatLng.lat, pickupLatLng.lng]] as any);
+    return null;
+  }, [routePath, pickupLatLng, dropoffLatLng]);
+
   const rideId = safeGet(ride, 'id');
   const unreadCount = rideId ? getUnreadForRide(rideId) : 0;
   const chatId = safeGet(booking, 'chatId') || booking.id;
@@ -652,11 +723,21 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                     </Button>
                   </DialogFooter>
                 </DialogContent>
-              </Dialog>
+                          onClick={(e) => { e.stopPropagation(); }}
+                          onPointerDown={(e) => { e.stopPropagation(); }}
+                        >
             </div>
-            <p className="text-xs text-slate-400 mt-3 text-center">
+                <DialogContent
+                  className="max-w-3xl"
+                  onClick={(e) => { e.stopPropagation(); }}
+                  onPointerDown={(e) => { e.stopPropagation(); }}
+                >
               This helps maintain ride quality and safety for all users
-            </p>
+                      <DialogContent
+                        className="max-w-3xl"
+                        onClick={(e) => { e.stopPropagation(); }}
+                        onPointerDown={(e) => { e.stopPropagation(); }}
+                      >
           </div>
         )}
 
@@ -799,7 +880,69 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
             Ride Has Expired
           </div>
         )}
+
+        <Button
+          onClick={() => setShowRoutePickup(true)}
+          variant="outline"
+          size="sm"
+          className="w-full h-9 border-slate-600 hover:bg-slate-800/50"
+        >
+          View Route & Pickup
+        </Button>
       </CardFooter>
+
+      <Dialog open={showRoutePickup} onOpenChange={setShowRoutePickup}>
+        <DialogContent
+          className="max-w-3xl"
+          onClick={(e) => { e.stopPropagation(); }}
+          onPointerDown={(e) => { e.stopPropagation(); }}
+        >
+          <DialogHeader>
+            <DialogTitle>Route & Pickup</DialogTitle>
+          </DialogHeader>
+
+          {pickupLatLng && dropoffLatLng ? (
+            <div className="h-[60vh] w-full rounded-lg overflow-hidden border border-slate-700">
+              <MapContainer
+                bounds={mapBounds || undefined}
+                center={mapBounds ? undefined : ([pickupLatLng.lat, pickupLatLng.lng] as any)}
+                zoom={mapBounds ? undefined : 13}
+                style={{ height: '100%', width: '100%' }}
+              >
+                <TileLayer
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; OpenStreetMap contributors'
+                />
+                {routePath.length > 0 && (
+                  <Polyline positions={routePath as any} pathOptions={{ color: '#60A5FA', weight: 5, opacity: 0.9 }} />
+                )}
+                <Marker
+                  position={[pickupLatLng.lat, pickupLatLng.lng] as any}
+                  icon={L.divIcon({
+                    className: 'pickup-marker',
+                    html: `<div style="background:#10b981;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">Pickup</div>`,
+                    iconAnchor: [20, 24]
+                  })}
+                >
+                  <Popup>{pickupPlaceName || 'Pickup location'}</Popup>
+                </Marker>
+                <Marker
+                  position={[dropoffLatLng.lat, dropoffLatLng.lng] as any}
+                  icon={L.divIcon({
+                    className: 'dropoff-marker',
+                    html: `<div style="background:#ef4444;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">Dropoff</div>`,
+                    iconAnchor: [20, 24]
+                  })}
+                >
+                  <Popup>{dropoffPlaceName || ride?.to || 'Dropoff location'}</Popup>
+                </Marker>
+              </MapContainer>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-sm text-slate-400">Route data unavailable</div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Cancellation Confirmation Dialog */}
       <CancellationConfirmDialog
@@ -1319,7 +1462,10 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
                 <DialogTrigger asChild>
                   <Button variant="outline" className="h-9">Cancel</Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent
+                  onClick={(e) => { e.stopPropagation(); }}
+                  onPointerDown={(e) => { e.stopPropagation(); }}
+                >
                   <DialogHeader>
                     <DialogTitle>Cancel Completion</DialogTitle>
                   </DialogHeader>
@@ -1402,13 +1548,17 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
                   View Route
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-3xl">
+              <DialogContent
+                className="max-w-3xl"
+                onClick={(e) => { e.stopPropagation(); }}
+                onPointerDown={(e) => { e.stopPropagation(); }}
+              >
                 <DialogHeader>
                   <DialogTitle>Route from {ride?.from} to {ride?.to}</DialogTitle>
                 </DialogHeader>
                 <div className="h-[60vh] w-full rounded-lg overflow-hidden border border-slate-700">
                   {ride?.route && ride.route.length ? (
-                    <MapLeaflet 
+                    <LazyMapLeaflet 
                       route={ride.route as any} 
                       markers={booking.pickupPoint ? [[booking.pickupPoint.lat || booking.pickupPoint[0], booking.pickupPoint.lng || booking.pickupPoint[1]]] : []} 
                       style={{ height: '100%', width: '100%' }} 

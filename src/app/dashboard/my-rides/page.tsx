@@ -27,6 +27,9 @@ import { isUserVerified } from '@/lib/verificationUtils';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 import PassengerDetailModal from '@/components/PassengerDetailModal';
 import { notifyRequestAccepted } from '@/lib/rideNotificationService';
+import { RideDetailDialog } from './RideDetailDialog';
+import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
+import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
 import React from 'react';
 
 // Fix for default icon not showing in Leaflet
@@ -504,6 +507,9 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                 <span className="h-2 w-2 rounded-full bg-amber-400" />
                 Request Details
               </DialogTitle>
+              <DialogDescription className="text-slate-400">
+                Review booking request details for this passenger
+              </DialogDescription>
             </DialogHeader>
             
             <div className="space-y-4 mt-4">
@@ -624,6 +630,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const [showPassengerDetail, setShowPassengerDetail] = React.useState(false);
     const [isCompleting, setIsCompleting] = React.useState(false);
     const [reviewingPassengerId, setReviewingPassengerId] = React.useState<string | null>(null);
+    const [showRideDetail, setShowRideDetail] = React.useState(false);
     const acceptedCount = acceptedBookings?.length || 0;
     const [availableSeats, setAvailableSeats] = React.useState<number>(ride.availableSeats ?? 0);
 
@@ -635,98 +642,335 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const lifecycleStatus = (ride as any)?.lifecycleStatus;
     const needsCompletion = lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW';
 
+    // CRITICAL: Client-side lifecycle monitor for deterministic completion window
+    const lifecycleState = useRideLifecycleMonitor({
+      ride,
+      university,
+      // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
+    });
+
     const handleDeleteRide = async () => {
+      // ===== CRITICAL: Comprehensive validation before attempting delete =====
+      
+      // Check 1: Firestore initialized
       if (!firestore) {
-        toast({ variant: 'destructive', title: 'Error', description: 'Firestore not initialized.' });
+        console.error('[DeleteRide] Firestore not initialized');
+        toast({ variant: 'destructive', title: 'System Error', description: 'Database connection not available. Please refresh the page.' });
         return;
       }
 
-      // Preflight: fetch the authoritative ride document to confirm creator and avoid hitting rules
-      try {
-        const rideRef = doc(firestore, `universities/${university}/rides`, ride.id);
-        const rideSnap = await getDoc(rideRef);
-        if (!rideSnap.exists()) {
-          toast({ variant: 'destructive', title: 'Not found', description: 'Ride not found. It may have already been deleted.' });
-          setDeleteOpen(false);
-          return;
-        }
-        const rideDoc = rideSnap.data() as RideType & { driverId?: string; createdBy?: string };
-
-        // Fail fast with a clear message if the authenticated user is not the driver/creator
-        // CRITICAL: Check driverId (canonical) first, fallback to createdBy for backwards compatibility
-        const ownerId = rideDoc.driverId || rideDoc.createdBy;
-        if (!user || ownerId !== user.uid) {
-          toast({ variant: 'destructive', title: 'Not allowed', description: `You are not the driver of this ride (driverId: ${ownerId || 'unknown'}) and cannot delete it.` });
-          setDeleteOpen(false);
-          return;
-        }
-
-        // Ensure the user's profile university matches the ride's university; mirrors Firestore checks
-        if (userData && userData.university && userData.university !== university) {
-          toast({ variant: 'destructive', title: 'Permission mismatch', description: 'Your account university does not match this ride. Please complete your profile or contact support.' });
-          setDeleteOpen(false);
-          return;
-        }
-
-        if (acceptedCount > 0) {
-          toast({ variant: 'destructive', title: 'Cannot delete', description: 'This ride has accepted bookings and cannot be deleted.' });
-          return;
-        }
-      } catch (err: any) {
-        console.error('Preflight ride fetch failed', err);
-        toast({ variant: 'destructive', title: 'Error', description: 'Failed to verify ride ownership. Please try again.' });
+      // Check 2: User authenticated
+      if (!user) {
+        console.error('[DeleteRide] User not authenticated');
+        toast({ variant: 'destructive', title: 'Authentication Required', description: 'You must be logged in to delete rides.' });
         setDeleteOpen(false);
         return;
       }
 
-      setIsDeleting(true);
+      // Check 3: University set
+      if (!university) {
+        console.error('[DeleteRide] University not set');
+        toast({ variant: 'destructive', title: 'Configuration Error', description: 'University information missing. Please refresh the page.' });
+        setDeleteOpen(false);
+        return;
+      }
+
+      // Check 4: Ride ID exists
+      if (!ride?.id) {
+        console.error('[DeleteRide] Ride ID missing');
+        toast({ variant: 'destructive', title: 'Invalid Ride', description: 'Ride information is incomplete.' });
+        setDeleteOpen(false);
+        return;
+      }
+
+      console.log('[DeleteRide] Starting deletion process', {
+        rideId: ride.id,
+        userId: user.uid,
+        university,
+        acceptedCount
+      });
+
+      // ===== PREFLIGHT: Verify ride exists and user owns it =====
       try {
-        // Call the new backend delete API instead of client-side Firestore
+        const rideRef = doc(firestore, `universities/${university}/rides`, ride.id);
+        const rideSnap = await getDoc(rideRef);
+        
+        if (!rideSnap.exists()) {
+          console.warn('[DeleteRide] Ride not found in database', ride.id);
+          toast({ 
+            variant: 'destructive', 
+            title: 'Ride Not Found', 
+            description: 'This ride no longer exists. It may have already been deleted.' 
+          });
+          setDeleteOpen(false);
+          return;
+        }
+        
+        const rideDoc = rideSnap.data() as RideType & { driverId?: string; createdBy?: string };
+        const ownerId = rideDoc.driverId || rideDoc.createdBy;
+        
+        // Verify ownership
+        if (ownerId !== user.uid) {
+          console.warn('[DeleteRide] Ownership mismatch', {
+            ownerId,
+            userId: user.uid
+          });
+          toast({ 
+            variant: 'destructive', 
+            title: 'Unauthorized', 
+            description: 'You are not the owner of this ride and cannot delete it.' 
+          });
+          setDeleteOpen(false);
+          return;
+        }
+
+        // Verify university match
+        if (userData?.university && userData.university !== university) {
+          console.warn('[DeleteRide] University mismatch', {
+            userUniversity: userData.university,
+            rideUniversity: university
+          });
+          toast({ 
+            variant: 'destructive', 
+            title: 'Permission Error', 
+            description: 'Your account university does not match this ride. Please contact support.' 
+          });
+          setDeleteOpen(false);
+          return;
+        }
+
+        // Block if has confirmed passengers
+        if (acceptedCount > 0) {
+          console.warn('[DeleteRide] Ride has accepted bookings', { acceptedCount });
+          toast({ 
+            variant: 'destructive', 
+            title: 'Cannot Delete', 
+            description: `This ride has ${acceptedCount} confirmed passenger${acceptedCount > 1 ? 's' : ''} and cannot be deleted. You can cancel the ride instead.` 
+          });
+          setDeleteOpen(false);
+          return;
+        }
+
+        // Check departure time
+        if (rideDoc.departureTime) {
+          const departureMs = rideDoc.departureTime.seconds 
+            ? rideDoc.departureTime.seconds * 1000 
+            : new Date(rideDoc.departureTime).getTime();
+          
+          if (Date.now() >= departureMs) {
+            console.warn('[DeleteRide] Ride has already departed');
+            toast({ 
+              variant: 'destructive', 
+              title: 'Cannot Delete', 
+              description: 'Cannot delete a ride that has already departed.' 
+            });
+            setDeleteOpen(false);
+            return;
+          }
+        }
+      } catch (preflightErr: any) {
+        console.error('[DeleteRide] Preflight check failed:', preflightErr);
+        toast({ 
+          variant: 'destructive', 
+          title: 'Verification Failed', 
+          description: 'Failed to verify ride ownership. Please try again.' 
+        });
+        setDeleteOpen(false);
+        return;
+      }
+
+      // ===== EXECUTE DELETE VIA BACKEND API =====
+      setIsDeleting(true);
+      console.log('[DeleteRide] Calling backend API');
+      
+      try {
+        // Get fresh auth token
+        const idToken = await user.getIdToken(/* forceRefresh */ true).catch(err => {
+          console.error('[DeleteRide] Failed to get auth token:', err);
+          throw new Error('Failed to authenticate. Please log in again.');
+        });
+        
+        console.log('[DeleteRide] Auth token obtained, making API request');
+        
         const response = await fetch('/api/rides/delete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
           body: JSON.stringify({
             university,
             rideId: ride.id,
           }),
         });
 
-        const data = await response.json();
+        console.log('[DeleteRide] API response status:', response.status);
+        
+        let data;
+        try {
+          data = await response.json();
+        } catch (parseErr) {
+          console.error('[DeleteRide] Failed to parse response:', parseErr);
+          data = { message: 'Invalid response from server' };
+        }
 
         if (!response.ok) {
-          // Handle specific errors
-          if (response.status === 403) {
-            toast({ variant: 'destructive', title: 'Permission Denied', description: data.message || 'You do not have permission to delete this ride.' });
-          } else if (response.status === 400) {
-            toast({ variant: 'destructive', title: 'Cannot Delete', description: data.message || 'This ride cannot be deleted. It may have accepted bookings.' });
+          console.error('[DeleteRide] API error:', { status: response.status, data });
+          
+          // Specific error handling
+          if (response.status === 401) {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Authentication Failed', 
+              description: 'Your session has expired. Please log in again.' 
+            });
+          } else if (response.status === 403) {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Permission Denied', 
+              description: data.message || data.error || 'You do not have permission to delete this ride.' 
+            });
           } else if (response.status === 404) {
-            toast({ variant: 'destructive', title: 'Not Found', description: 'Ride not found. It may have already been deleted.' });
+            toast({ 
+              variant: 'destructive', 
+              title: 'Ride Not Found', 
+              description: 'This ride no longer exists. It may have already been deleted.' 
+            });
+          } else if (response.status === 400) {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Cannot Delete', 
+              description: data.message || data.error || 'This ride cannot be deleted. It may have confirmed bookings.' 
+            });
           } else {
-            toast({ variant: 'destructive', title: 'Delete Failed', description: data.message || 'An error occurred while deleting the ride.' });
+            toast({ 
+              variant: 'destructive', 
+              title: 'Delete Failed', 
+              description: data.message || data.error || `Server error (${response.status}). Please try again.` 
+            });
           }
           setDeleteOpen(false);
           return;
         }
 
-        toast({ title: 'Deleted', description: 'Ride has been deleted successfully.' });
+        // Success!
+        console.log('[DeleteRide] Ride deleted successfully', { rideId: ride.id });
+        toast({ 
+          title: 'Ride Deleted', 
+          description: 'Your ride has been deleted successfully.' 
+        });
         setDeleteOpen(false);
-      } catch (err: any) {
-        console.error('Delete ride failed', err);
-        toast({ variant: 'destructive', title: 'Error', description: err?.message || 'An error occurred while deleting the ride.' });
+        
+      } catch (apiErr: any) {
+        console.error('[DeleteRide] API call failed:', apiErr);
+        
+        // Network or other errors
+        if (apiErr.message?.includes('Failed to fetch') || apiErr.message?.includes('NetworkError')) {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Network Error', 
+            description: 'Failed to connect to server. Please check your internet connection and try again.' 
+          });
+        } else if (apiErr.message?.includes('authenticate')) {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Authentication Error', 
+            description: apiErr.message 
+          });
+        } else {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Delete Failed', 
+            description: apiErr.message || 'An unexpected error occurred. Please try again.' 
+          });
+        }
+        setDeleteOpen(false);
       } finally {
         setIsDeleting(false);
       }
     }; 
 
     const handleCancelRide = async () => {
-      if (!user || user.uid !== ride.driverId) {
-        toast({ variant: 'destructive', title: 'Not allowed', description: 'Only the driver can cancel this ride.' });
+      // ===== CRITICAL: Comprehensive validation before attempting cancel =====
+      
+      console.log('[CancelRide] Starting cancellation process', {
+        rideId: ride?.id,
+        userId: user?.uid,
+        driverId: ride?.driverId
+      });
+
+      // Check 1: User authenticated
+      if (!user) {
+        console.error('[CancelRide] User not authenticated');
+        toast({ 
+          variant: 'destructive', 
+          title: 'Authentication Required', 
+          description: 'You must be logged in to cancel rides.' 
+        });
         return;
       }
 
+      // Check 2: Ride exists
+      if (!ride?.id || !ride?.driverId) {
+        console.error('[CancelRide] Invalid ride data');
+        toast({ 
+          variant: 'destructive', 
+          title: 'Invalid Ride', 
+          description: 'Ride information is incomplete.' 
+        });
+        return;
+      }
+
+      // Check 3: User is the driver
+      if (user.uid !== ride.driverId) {
+        console.warn('[CancelRide] User is not the driver', {
+          userId: user.uid,
+          driverId: ride.driverId
+        });
+        toast({ 
+          variant: 'destructive', 
+          title: 'Unauthorized', 
+          description: 'Only the ride driver can cancel this ride.' 
+        });
+        return;
+      }
+
+      // Check 4: University set
+      if (!university) {
+        console.error('[CancelRide] University not set');
+        toast({ 
+          variant: 'destructive', 
+          title: 'Configuration Error', 
+          description: 'University information missing.' 
+        });
+        return;
+      }
+
+      // Check 5: Ride not already cancelled
+      if (ride.status === 'cancelled') {
+        console.warn('[CancelRide] Ride already cancelled');
+        toast({ 
+          variant: 'destructive', 
+          title: 'Already Cancelled', 
+          description: 'This ride has already been cancelled.' 
+        });
+        setShowCancelDialog(false);
+        return;
+      }
+
+      // ===== EXECUTE CANCELLATION VIA BACKEND API =====
       setIsCancelling(true);
+      console.log('[CancelRide] Calling backend API');
+      
       try {
-        const idToken = await user.getIdToken();
+        // Get fresh auth token
+        const idToken = await user.getIdToken(/* forceRefresh */ true).catch(err => {
+          console.error('[CancelRide] Failed to get auth token:', err);
+          throw new Error('Failed to authenticate. Please log in again.');
+        });
+        
+        console.log('[CancelRide] Auth token obtained, making API request');
+        
         const response = await fetch('/api/rides/cancel', {
           method: 'POST',
           headers: { 
@@ -740,38 +984,103 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
           }),
         });
 
-        const data = await response.json();
+        console.log('[CancelRide] API response status:', response.status);
+        
+        let data;
+        try {
+          data = await response.json();
+        } catch (parseErr) {
+          console.error('[CancelRide] Failed to parse response:', parseErr);
+          data = { message: 'Invalid response from server' };
+        }
 
         if (!response.ok) {
-          // Handle specific error messages
-          if (response.status === 403) {
+          console.error('[CancelRide] API error:', { status: response.status, data });
+          
+          // Specific error handling
+          if (response.status === 401) {
             toast({ 
               variant: 'destructive', 
-              title: 'Account Locked', 
-              description: data.message || 'Your account has been temporarily locked due to high cancellation rates.'
+              title: 'Authentication Failed', 
+              description: 'Your session has expired. Please log in again.' 
+            });
+          } else if (response.status === 403) {
+            // Check if it's an account lock
+            if (data.message?.includes('locked') || data.error?.includes('locked')) {
+              toast({ 
+                variant: 'destructive', 
+                title: 'Account Temporarily Locked', 
+                description: data.message || data.error || 'Your account has been temporarily locked due to high cancellation rates.'
+              });
+            } else {
+              toast({ 
+                variant: 'destructive', 
+                title: 'Permission Denied', 
+                description: data.message || data.error || 'You do not have permission to cancel this ride.' 
+              });
+            }
+          } else if (response.status === 404) {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Ride Not Found', 
+              description: 'This ride no longer exists.' 
+            });
+          } else if (response.status === 400) {
+            toast({ 
+              variant: 'destructive', 
+              title: 'Cannot Cancel', 
+              description: data.message || data.error || 'This ride cannot be cancelled. It may have already started.' 
             });
           } else {
             toast({ 
               variant: 'destructive', 
               title: 'Cancellation Failed', 
-              description: data.message || 'Failed to cancel ride. Please try again.' 
+              description: data.message || data.error || `Server error (${response.status}). Please try again.` 
             });
           }
+          setShowCancelDialog(false);
           return;
         }
 
+        // Success!
+        const passengersAffected = data.data?.passengersAffected || 0;
+        console.log('[CancelRide] Ride cancelled successfully', { 
+          rideId: ride.id, 
+          passengersAffected 
+        });
+        
         toast({ 
           title: 'Ride Cancelled', 
-          description: `${data.data?.passengersAffected || 0} passengers have been notified.` 
+          description: passengersAffected > 0 
+            ? `${passengersAffected} passenger${passengersAffected > 1 ? 's have' : ' has'} been notified.`
+            : 'Ride has been cancelled successfully.' 
         });
         setShowCancelDialog(false);
-      } catch (error: any) {
-        console.error('Cancel ride error:', error);
-        toast({ 
-          variant: 'destructive', 
-          title: 'Error', 
-          description: error?.message || 'Failed to cancel ride. Please try again.' 
-        });
+        
+      } catch (apiErr: any) {
+        console.error('[CancelRide] API call failed:', apiErr);
+        
+        // Network or other errors
+        if (apiErr.message?.includes('Failed to fetch') || apiErr.message?.includes('NetworkError')) {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Network Error', 
+            description: 'Failed to connect to server. Please check your internet connection and try again.' 
+          });
+        } else if (apiErr.message?.includes('authenticate')) {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Authentication Error', 
+            description: apiErr.message 
+          });
+        } else {
+          toast({ 
+            variant: 'destructive', 
+            title: 'Cancellation Failed', 
+            description: apiErr.message || 'An unexpected error occurred. Please try again.' 
+          });
+        }
+        setShowCancelDialog(false);
       } finally {
         setIsCancelling(false);
       }
@@ -852,7 +1161,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     };
 
     return (
-        <Card className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative">
+        <>
+        <Card 
+          className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative cursor-pointer"
+          onClick={() => setShowRideDetail(true)}
+        >
             <CardHeader className="p-0 mb-2">
               <div className="flex justify-between items-start gap-2 min-w-0">
                   <div className="min-w-0 flex-1">
@@ -887,7 +1200,73 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             </CardHeader>
             <CardContent className="p-0">
 
-              <div className="mb-3">
+              {/* ========================================
+                  COMPLETION WINDOW - DRIVER UI (PROMINENT)
+                  ======================================== */}
+              {lifecycleState.shouldShowCompletionUI && acceptedCount > 0 && (
+                <div className="mb-4 p-4 rounded-lg border-2 border-emerald-500 bg-gradient-to-br from-emerald-900/40 to-emerald-950/60 animate-pulse-slow" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+                    <h3 className="font-bold text-lg text-white">🚀 Complete Your Ride</h3>
+                  </div>
+                  <p className="text-sm text-slate-300 mb-4">
+                    Your ride has been completed. Please review each passenger and mark the ride as complete.
+                  </p>
+                  <div className="space-y-2 mb-4">
+                    {acceptedBookings?.filter(b => b.status === 'CONFIRMED').map((b) => (
+                      <div key={`completion-${b.id}`} className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-950/40">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <UserNameWithBadge 
+                              name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
+                              verified={isUserVerified(b.passengerDetails)}
+                              size="sm"
+                              truncate
+                            />
+                            {b.driverReview && (
+                              <p className="text-xs text-emerald-400 mt-1">✓ Marked as {b.driverReview}</p>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="h-8 bg-emerald-600 hover:bg-emerald-500"
+                              disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
+                              onClick={() => handleDriverReview(b.passengerId, 'arrived')}
+                            >
+                              {reviewingPassengerId === b.passengerId ? '...' : 'Completed'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 border-red-600 text-red-400 hover:bg-red-900/20"
+                              disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
+                              onClick={() => handleDriverReview(b.passengerId, 'no-show')}
+                            >
+                              No-show
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    onClick={handleMarkRideComplete}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 h-12 text-base font-bold"
+                    disabled={isCompleting || acceptedBookings?.filter(b => b.status === 'CONFIRMED').some(b => !b.driverReview)}
+                  >
+                    {isCompleting ? 'Completing...' : '✓ Mark Ride Complete'}
+                  </Button>
+                  {acceptedBookings?.filter(b => b.status === 'CONFIRMED').some(b => !b.driverReview) && (
+                    <p className="text-xs text-amber-400 mt-2 text-center">
+                      Please review all passengers before completing
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="mb-3" onClick={(e) => e.stopPropagation()}>
                 {ride.route && ride.route.length > 0 && (
                   <div className="mt-0">
                     <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
@@ -899,7 +1278,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 
               {/* Confirmed Passengers: passengers who clicked Confirm Ride */}
               {acceptedBookings && acceptedBookings.filter(b => b.status === 'CONFIRMED').length > 0 && (
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2 relative">
                     <CheckCircle2 className="h-5 w-5 text-green-400" />
                     <h4 className="font-bold text-sm text-white">Confirmed Passengers</h4>
@@ -1045,11 +1424,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       {/* Gradient overlay on hover */}
                       <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/5 to-amber-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
                       
-                      <div className="relative z-10 flex items-start justify-between gap-4">
+                      <div className="relative z-10 flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center flex-shrink-0">
-                              <Clock className="h-5 w-5 text-amber-400" />
+                          <div className="flex items-center gap-2.5 mb-3">
+                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center flex-shrink-0">
+                              <Clock className="h-4 w-4 text-amber-400" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <UserNameWithBadge 
@@ -1058,30 +1437,27 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                                 size="md"
                                 truncate
                               />
+                              <p className="text-xs text-amber-400/80 mt-1">Waiting for confirmation</p>
                             </div>
                           </div>
-                          <div className="space-y-2 text-xs ml-10">
+                          <div className="space-y-2.5">
                             <div className="flex items-start gap-2">
-                              <MapPin className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                              <span className="text-amber-200/90 font-medium line-clamp-2">
+                              <MapPin className="h-4 w-4 text-amber-400/80 flex-shrink-0 mt-0.5" />
+                              <span className="text-sm text-slate-300 line-clamp-2">
                                 {formatPickupLabel(b as any)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Clock className="h-3.5 w-3.5 text-slate-400" />
-                              <span className="text-slate-400">{((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) && new Date((b.ride?.departureTime?.seconds ?? ride.departureTime?.seconds) * 1000).toLocaleString('en-US', { 
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })) || 'Time TBD'}</span>
+                              <Clock className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                              <span className="text-sm text-slate-400">
+                                {formatTimestamp(b.ride?.departureTime ?? ride.departureTime, { format: 'short', fallback: 'Time TBD' })}
+                              </span>
                             </div>
                           </div>
-                          <p className="text-xs text-slate-500 mt-2 ml-10">Waiting for passenger to confirm</p>
                         </div>
                         <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                           {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105" onClick={(e) => e.stopPropagation()}>Call</a>
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-2 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105 text-center" onClick={(e) => e.stopPropagation()}>Call</a>
                           ) : null}
                           {((b as any).chatId || b.id) ? (
                             <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
@@ -1095,7 +1471,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             </CardContent>
 
             <CardFooter className="p-0 mt-2">
-              <div className="flex justify-end w-full gap-2">
+              <div className="flex justify-end w-full gap-2" onClick={(e) => e.stopPropagation()}>
                 {/* Cancel Ride Button */}
                 {ride.status !== 'cancelled' && (
                   <>
@@ -1192,6 +1568,16 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
               />
             )}
         </Card>
+
+        {/* Ride Detail Dialog */}
+        <RideDetailDialog
+          open={showRideDetail}
+          onOpenChange={setShowRideDetail}
+          ride={ride}
+          acceptedCount={acceptedCount}
+          availableSeats={availableSeats}
+        />
+        </>
     )
 }
 

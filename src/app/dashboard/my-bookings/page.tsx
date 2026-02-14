@@ -22,6 +22,9 @@ import { useNotifications } from '@/contexts/NotificationContext';
 import { ErrorState, EmptyState, LoadingState } from '@/components/StateComponents';
 import { safeGet } from '@/lib/safeApi';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
+import { BookingDetailDialog } from './BookingDetailDialog';
+import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
+import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
 
 /**
  * Safe array helper
@@ -81,6 +84,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const [departureTimer, setDepartureTimer] = React.useState<string>('');
   const [statusError, setStatusError] = React.useState<string | null>(null);
   const [localBookingStatus, setLocalBookingStatus] = React.useState<string>(booking.status || 'pending');
+  const [showBookingDetail, setShowBookingDetail] = React.useState(false);
   
   const firestore = useFirestore();
   const { user } = useUser();
@@ -88,6 +92,14 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const { getUnreadForRide } = useNotifications();
   const lifecycleStatus = (ride as any)?.lifecycleStatus;
   const needsCompletion = booking.status === 'CONFIRMED' && (lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW');
+
+  // CRITICAL: Client-side lifecycle monitor for deterministic completion window
+  const lifecycleState = useRideLifecycleMonitor({
+    ride,
+    booking,
+    university,
+    // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
+  });
 
   // Safe ride status check
   const checkRideStatus = React.useCallback(async () => {
@@ -512,7 +524,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const chatId = safeGet(booking, 'chatId') || booking.id;
 
   return (
-    <Card className="overflow-hidden transition-all duration-300 ease-out hover:shadow-xl hover:shadow-primary/20 border border-slate-700 bg-gradient-to-br from-slate-900/80 to-slate-950/80 backdrop-blur-xl">
+    <>
+    <Card 
+      className="overflow-hidden transition-all duration-300 ease-out hover:shadow-xl hover:shadow-primary/20 border border-slate-700 bg-gradient-to-br from-slate-900/80 to-slate-950/80 backdrop-blur-xl cursor-pointer"
+      onClick={() => setShowBookingDetail(true)}
+    >
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5 flex-1 min-w-0">
@@ -563,6 +579,87 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       </CardHeader>
 
       <CardContent className="pb-2.5 space-y-2">
+        {/* ========================================
+            COMPLETION WINDOW - PASSENGER UI (PROMINENT)
+            ======================================== */}
+        {lifecycleState.shouldShowCompletionUI && (
+          <div className="mb-4 p-4 rounded-lg border-2 border-emerald-500 bg-gradient-to-br from-emerald-900/40 to-emerald-950/60 animate-pulse-slow" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+              <h3 className="font-bold text-lg text-white">🎉 Complete Your Ride</h3>
+            </div>
+            <p className="text-sm text-slate-300 mb-4">
+              Did this ride complete successfully? Please confirm or report any issues.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                onClick={handlePassengerComplete}
+                disabled={isCompleting}
+                className="flex-1 h-12 text-base font-bold bg-emerald-600 hover:bg-emerald-500"
+              >
+                {isCompleting ? 'Submitting...' : '✓ Ride Completed'}
+              </Button>
+              <Dialog open={showCompletionCancel} onOpenChange={setShowCompletionCancel}>
+                <DialogTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    className="flex-1 h-12 text-base font-bold border-red-600 text-red-400 hover:bg-red-900/20"
+                    disabled={isCompleting}
+                  >
+                    ✗ Report Issue
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-slate-700">
+                  <DialogHeader>
+                    <DialogTitle className="text-white">Report Ride Issue</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-300">Please select the reason for cancellation:</p>
+                    <div className="space-y-2">
+                      {['Driver did not arrive', 'Late arrival', 'Ride cancelled by driver', 'Route changed', 'Safety concern', 'Other'].map((reason) => (
+                        <button
+                          key={reason}
+                          onClick={() => setCancelReason(reason)}
+                          className={`w-full p-3 rounded-lg border text-left transition-all ${
+                            cancelReason === reason
+                              ? 'border-emerald-500 bg-emerald-900/30 text-white'
+                              : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600'
+                          }`}
+                        >
+                          {reason}
+                        </button>
+                      ))}
+                    </div>
+                    {cancelReason === 'Other' && (
+                      <textarea
+                        className="w-full min-h-[90px] rounded-md border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-100 placeholder-slate-500"
+                        value={cancelReason === 'Other' ? '' : cancelReason}
+                        onChange={(e) => setCancelReason(e.target.value)}
+                        placeholder="Please explain the issue..."
+                      />
+                    )}
+                  </div>
+                  <DialogFooter className="gap-2">
+                    <DialogClose asChild>
+                      <Button variant="ghost" className="text-slate-300">Close</Button>
+                    </DialogClose>
+                    <Button 
+                      onClick={handlePassengerCancel} 
+                      disabled={isCompleting || !cancelReason || cancelReason.trim().length === 0} 
+                      className="bg-red-600 hover:bg-red-500"
+                    >
+                      {isCompleting ? 'Submitting...' : 'Submit Report'}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+            <p className="text-xs text-slate-400 mt-3 text-center">
+              This helps maintain ride quality and safety for all users
+            </p>
+          </div>
+        )}
+
         {/* Route */}
         <div className="space-y-2 text-xs">
           <div className="space-y-0.5">
@@ -619,7 +716,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         )}
       </CardContent>
 
-      <CardFooter className="flex flex-col gap-2 pt-3">
+      <CardFooter className="flex flex-col gap-2 pt-3" onClick={(e) => e.stopPropagation()}>
         {/* ACCEPTED STATUS - Show Confirm button */}
         {(booking.status === 'accepted' || localBookingStatus === 'accepted') && !confirmationProcessed && (
           <>
@@ -718,6 +815,14 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         isBookingConfirmed={localBookingStatus === 'CONFIRMED' || booking.status === 'CONFIRMED'}
       />
     </Card>
+
+    {/* Booking Detail Dialog */}
+    <BookingDetailDialog
+      open={showBookingDetail}
+      onOpenChange={setShowBookingDetail}
+      booking={booking}
+    />
+    </>
   );
 }
 

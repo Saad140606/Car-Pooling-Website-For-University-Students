@@ -39,10 +39,52 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
   const [cancelling, setCancelling] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
+  const normalizeStopsInput = useCallback((raw: any) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'object') return Object.values(raw);
+    return [];
+  }, []);
+
+  const [stopsForViewer, setStopsForViewer] = useState<any[]>(() => normalizeStopsInput(ride.stops));
+
   const isDriver = user && ride.driverId === user.uid;
   const isFull = (ride.availableSeats ?? 0) <= 0;
 
   const existingBooking = (myBookings || []).find((b: any) => b.rideId === ride.id);
+
+  useEffect(() => {
+    setStopsForViewer(normalizeStopsInput(ride.stops));
+  }, [ride.stops, normalizeStopsInput]);
+
+  useEffect(() => {
+    if (!openStops) return;
+
+    const refreshStops = async () => {
+      const fallbackStops = normalizeStopsInput(ride.stops);
+      console.log('[FullRideCard] View Stops opened. Local stops:', fallbackStops.length);
+      setStopsForViewer(fallbackStops);
+
+      if (!firestore || !ride?.id) return;
+      const university = ride.university || selectedUniversity || userData?.university;
+      if (!university) return;
+
+      try {
+        const rideRef = doc(firestore, `universities/${university}/rides`, ride.id);
+        const snap = await getDoc(rideRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          const latestStops = normalizeStopsInput(data?.stops);
+          console.log('[FullRideCard] Refreshed stops from Firestore:', latestStops.length);
+          setStopsForViewer(latestStops);
+        }
+      } catch (err) {
+        console.warn('[FullRideCard] Failed to refresh stops from Firestore:', err);
+      }
+    };
+
+    refreshStops();
+  }, [openStops, firestore, ride?.id, ride?.stops, ride?.university, selectedUniversity, userData?.university, normalizeStopsInput]);
 
   const [existingRequest, setExistingRequest] = useState<any | null>(null);
   const [existingChecked, setExistingChecked] = useState(false);
@@ -495,7 +537,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         transport={ride.transportMode || ride.transport}
         university={ride.university}
         hideUniversity={userData?.university === ride.university}
-        stops={ride.stops}
+        stops={stopsForViewer}
         driverVerified={ride.driverInfo?.isVerified || ride.driverInfo?.universityEmailVerified || false}
         statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
         onViewRoute={() => setOpenView(true)}
@@ -574,9 +616,9 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
           <DialogHeader>
             <DialogTitle>Route Stops</DialogTitle>
           </DialogHeader>
-          {ride.stops && ride.stops.length > 0 ? (
+          {stopsForViewer.length > 0 ? (
             <StopsViewer 
-              stops={ride.stops} 
+              stops={stopsForViewer} 
               routePolyline={ride.routePolyline}
               routeCoordinates={ride.routePolyline ? decodePolyline(ride.routePolyline) : undefined}
               isCreator={false}

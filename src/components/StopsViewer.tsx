@@ -26,7 +26,7 @@ interface Stop {
 }
 
 interface StopsViewerProps {
-  stops: Stop[];
+  stops: Stop[] | Record<string, Stop> | null | undefined;
   routePolyline?: string;
   routeCoordinates?: LatLng[];
   isCreator?: boolean;
@@ -50,6 +50,28 @@ export default function StopsViewer({
 }: StopsViewerProps) {
   const resolvingNamesRef = useRef(false);
   const requestedNameKeysRef = useRef<Set<string>>(new Set());
+
+  const safeStringify = useCallback((value: any) => {
+    try {
+      const seen = new WeakSet();
+      return JSON.stringify(value, (_key, val) => {
+        if (val && typeof val === 'object') {
+          if (seen.has(val)) return '[Circular]';
+          seen.add(val);
+        }
+        return val;
+      });
+    } catch (err) {
+      return '[Unserializable]';
+    }
+  }, []);
+
+  const normalizeStopsInput = useCallback((raw: any): Stop[] => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw as Stop[];
+    if (typeof raw === 'object') return Object.values(raw) as Stop[];
+    return [];
+  }, []);
 
   const getStopKey = (stop: Stop, index: number) => {
     return stop.id || `${stop.lat}-${stop.lng}-${index}`;
@@ -86,14 +108,16 @@ export default function StopsViewer({
     } catch (_) {}
     return 'Selected Location';
   };
+  const normalizedInitialStops = normalizeStopsInput(initialStops);
+
   // Helper function to get the display university name
   const getUniversityDisplay = () => {
     if (university) {
       return university === 'fast' ? '🏫 FAST University' : university === 'ned' ? '🏫 NED University' : `🏫 ${university}`;
     }
     // Try to detect from first stop name
-    if (initialStops.length > 0) {
-      const detectedUni = detectUniversityFromString(initialStops[0].name);
+    if (normalizedInitialStops.length > 0) {
+      const detectedUni = detectUniversityFromString(normalizedInitialStops[0].name);
       if (detectedUni === 'fast') return '🏫 FAST University';
       if (detectedUni === 'ned') return '🏫 NED University';
     }
@@ -102,43 +126,9 @@ export default function StopsViewer({
 
   const universityDisplay = getUniversityDisplay();
 
-  // ===== Normalize and ORDER stops: dedupe by coordinates ONLY for intermediate stops, NEVER for START/END =====
+  // ===== Normalize and ORDER stops: preserve ALL stops =====
   const [stops, setStops] = useState<Stop[]>(() => {
-    // CRITICAL: Separate START/END from intermediate stops
-    const startStops = initialStops.filter(s => s.type === 'start');
-    const endStops = initialStops.filter(s => s.type === 'end');
-    const intermediateStops = initialStops.filter(s => s.type !== 'start' && s.type !== 'end');
-    
-    // Dedupe intermediate stops ONLY (never touch START/END)
-    const deduped: Stop[] = [];
-    const seenCoords = new Set<string>();
-
-    // Always add START first
-    for (const stop of startStops) {
-      deduped.push(stop);
-      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
-      seenCoords.add(key);
-    }
-    
-    // Dedupe intermediate stops by coordinates
-    for (const stop of intermediateStops) {
-      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
-      if (seenCoords.has(key)) continue;
-      seenCoords.add(key);
-      deduped.push(stop);
-    }
-    
-    // Always add END last
-    for (const stop of endStops) {
-      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
-      if (!seenCoords.has(key)) {
-        deduped.push(stop);
-        seenCoords.add(key);
-      }
-    }
-
-    // CRITICAL: Apply correct ordering (START first, END last, intermediate by distance)
-    return orderStopsCorrectly(deduped);
+    return orderStopsCorrectly(normalizedInitialStops);
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -152,54 +142,28 @@ export default function StopsViewer({
   const [selectedPlaceName, setSelectedPlaceName] = useState<string | null>(null);
   const [isFetchingNames, setIsFetchingNames] = useState(false);
 
+  const stopsWithCoords = React.useMemo(() => {
+    return stops.filter((s: any) => Number.isFinite(Number(s?.lat)) && Number.isFinite(Number(s?.lng)));
+  }, [stops]);
+
   // Update stops when initialStops changes
   React.useEffect(() => {
-    console.log('[STOPS_VIEWER] Initial stops changed, updating state:', initialStops.length, 'stops');
+    const normalizedStops = normalizeStopsInput(initialStops);
+    console.log('[STOPS_VIEWER] Raw stops payload:', safeStringify(initialStops));
+    console.log('[STOPS_VIEWER] Normalized stops:', safeStringify(normalizedStops));
+    console.log('[STOPS_VIEWER] Updating state with', normalizedStops.length, 'stops');
 
     // Reset name lookup tracking so distance-based names can be re-resolved
     requestedNameKeysRef.current = new Set();
     resolvingNamesRef.current = false;
-    
-    // CRITICAL: Separate START/END from intermediate stops - NEVER dedup START/END
-    const startStops = initialStops.filter(s => s.type === 'start');
-    const endStops = initialStops.filter(s => s.type === 'end');
-    const intermediateStops = initialStops.filter(s => s.type !== 'start' && s.type !== 'end');
-    
-    // Dedupe intermediate stops ONLY by coordinate (preserve placeholders and distance-based names)
-    const deduped: Stop[] = [];
-    const seenCoords = new Set<string>();
 
-    // Always add START first
-    for (const stop of startStops) {
-      deduped.push(stop);
-      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
-      seenCoords.add(key);
-    }
-    
-    // Dedupe intermediate stops by coordinates ONLY
-    for (const stop of intermediateStops) {
-      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
-      if (seenCoords.has(key)) continue;
-      seenCoords.add(key);
-      deduped.push(stop);
-    }
-    
-    // Always add END last
-    for (const stop of endStops) {
-      const key = `${stop.lat.toFixed(5)}:${stop.lng.toFixed(5)}`;
-      if (!seenCoords.has(key)) {
-        deduped.push(stop);
-        seenCoords.add(key);
-      }
-    }
+    // CRITICAL: Preserve ALL stops - do NOT deduplicate
+    const orderedStops = orderStopsCorrectly(normalizedStops);
+    console.log('[STOPS_VIEWER] Ordered stops:', orderedStops.map((s, i) => `${i + 1}:${s.type}:"${s.name}"`).join(', '));
 
-    // CRITICAL: Apply correct ordering - START first, END last, intermediate by distance
-    const orderedStops = orderStopsCorrectly(deduped);
-    console.log('[STOPS_VIEWER] Ordered stops:', orderedStops.map((s, i) => `${i+1}:${s.type}:"${s.name}"`).join(', '));
-    
     setStops(orderedStops);
     setIsFetchingNames(false); // Reset fetching state
-  }, [initialStops]);
+  }, [initialStops, normalizeStopsInput, safeStringify]);
 
   // Resolve placeholder/distance-based names to real places
   React.useEffect(() => {
@@ -786,12 +750,12 @@ export default function StopsViewer({
           )}
 
           {/* Map Preview */}
-          {stops.length > 0 && routePolyline && (
+          {stopsWithCoords.length > 0 && routePolyline && (
             <div className="border rounded-lg overflow-hidden flex-shrink-0" style={{ height: '250px' }}>
               <Suspense fallback={<div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>}>
                 <MapContainer
                   bounds={L.latLngBounds(
-                    stops.map((s) => [s.lat, s.lng])
+                    stopsWithCoords.map((s) => [Number(s.lat), Number(s.lng)])
                   )}
                   style={{ height: '100%', width: '100%', cursor: mapSelectionMode ? 'crosshair' : 'grab' }}
                 >
@@ -847,10 +811,10 @@ export default function StopsViewer({
                   </Marker>
                 )}
 
-                {stops.map((stop, idx) => (
+                {stopsWithCoords.map((stop, idx) => (
                   <Marker
                     key={stop.id || `marker-${idx}`}
-                    position={[stop.lat, stop.lng]}
+                    position={[Number(stop.lat), Number(stop.lng)]}
                     icon={L.divIcon({
                       className: '',
                       html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="32" height="48">
@@ -1207,8 +1171,8 @@ export default function StopsViewer({
                     <Popup>{selectedPlaceName || 'Selected Point'}</Popup>
                   </Marker>
                 )}
-                {stops.map((stop, idx) => (
-                  <Marker key={stop.id || `marker-${idx}`} position={[stop.lat, stop.lng] as L.LatLngExpression}>
+                {stopsWithCoords.map((stop, idx) => (
+                  <Marker key={stop.id || `marker-${idx}`} position={[Number(stop.lat), Number(stop.lng)] as L.LatLngExpression}>
                     <Popup>{cleanLocationName(stop.name)}</Popup>
                   </Marker>
                 ))}

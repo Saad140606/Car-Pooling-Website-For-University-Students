@@ -50,28 +50,31 @@ export async function verifyAuthToken(req: NextRequest, silent: boolean = false)
     if (!authHeader) {
       // Don't log as error when auth is optional
       if (!silent) {
-        console.log('[verifyAuthToken] No authorization header found');
+        console.warn('[verifyAuthToken] No authorization header found');
       }
       return { success: false, error: 'Missing authorization header', status: 401 };
     }
     
     if (!authHeader.startsWith('Bearer ')) {
-      console.error('[verifyAuthToken] Invalid authorization format');
+      console.error('[verifyAuthToken] Invalid authorization format - missing Bearer prefix');
       return { success: false, error: 'Invalid authorization format', status: 401 };
     }
     
     const token = authHeader.slice(7); // Remove 'Bearer ' prefix
     
     if (!token || token.length < 100) {
+      console.error('[verifyAuthToken] Token too short or missing:', { length: token?.length || 0 });
       return { success: false, error: 'Invalid token format', status: 401 };
     }
     
     if (!adminAuth) {
-      console.error('Firebase Admin Auth not initialized');
+      console.error('[verifyAuthToken] Firebase Admin Auth not initialized');
       return { success: false, error: 'Server configuration error', status: 500 };
     }
     
+    console.log('[verifyAuthToken] Verifying token...');
     const decodedToken = await adminAuth.verifyIdToken(token, true); // checkRevoked = true
+    console.log('[verifyAuthToken] Token verified successfully for user:', decodedToken.uid);
     
     return {
       success: true,
@@ -84,16 +87,19 @@ export async function verifyAuthToken(req: NextRequest, silent: boolean = false)
   } catch (error: any) {
     // Handle specific Firebase Auth errors
     if (error.code === 'auth/id-token-expired') {
+      console.warn('[verifyAuthToken] Token expired');
       return { success: false, error: 'Token expired', status: 401 };
     }
     if (error.code === 'auth/id-token-revoked') {
+      console.warn('[verifyAuthToken] Token revoked');
       return { success: false, error: 'Token revoked', status: 401 };
     }
     if (error.code === 'auth/argument-error') {
+      console.warn('[verifyAuthToken] Invalid token argument');
       return { success: false, error: 'Invalid token', status: 401 };
     }
     
-    console.error('Token verification error:', error.code || error.message);
+    console.error('[verifyAuthToken] Token verification error:', error.code || error.message);
     return { success: false, error: 'Authentication failed', status: 401 };
   }
 }

@@ -30,17 +30,22 @@ import {
 import { notifyRideCancelled } from '@/lib/rideNotificationService';
 
 export async function POST(req: NextRequest) {
+  console.log('[API:CancelRide] Request received');
+  
   // Check if Firebase Admin is initialized
   if (!adminDb) {
+    console.error('[API:CancelRide] Firebase Admin not initialized');
     return errorResponse('Server configuration error', 500);
   }
 
   // ===== AUTHENTICATION =====
   const authResult = await requireAuth(req);
   if (authResult instanceof NextResponse) {
+    console.warn('[API:CancelRide] Authentication failed');
     return authResult;
   }
   const authenticatedUserId = authResult.uid;
+  console.log('[API:CancelRide] Authenticated user:', authenticatedUserId);
 
   // ===== RATE LIMITING =====
   const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);
@@ -52,15 +57,18 @@ export async function POST(req: NextRequest) {
     // ===== INPUT VALIDATION =====
     const body = await req.json();
     const { university, rideId, reason } = body;
+    console.log('[API:CancelRide] Input:', { university, rideId, reason });
 
     // Validate university
     const validUniversity = validateUniversity(university);
     if (!validUniversity) {
+      console.warn('[API:CancelRide] Invalid university:', university);
       return errorResponse('Invalid university parameter', 400);
     }
 
     // Validate ride ID
     if (!isValidDocId(rideId)) {
+      console.warn('[API:CancelRide] Invalid ride ID:', rideId);
       return errorResponse('Invalid ride ID', 400);
     }
 
@@ -71,11 +79,14 @@ export async function POST(req: NextRequest) {
     const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
 
     // ===== VALIDATION: Check if ride exists and hasn't departed =====
+    console.log('[API:CancelRide] Fetching ride document for validation');
     const preRideSnap = await rideRef.get();
     if (!preRideSnap.exists) {
+      console.warn('[API:CancelRide] Ride not found:', rideId);
       return errorResponse('Ride not found', 404);
     }
     const preRideData = preRideSnap.data() as any;
+    console.log('[API:CancelRide] Ride found:', { rideId, status: preRideData.status });
     
     // Check departure time
     if (preRideData.departureTime) {
@@ -83,11 +94,13 @@ export async function POST(req: NextRequest) {
         ? preRideData.departureTime.toDate() 
         : new Date(preRideData.departureTime);
       if (new Date() >= departureTime) {
+        console.warn('[API:CancelRide] Ride has already departed');
         return errorResponse('Cannot cancel - ride has already started', 400);
       }
     }
 
     // ===== VALIDATION: Check if user account is locked =====
+    console.log('[API:CancelRide] Checking user account lock status');
     const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
     const preUserSnap = await userRef.get();
     if (preUserSnap.exists) {
@@ -98,6 +111,7 @@ export async function POST(req: NextRequest) {
           : new Date(preUserData.accountLockUntil);
         if (new Date() < lockUntil) {
           const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
+          console.warn('[API:CancelRide] Account is locked until:', lockUntil);
           return errorResponse(
             `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
             403
@@ -105,7 +119,9 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+    console.log('[API:CancelRide] Account lock check passed');
 
+    console.log('[API:CancelRide] Starting transaction');
     const result = await db.runTransaction(async (tx) => {
       // ===== AUTHORIZATION: Verify authenticated user is the driver =====
       const rideSnap = await tx.get(rideRef);
@@ -115,13 +131,20 @@ export async function POST(req: NextRequest) {
 
       const ride = rideSnap.data() as any;
       if (ride.driverId !== authenticatedUserId) {
+        console.warn('[API:CancelRide] Driver mismatch:', { 
+          rideDriver: ride.driverId, 
+          authenticatedUser: authenticatedUserId 
+        });
         throw new Error('FORBIDDEN: Only the driver can cancel this ride');
       }
+      console.log('[API:CancelRide] Driver authorization verified');
 
       // ===== CHECK: Ride not already cancelled =====
       if (ride.status === 'cancelled') {
+        console.warn('[API:CancelRide] Ride already cancelled');
         throw new Error('This ride has already been cancelled');
       }
+      console.log('[API:CancelRide] Ride status check passed, proceeding with cancellation');
 
       const now = admin.firestore.Timestamp.now();
 
@@ -142,6 +165,7 @@ export async function POST(req: NextRequest) {
 
       const bookingsSnap = await tx.get(bookingsQuery as any);
       const passengersToNotify: string[] = [];
+      console.log('[API:CancelRide] Found bookings/requests to cancel:', bookingsSnap.size);
 
       bookingsSnap.forEach((bookingDoc) => {
         const booking = bookingDoc.data() as any;

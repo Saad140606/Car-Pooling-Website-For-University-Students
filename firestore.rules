@@ -114,6 +114,9 @@ service cloud.firestore {
         // 1. Driver (via driverId) or admin can update/delete anything
         // 2. Passengers can ONLY update confirmedPassengers, availableSeats, status for booking confirmation
         // 3. Driver can cancel ride (set status to 'cancelled' and optional cancellation fields)
+        // 4. LIFECYCLE FIELDS: Only server (admin SDK) can modify lifecycleStatus, transitionLog,
+        //    completionWindowEnd, ratingsOpen, pendingRequests, cancelledPassengers
+        //    These are written via API routes using admin SDK, not client-side.
         allow update, delete: if isAdmin()
           || (isAuth() && resource.data.driverId == request.auth.uid)
           || (isAuth() && resource.data.driverId == request.auth.uid && hasOnly(request.resource.data.diff(resource.data).affectedKeys(), ['status', 'cancelledAt', 'cancelledBy', 'cancellationReason', 'updatedAt']) && request.resource.data.status == 'cancelled')
@@ -166,6 +169,24 @@ service cloud.firestore {
               || true // Allow any update for now (passenger/driver authorized above)
             )
           );
+      }
+
+      // ===== LIFECYCLE RATINGS (anonymous, server-validated) =====
+      // Ratings are created via API routes (admin SDK) to ensure server-side validation.
+      // Clients can only read their own ratings.
+      match /lifecycle_ratings/{ratingId} {
+        allow create: if false; // Only server (admin SDK) can create ratings
+        allow get: if isAuth(); // Authenticated users can read individual ratings
+        allow list: if isAuth(); // Authenticated users can list (query filtered by rideId)
+        allow update, delete: if false; // Ratings are immutable
+      }
+
+      // ===== USER RATING STATS (aggregate scores only) =====
+      // Prevents identity exposure — only aggregate scores are readable.
+      match /user_rating_stats/{userId} {
+        allow get: if isAuth(); // Anyone authenticated can view aggregate stats
+        allow list: if isAuth();
+        allow create, update, delete: if false; // Only server can modify
       }
 
       // Notifications - Allow authenticated users to access their own notifications

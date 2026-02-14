@@ -20,6 +20,7 @@ interface AdminAuthState {
   uid: string | null;
   email: string | null;
   error: string | null;
+  idToken: string | null;
 }
 
 export function useAdminAuth() {
@@ -30,6 +31,7 @@ export function useAdminAuth() {
     uid: null,
     email: null,
     error: null,
+    idToken: null,
   });
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export function useAdminAuth() {
           uid: null,
           email: null,
           error: 'Not authenticated',
+          idToken: null,
         });
         router.replace('/admin-login');
         return;
@@ -76,6 +79,7 @@ export function useAdminAuth() {
             uid: user.uid,
             email: user.email,
             error: null,
+            idToken,
           });
         } else {
           // Not an admin - sign out and redirect
@@ -87,6 +91,7 @@ export function useAdminAuth() {
             uid: null,
             email: null,
             error: 'Admin account not found or unauthorized access',
+            idToken: null,
           });
           router.replace('/admin-login?error=unauthorized');
         }
@@ -99,6 +104,7 @@ export function useAdminAuth() {
           uid: null,
           email: null,
           error: 'Failed to verify admin status',
+          idToken: null,
         });
         router.replace('/admin-login?error=verification-failed');
       }

@@ -18,6 +18,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/api-security';
 import { notifyRequestAccepted } from '@/lib/rideNotificationService';
+import { handleAcceptRequest } from '@/lib/rideLifecycle/lifecycleService';
 
 export async function POST(req: NextRequest) {
   console.log('[API /api/requests/accept] Received request');
@@ -217,6 +218,16 @@ export async function POST(req: NextRequest) {
     } catch (notifError) {
       // Log notification error but don't fail the request
       console.error('[AcceptRequest] Notification error (non-critical):', notifError);
+    }
+
+    // ===== UPDATE LIFECYCLE (ASYNC, non-blocking) =====
+    try {
+      if (!result.idempotent) {
+        // Call lifecycle service to sync state
+        await handleAcceptRequest(adminDb, validUniversity, rideId, requestId, authenticatedUserId);
+      }
+    } catch (lifecycleErr) {
+      console.warn('[AcceptRequest] Lifecycle update failed (non-critical):', lifecycleErr);
     }
 
     return successResponse({ ok: true, data: result });

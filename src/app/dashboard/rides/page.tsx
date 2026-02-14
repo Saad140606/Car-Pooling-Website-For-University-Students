@@ -1115,17 +1115,28 @@ function RidesPageInner() {
     }
   }, [searchParams, user, userData?.university, parsePointInput]);
 
-  // Lock university filter for logged-in users
+  // Lock university filter for logged-in users and auto-set Karachi coordinates
   useEffect(() => {
     if (user && userData && userData.university) {
       setFilters(f => {
-        if (f.university !== userData.university) {
-          return { ...f, university: userData.university };
+        const newFilters = { ...f };
+        
+        // Lock university to user's portal
+        if (newFilters.university !== userData.university) {
+          newFilters.university = userData.university;
         }
-        return f;
+        
+        // For Karachi University, auto-set to coordinates if direction is set
+        if (userData.university === 'karachi' && f.direction !== 'any') {
+          const karachiCoords = { lat: 24.9393134, lng: 67.1183975 };
+          newFilters.pointInput = 'University of Karachi';
+          newFilters.point = karachiCoords;
+        }
+        
+        return newFilters;
       });
     }
-  }, [user, userData, userData?.university]);
+  }, [user, userData, userData?.university, filters.direction]);
 
   // Early return for loading state - after all hooks
   if (isLoading) {
@@ -1279,54 +1290,69 @@ function RidesPageInner() {
                 <div>
                   <label className="block text-sm mb-1">Place</label>
                   <div className="relative">
-                    <Input aria-autocomplete="list" aria-expanded={suggestions.length>0} placeholder="Search place (e.g. Main Gate)" value={filters.pointInput} onChange={(e) => {
-                      const v = e.target.value;
-                      setFilters(f => ({ ...f, pointInput: v, point: null }));
-                      if (!v || v.trim().length < 2) {
-                        try { window.clearTimeout((window as any).__filters_suggest_timer); } catch (e) {}
-                        try { (window as any).__filters_suggest_controller?.abort(); } catch (e) {}
-                        setSuggestions([]);
-                        setSearching(false);
-                        return;
-                      }
-                      setSearching(true);
-                      window.clearTimeout((window as any).__filters_suggest_timer);
-                      (window as any).__filters_suggest_timer = window.setTimeout(async () => {
-                        try { (window as any).__filters_suggest_controller?.abort(); } catch (e) {}
-                        const controller = new AbortController();
-                        (window as any).__filters_suggest_controller = controller;
-                        try {
-                          // Limit suggestions to Karachi bounding box to keep results local
-                          const viewbox = '66.97,24.75,67.18,25.075';
-                          const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(v)}&limit=6&viewbox=${viewbox}&bounded=1`, { signal: controller.signal });
-                          if (!res.ok) { setSuggestions([]); setSearching(false); return; }
-                          const json = await res.json();
-                          setSuggestions(Array.isArray(json) ? json : []);
-                        } catch (e: any) {
-                          if (e && e.name === 'AbortError') {
-                            // ignore
-                          } else { setSuggestions([]); }
-                        } finally { setSearching(false); try { delete (window as any).__filters_suggest_controller; } catch (e) {} }
-                      }, 300);
-                    }} />
-
-                    {suggestions.length > 0 && (
-                      <ul role="listbox" className="absolute z-50 left-0 right-0 bg-popover border border-border rounded mt-1 max-h-56 overflow-auto">
-                        {suggestions.map((s, i) => (
-                          <li key={s.place_id || s.osm_id} role="option" tabIndex={0} className="p-2 cursor-pointer hover:bg-slate-100" onClick={() => {
-                            const lat = Number(s.lat || s.latitude || (s.center && s.center.lat));
-                            const lon = Number(s.lon || s.longitude || (s.center && s.center.lng));
-                            if (!isNaN(lat) && !isNaN(lon)) {
-                              setFilters(f => ({ ...f, pointInput: s.display_name || s.name || '', point: { lat, lng: lon } }));
-                            } else {
-                              setFilters(f => ({ ...f, pointInput: s.display_name || s.name || '', point: null }));
-                            }
+                    {/* For Karachi users, show locked University of Karachi */}
+                    {user && userData?.university === 'karachi' && filters.direction !== 'any' ? (
+                      <div className="flex items-center gap-2">
+                        <Input 
+                          value="University of Karachi" 
+                          disabled 
+                          title="For Karachi University portal, location is locked to University of Karachi"
+                          className="bg-slate-800/50 backdrop-blur-sm text-slate-300 disabled:opacity-70 cursor-not-allowed" 
+                        />
+                        <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/50">📍 Locked</Badge>
+                      </div>
+                    ) : (
+                      <>
+                        <Input aria-autocomplete="list" aria-expanded={suggestions.length>0} placeholder="Search place (e.g. Main Gate)" value={filters.pointInput} onChange={(e) => {
+                          const v = e.target.value;
+                          setFilters(f => ({ ...f, pointInput: v, point: null }));
+                          if (!v || v.trim().length < 2) {
+                            try { window.clearTimeout((window as any).__filters_suggest_timer); } catch (e) {}
+                            try { (window as any).__filters_suggest_controller?.abort(); } catch (e) {}
                             setSuggestions([]);
-                          }} onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLElement).click(); } }}>
-                            <div className="text-sm">{s.display_name || s.name}</div>
-                          </li>
-                        ))}
-                      </ul>
+                            setSearching(false);
+                            return;
+                          }
+                          setSearching(true);
+                          window.clearTimeout((window as any).__filters_suggest_timer);
+                          (window as any).__filters_suggest_timer = window.setTimeout(async () => {
+                            try { (window as any).__filters_suggest_controller?.abort(); } catch (e) {}
+                            const controller = new AbortController();
+                            (window as any).__filters_suggest_controller = controller;
+                            try {
+                              // Limit suggestions to Karachi bounding box to keep results local
+                              const viewbox = '66.97,24.75,67.18,25.075';
+                              const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(v)}&limit=6&viewbox=${viewbox}&bounded=1`, { signal: controller.signal });
+                              if (!res.ok) { setSuggestions([]); setSearching(false); return; }
+                              const json = await res.json();
+                              setSuggestions(Array.isArray(json) ? json : []);
+                            } catch (e: any) {
+                              if (e && e.name === 'AbortError') {
+                                // ignore
+                              } else { setSuggestions([]); }
+                            } finally { setSearching(false); try { delete (window as any).__filters_suggest_controller; } catch (e) {} }
+                          }, 300);
+                        }} />
+
+                        {suggestions.length > 0 && (
+                          <ul role="listbox" className="absolute z-50 left-0 right-0 bg-popover border border-border rounded mt-1 max-h-56 overflow-auto">
+                            {suggestions.map((s, i) => (
+                              <li key={s.place_id || s.osm_id} role="option" tabIndex={0} className="p-2 cursor-pointer hover:bg-slate-100" onClick={() => {
+                                const lat = Number(s.lat || s.latitude || (s.center && s.center.lat));
+                                const lon = Number(s.lon || s.longitude || (s.center && s.center.lng));
+                                if (!isNaN(lat) && !isNaN(lon)) {
+                                  setFilters(f => ({ ...f, pointInput: s.display_name || s.name || '', point: { lat, lng: lon } }));
+                                } else {
+                                  setFilters(f => ({ ...f, pointInput: s.display_name || s.name || '', point: null }));
+                                }
+                                setSuggestions([]);
+                              }} onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLElement).click(); } }}>
+                                <div className="text-sm">{s.display_name || s.name}</div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">Use to find rides near a point on route.</div>

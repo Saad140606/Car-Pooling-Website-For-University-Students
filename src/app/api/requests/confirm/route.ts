@@ -18,6 +18,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/api-security';
 import { notifyRideConfirmed } from '@/lib/rideNotificationService';
+import { handleConfirmSeat } from '@/lib/rideLifecycle/lifecycleService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -215,6 +216,16 @@ export async function POST(req: NextRequest) {
     } catch (notifError) {
       // Log notification error but don't fail the request
       console.error('[ConfirmRequest] Notification error (non-critical):', notifError);
+    }
+
+    // ===== UPDATE LIFECYCLE (ASYNC, non-blocking) =====
+    try {
+      if (!result.idempotent) {
+        // Call lifecycle service to sync state
+        await handleConfirmSeat(adminDb, validUniversity, rideId, requestId, authenticatedUserId);
+      }
+    } catch (lifecycleErr) {
+      console.warn('[ConfirmRequest] Lifecycle update failed (non-critical):', lifecycleErr);
     }
 
     return successResponse({ ok: true });

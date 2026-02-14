@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
+import { getAuth } from "firebase/auth";
 import {
   AlertTriangle,
   Search,
@@ -61,7 +62,20 @@ export default function AdminReportsPage() {
   const fetchReports = useCallback(async () => {
     try {
       setError(null);
-      const res = await fetch('/api/admin/reports?limit=200');
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        setError('Not authenticated');
+        return;
+      }
+
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/admin/reports?limit=200', {
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+        },
+      });
       if (!res.ok) throw new Error('Failed to fetch reports');
       const data = await res.json();
       setReports(data.reports || []);

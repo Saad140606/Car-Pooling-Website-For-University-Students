@@ -4,6 +4,11 @@ import * as admin from 'firebase-admin';
 // Initialize the admin SDK
 admin.initializeApp();
 
+// ============================================================================
+// RIDE LIFECYCLE SCHEDULER EXPORTS
+// ============================================================================
+export { lifecycleLockRides, lifecycleCompletionManager, onRideLifecycleChange } from './rideLifecycleScheduler';
+
 const db = admin.firestore();
 
 /**

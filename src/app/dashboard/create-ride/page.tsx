@@ -833,9 +833,9 @@ export default function CreateRidePage() {
     name: 'NED UET, University Road, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
   };
   const KARACHI_UNI: LatLngLiteral = {
-    lat: 24.9401,
-    lng: 67.1200,
-    name: 'University of Karachi, Main University Road, Karachi, Sindh, 75270, Pakistan',
+    lat: 24.9393134,
+    lng: 67.1183975,
+    name: 'University of Karachi',
   };
 
   const UNI_MAX_RADIUS_METERS = 4000; // allow ~4km radius from campus center
@@ -843,7 +843,7 @@ export default function CreateRidePage() {
   const getUniversityShortName = () => {
     const uni = (userData?.university || '').toString().toLowerCase();
     if (uni === 'ned') return 'NED University';
-    if (uni === 'karachi') return 'Karachi University';
+    if (uni === 'karachi') return 'University of Karachi';
     return 'FAST University';
   };
 
@@ -2002,6 +2002,31 @@ export default function CreateRidePage() {
       try {
         const docRef = await addDocWithRetry(2);
         console.debug('✅ Ride write attempt finished successfully', { durationMs: Date.now() - writeStart, docId: docRef!.id });
+        
+        // Initialize lifecycle state machine
+        try {
+          const idToken = await user!.getIdToken();
+          const initResponse = await fetch('/api/ride-lifecycle/init', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              university: universityId,
+              rideId: docRef!.id,
+            }),
+          });
+          
+          if (!initResponse.ok) {
+            const error = await initResponse.json();
+            console.warn('[CreateRide] Lifecycle init failed (non-fatal):', error);
+          } else {
+            console.debug('[CreateRide] Lifecycle initialized successfully');
+          }
+        } catch (initErr) {
+          console.warn('[CreateRide] Lifecycle init error (non-fatal):', initErr);
+        }
       } catch (err: any) {
         // Re-throw to be handled by outer catch
         console.error('❌ All addDoc retry attempts failed:', err);

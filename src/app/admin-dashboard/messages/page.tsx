@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
+import { getAuth } from "firebase/auth";
 import {
   MessageSquare,
   Search,
@@ -49,7 +50,20 @@ export default function AdminMessagesPage() {
   const fetchMessages = useCallback(async () => {
     try {
       setError(null);
-      const res = await fetch('/api/admin/contact-messages?limit=200');
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        setError('Not authenticated');
+        return;
+      }
+
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/admin/contact-messages?limit=200', {
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+        },
+      });
       if (!res.ok) throw new Error('Failed to fetch messages');
       const data = await res.json();
       setMessages(data.messages || []);
@@ -73,9 +87,21 @@ export default function AdminMessagesPage() {
 
   const handleMarkAsRead = async (messageId: string) => {
     try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        console.error('Not authenticated');
+        return;
+      }
+
+      const idToken = await user.getIdToken();
       const res = await fetch('/api/admin/contact-messages', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
         body: JSON.stringify({ messageId, status: 'read' }),
       });
       if (res.ok) {

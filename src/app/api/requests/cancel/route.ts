@@ -33,6 +33,7 @@ import {
   getLockExpirationDate,
 } from '@/lib/rideCancellationService';
 import { notifyRideCancelled } from '@/lib/rideNotificationService';
+import { handleCancelPassenger } from '@/lib/rideLifecycle/lifecycleService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -316,6 +317,20 @@ export async function POST(req: NextRequest) {
     } catch (notifError) {
       // Log notification error but don't fail the request
       console.error('[CancelRequest] Notification error (non-critical):', notifError);
+    }
+
+    // ===== UPDATE LIFECYCLE (ASYNC, non-blocking) =====
+    try {
+      // Call lifecycle service to sync state
+      await handleCancelPassenger(
+        adminDb,
+        validUniversity,
+        rideId,
+        result.passengerId,
+        'CANCELLED_BY_PASSENGER'
+      );
+    } catch (lifecycleErr) {
+      console.warn('[CancelRequest] Lifecycle update failed (non-critical):', lifecycleErr);
     }
 
     return successResponse({ ok: true, data: result });

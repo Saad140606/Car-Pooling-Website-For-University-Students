@@ -24,11 +24,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/api-security';
 import {
-  validateCancellationPermission,
-  isAccountLocked,
   shouldLockAccount,
-  generateCancellationNotification,
-  buildCancellationTrackingUpdate,
   getLockExpirationDate,
 } from '@/lib/rideCancellationService';
 import { notifyRideCancelled } from '@/lib/rideNotificationService';
@@ -74,20 +70,40 @@ export async function POST(req: NextRequest) {
     const db = adminDb;
     const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
 
-    // ===== VALIDATION: Check if ride has already started =====
-    const permissionResult = await validateCancellationPermission(db, validUniversity, rideId, true);
-    if (!permissionResult.allowed) {
-      return errorResponse(permissionResult.reason || 'Cannot cancel this ride', 400);
+    // ===== VALIDATION: Check if ride exists and hasn't departed =====
+    const preRideSnap = await rideRef.get();
+    if (!preRideSnap.exists) {
+      return errorResponse('Ride not found', 404);
+    }
+    const preRideData = preRideSnap.data() as any;
+    
+    // Check departure time
+    if (preRideData.departureTime) {
+      const departureTime = preRideData.departureTime.toDate 
+        ? preRideData.departureTime.toDate() 
+        : new Date(preRideData.departureTime);
+      if (new Date() >= departureTime) {
+        return errorResponse('Cannot cancel - ride has already started', 400);
+      }
     }
 
     // ===== VALIDATION: Check if user account is locked =====
-    const lockStatus = await isAccountLocked(db, validUniversity, authenticatedUserId, true);
-    if (lockStatus.locked) {
-      const minutesRemaining = lockStatus.minutesRemaining || 0;
-      return errorResponse(
-        `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
-        403
-      );
+    const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
+    const preUserSnap = await userRef.get();
+    if (preUserSnap.exists) {
+      const preUserData = preUserSnap.data() as any;
+      if (preUserData.accountLockUntil) {
+        const lockUntil = preUserData.accountLockUntil.toDate 
+          ? preUserData.accountLockUntil.toDate() 
+          : new Date(preUserData.accountLockUntil);
+        if (new Date() < lockUntil) {
+          const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
+          return errorResponse(
+            `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
+            403
+          );
+        }
+      }
     }
 
     const result = await db.runTransaction(async (tx) => {

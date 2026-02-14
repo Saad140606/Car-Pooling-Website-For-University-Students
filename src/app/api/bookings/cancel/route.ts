@@ -32,10 +32,8 @@ import {
   RATE_LIMITS,
 } from '@/lib/api-security';
 import {
-  isAccountLocked,
-  getLockExpirationDate,
   shouldLockAccount,
-  buildCancellationTrackingUpdate,
+  getLockExpirationDate,
 } from '@/lib/rideCancellationService';
 
 export async function POST(req: NextRequest) {
@@ -115,14 +113,22 @@ export async function POST(req: NextRequest) {
     }
 
     // ===== CHECK ACCOUNT LOCK STATUS =====
-    // Check if the cancelling user's account is locked
-    const lockStatus = await isAccountLocked(db, validUniversity, authenticatedUserId, isDriverCancel);
-    if (lockStatus.locked) {
-      const minutesRemaining = lockStatus.minutesRemaining || 0;
-      return errorResponse(
-        `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
-        403
-      );
+    // Check if the cancelling user's account is locked (inline admin SDK check)
+    const preUserSnap = await db.doc(userRef.path).get();
+    if (preUserSnap.exists) {
+      const preUserData = preUserSnap.data() as any;
+      if (preUserData.accountLockUntil) {
+        const lockUntil = preUserData.accountLockUntil.toDate
+          ? preUserData.accountLockUntil.toDate()
+          : new Date(preUserData.accountLockUntil);
+        if (new Date() < lockUntil) {
+          const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
+          return errorResponse(
+            `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
+            403
+          );
+        }
+      }
     }
 
     // Check booking is in acceptable state for cancellation
@@ -178,37 +184,47 @@ export async function POST(req: NextRequest) {
 
       // Track cancellation for abuse prevention
       // DRIVER CANCELLATION: Always affects cancellation rate
-      // PASSENGER CANCELLATION: Only affects rate if ride was CONFIRMED
-      const shouldTrackCancellation = isDriverCancel || 
-        (freshBooking.status === 'CONFIRMED' || freshBooking.status === 'confirmed');
+      // PASSENGER CANCELLATION: Only affects rate if booking was CONFIRMED
+      const wasConfirmed = freshBooking.status === 'CONFIRMED' || freshBooking.status === 'confirmed';
+      const shouldTrackCancellation = isDriverCancel || wasConfirmed;
 
       if (shouldTrackCancellation) {
         const freshUserSnap = await tx.get(userRef);
         const userData = freshUserSnap.data() as any;
 
-        // Build cancellation tracking update
-        const trackingUpdate = buildCancellationTrackingUpdate(
-          userData,
-          isDriverCancel, // isDriver flag
-          ride.departureTime
-        );
+        // Build cancellation tracking — inline for admin SDK compatibility
+        const totalCancellations = (userData?.totalCancellations ?? 0) + 1;
+        const lateCancellations = wasConfirmed
+          ? (userData?.lateCancellations ?? 0) + 1
+          : (userData?.lateCancellations ?? 0);
+        // DO NOT increment totalParticipations — it tracks rides created/booked
+        const totalParticipations = userData?.totalParticipations ?? 0;
+        const cancellationRate = totalParticipations > 0
+          ? Math.round((totalCancellations / totalParticipations) * 100)
+          : 0;
 
-        tx.update(userRef, {
-          ...trackingUpdate,
+        const trackingUpdate: any = {
+          totalCancellations,
+          lateCancellations,
+          lastCancellationAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        };
 
-        // Check if account should be locked (primarily for drivers)
-        const updatedStats = { ...userData, ...trackingUpdate };
-        const cancellationRate = updatedStats.cancellationRate || 0;
-        const totalRides = updatedStats.totalRides || 0;
-        if (shouldLockAccount(cancellationRate, totalRides)) {
-          const lockExpiry = getLockExpirationDate();
-          tx.update(userRef, {
-            cancellationLocked: true,
-            cancellationLockExpiry: lockExpiry,
-          });
+        // Check if account should be locked
+        // Threshold: > 35% cancellation rate after 3+ participations
+        if (shouldLockAccount(cancellationRate, totalParticipations)) {
+          const lockExpiry = getLockExpirationDate(); // 7 days from now
+          trackingUpdate.accountLockUntil = admin.firestore.Timestamp.fromDate(lockExpiry);
+          console.log('[BookingCancel] Account locked:', { userId: authenticatedUserId, cancellationRate, totalParticipations });
         }
+
+        // Apply cooldown if 3+ late cancellations
+        if (lateCancellations >= 3) {
+          const cooldownExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+          trackingUpdate.cooldownUntil = admin.firestore.Timestamp.fromDate(cooldownExpiry);
+        }
+
+        tx.update(userRef, trackingUpdate);
       }
 
       return {

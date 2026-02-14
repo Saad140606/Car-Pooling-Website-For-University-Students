@@ -65,29 +65,29 @@ const RoleToggle = memo(function RoleToggle({
   if (role !== 'both') return null;
 
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg w-full sm:w-auto [@media(max-height:700px)]:gap-1 [@media(max-height:700px)]:p-0.5">
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg w-full sm:w-auto">
       <button
         onClick={() => onViewChange('driver')}
         className={cn(
-          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1.5 [@media(max-height:700px)]:text-xs',
+          'flex items-center justify-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
           activeView === 'driver'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
         )}
       >
-        <Car className="w-4 h-4 [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
+        <Car className="w-4 h-4" />
         Ride Provider View
       </button>
       <button
         onClick={() => onViewChange('passenger')}
         className={cn(
-          'flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1.5 [@media(max-height:700px)]:text-xs',
+          'flex items-center justify-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
           activeView === 'passenger'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
         )}
       >
-        <User className="w-4 h-4 [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
+        <User className="w-4 h-4" />
         Passenger View
       </button>
     </div>
@@ -112,17 +112,17 @@ const SectionHeader = memo(function SectionHeader({
   action,
 }: SectionHeaderProps) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 [@media(max-height:700px)]:mb-3">
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-primary/15 [@media(max-height:700px)]:p-1.5">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 mb-4 sm:mb-6">
+      <div className="flex items-center gap-2 sm:gap-3">
+        <div className="p-1.5 sm:p-2 rounded-lg bg-primary/15">
           {icon}
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-white [@media(max-height:700px)]:text-base">{title}</h2>
-          {subtitle && <p className="text-sm text-slate-500 [@media(max-height:700px)]:text-xs">{subtitle}</p>}
+          <h2 className="text-base sm:text-xl font-semibold text-white">{title}</h2>
+          {subtitle && <p className="text-xs sm:text-sm text-slate-500">{subtitle}</p>}
         </div>
       </div>
-      <div className="sm:mt-0 mt-1 [@media(max-height:700px)]:mt-0">{action}</div>
+      {action && <div className="mt-0">{action}</div>}
     </div>
   );
 });
@@ -133,31 +133,31 @@ const SectionHeader = memo(function SectionHeader({
 
 const AnalyticsSkeleton = memo(function AnalyticsSkeleton() {
   return (
-    <div className="space-y-8 [@media(max-height:700px)]:space-y-4">
+    <div className="space-y-5 sm:space-y-8">
       {/* Header skeleton */}
       <div className="flex items-center justify-between">
         <div className="space-y-2">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-4 w-64" />
+          <Skeleton className="h-6 sm:h-8 w-36 sm:w-48" />
+          <Skeleton className="h-3 sm:h-4 w-48 sm:w-64" />
         </div>
-        <Skeleton className="h-10 w-32" />
+        <Skeleton className="h-9 sm:h-10 w-24 sm:w-32" />
       </div>
 
       {/* Stats grid skeleton */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-          <Skeleton key={i} className="h-32 rounded-xl" />
+          <Skeleton key={i} className="h-28 sm:h-32 rounded-xl" />
         ))}
       </div>
 
       {/* Charts skeleton */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
-        <Skeleton className="h-[350px] rounded-xl" />
-        <Skeleton className="h-[350px] rounded-xl" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+        <Skeleton className="h-64 sm:h-[350px] rounded-xl" />
+        <Skeleton className="h-64 sm:h-[350px] rounded-xl" />
       </div>
 
       {/* Table skeleton */}
-      <Skeleton className="h-[400px] rounded-xl" />
+      <Skeleton className="h-80 sm:h-[400px] rounded-xl" />
     </div>
   );
 });
@@ -176,13 +176,13 @@ const ErrorState = memo(function ErrorState({ message, onRetry }: ErrorStateProp
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col items-center justify-center py-20 text-center"
+      className="flex flex-col items-center justify-center py-12 sm:py-20 text-center px-4"
     >
-      <div className="p-4 rounded-full bg-red-500/10 mb-4">
-        <AlertCircle className="w-10 h-10 text-red-500" />
+      <div className="p-3 sm:p-4 rounded-full bg-red-500/10 mb-3 sm:mb-4">
+        <AlertCircle className="w-8 h-8 sm:w-10 sm:h-10 text-red-500" />
       </div>
-      <h3 className="text-lg font-semibold text-white mb-2">Failed to Load Analytics</h3>
-      <p className="text-sm text-slate-500 max-w-md mb-6">{message}</p>
+      <h3 className="text-base sm:text-lg font-semibold text-white mb-2">Failed to Load Analytics</h3>
+      <p className="text-xs sm:text-sm text-slate-500 max-w-md mb-4 sm:mb-6 px-4">{message}</p>
       <Button onClick={onRetry} variant="outline" className="gap-2">
         <RefreshCw className="w-4 h-4" />
         Try Again
@@ -200,13 +200,13 @@ const EmptyState = memo(function EmptyState() {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-col items-center justify-center py-20 text-center"
+      className="flex flex-col items-center justify-center py-12 sm:py-20 text-center px-4"
     >
-      <div className="p-4 rounded-full bg-slate-800/50 mb-4">
-        <BarChart3 className="w-10 h-10 text-slate-600" />
+      <div className="p-3 sm:p-4 rounded-full bg-slate-800/50 mb-3 sm:mb-4">
+        <BarChart3 className="w-8 h-8 sm:w-10 sm:h-10 text-slate-600" />
       </div>
-      <h3 className="text-lg font-semibold text-white mb-2">No Analytics Data Yet</h3>
-      <p className="text-sm text-slate-500 max-w-md">
+      <h3 className="text-base sm:text-lg font-semibold text-white mb-2">No Analytics Data Yet</h3>
+      <p className="text-xs sm:text-sm text-slate-500 max-w-md px-4">
         Start offering or booking rides to see your personal analytics, insights, and performance metrics.
       </p>
     </motion.div>
@@ -223,7 +223,7 @@ interface DriverAnalyticsProps {
 
 const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: DriverAnalyticsProps) {
   return (
-    <div className="space-y-8 [@media(max-height:700px)]:space-y-4">
+    <div className="space-y-5 sm:space-y-8">
       {/* Post-Ride Earnings & Ratings Card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -233,7 +233,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
         <SectionHeader
           title="Earnings & Ratings"
           subtitle="Real earnings from completed rides"
-          icon={<DollarSign className="w-5 h-5 text-emerald-400" />}
+          icon={<DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />}
         />
         <DriverEarningsCard />
       </motion.div>
@@ -257,7 +257,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
         <SectionHeader
           title="Performance Overview"
           subtitle="Your key ride provider metrics"
-          icon={<Activity className="w-5 h-5 text-primary" />}
+          icon={<Activity className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />}
         />
         <DriverStatCards
           totalRides={metrics.totalRides}
@@ -276,7 +276,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
       </motion.div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         <RidesLineChart
           data={metrics.ridesOverTime}
           title="Rides Over Time"
@@ -290,7 +290,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
       </div>
 
       {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 [@media(max-height:700px)]:gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         <WeeklyActivityChart
           data={metrics.weeklyActivity}
           title="Weekly Activity"
@@ -308,10 +308,10 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6"
+        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4 sm:p-6"
       >
-        <h3 className="text-lg font-semibold text-white mb-6">Performance Metrics</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 [@media(max-height:700px)]:gap-3">
+        <h3 className="text-base sm:text-lg font-semibold text-white mb-4 sm:mb-6">Performance Metrics</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
           <ProgressCircle
             percentage={metrics.seatEfficiencyPercent}
             label="Seat Efficiency"
@@ -345,25 +345,25 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6"
+          className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4 sm:p-6"
         >
-          <h3 className="text-lg font-semibold text-white mb-4">Most Popular Routes</h3>
-          <div className="space-y-3">
+          <h3 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">Most Popular Routes</h3>
+          <div className="space-y-2 sm:space-y-3">
             {metrics.mostCommonRoutes.map((route, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-3 bg-slate-800/30 rounded-lg"
+                className="flex items-center justify-between p-2.5 sm:p-3 bg-slate-800/30 rounded-lg"
               >
-                <div className="flex items-center gap-3">
-                  <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-semibold">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                  <span className="flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-primary/10 text-primary text-xs sm:text-sm font-semibold flex-shrink-0">
                     #{index + 1}
                   </span>
-                  <div>
-                    <p className="text-sm text-white font-medium">{route.from}</p>
-                    <p className="text-xs text-slate-500">→ {route.to}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs sm:text-sm text-white font-medium truncate">{route.from}</p>
+                    <p className="text-[10px] sm:text-xs text-slate-500 truncate">→ {route.to}</p>
                   </div>
                 </div>
-                <span className="text-sm text-slate-400">{route.count} rides</span>
+                <span className="text-xs sm:text-sm text-slate-400 ml-2 flex-shrink-0">{route.count} rides</span>
               </div>
             ))}
           </div>
@@ -383,7 +383,7 @@ interface PassengerAnalyticsProps {
 
 const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }: PassengerAnalyticsProps) {
   return (
-    <div className="space-y-8">
+    <div className="space-y-5 sm:space-y-8">
       {/* Post-Ride Spending Card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -393,7 +393,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         <SectionHeader
           title="Spending Analytics"
           subtitle="Track your ride expenses"
-          icon={<Wallet className="w-5 h-5 text-blue-400" />}
+          icon={<Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-blue-400" />}
         />
         <PassengerSpendingCard />
       </motion.div>
@@ -417,7 +417,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         <SectionHeader
           title="Your Travel Summary"
           subtitle="Your key passenger metrics"
-          icon={<Activity className="w-5 h-5 text-primary" />}
+          icon={<Activity className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />}
         />
         <PassengerStatCards
           totalRides={metrics.totalRides}
@@ -436,7 +436,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
       </motion.div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         <RidesLineChart
           data={metrics.ridesOverTime}
           title="Rides Over Time"
@@ -450,7 +450,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
       </div>
 
       {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 [@media(max-height:700px)]:gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         <WeeklyActivityChart
           data={metrics.weeklyActivity}
           title="Weekly Activity"
@@ -468,10 +468,10 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6 [@media(max-height:700px)]:p-4"
+        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4 sm:p-6"
       >
-        <h3 className="text-lg font-semibold text-white mb-6 [@media(max-height:700px)]:mb-3 [@media(max-height:700px)]:text-base">Booking Performance</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-6 [@media(max-height:700px)]:gap-3">
+        <h3 className="text-base sm:text-lg font-semibold text-white mb-4 sm:mb-6">Booking Performance</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           <ProgressCircle
             percentage={metrics.requestToConfirmRate}
             label="Booking Success"
@@ -569,7 +569,7 @@ export default function AnalyticsPage() {
   // Loading state
   if (userLoading || isLoading) {
     return (
-      <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
+      <div className="min-h-[100dvh] p-2 sm:p-4 md:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
           <AnalyticsSkeleton />
         </div>
@@ -580,7 +580,7 @@ export default function AnalyticsPage() {
   // Error state
   if (error) {
     return (
-      <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
+      <div className="min-h-[100dvh] p-2 sm:p-4 md:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
           <ErrorState message={error} onRetry={fetchAnalytics} />
         </div>
@@ -591,7 +591,7 @@ export default function AnalyticsPage() {
   // Empty state
   if (!analytics || (!analytics.driverMetrics && !analytics.passengerMetrics)) {
     return (
-      <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 [@media(max-height:700px)]:p-3 [@media(max-height:700px)]:pb-4">
+      <div className="min-h-[100dvh] p-2 sm:p-4 md:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
           <EmptyState />
         </div>
@@ -600,27 +600,27 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8 overflow-x-hidden [@media(max-height:700px)]:p-2 [@media(max-height:700px)]:pb-3">
+    <div className="min-h-[100dvh] p-2 sm:p-4 md:p-6 lg:p-8 overflow-x-hidden">
       <div className="max-w-7xl mx-auto">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8 [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:mb-3"
+          className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 sm:mb-6"
         >
           <div>
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3 [@media(max-height:700px)]:text-lg [@media(max-height:700px)]:gap-2">
-              <BarChart3 className="w-7 h-7 sm:w-8 sm:h-8 text-primary [@media(max-height:700px)]:w-5 [@media(max-height:700px)]:h-5" />
+            <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-2 sm:gap-3">
+              <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-primary" />
               Analytics Dashboard
             </h1>
-            <p className="text-sm text-slate-500 mt-1 [@media(max-height:700px)]:text-xs [@media(max-height:700px)]:mt-0.5">
+            <p className="text-xs sm:text-sm text-slate-500 mt-0.5 sm:mt-1">
               {lastUpdated && (
                 <>Last updated: {lastUpdated.toLocaleTimeString()}</>
               )}
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto [@media(max-height:700px)]:gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
             {/* Role Toggle */}
             <RoleToggle
               role={analytics.userRole}
@@ -634,9 +634,9 @@ export default function AnalyticsPage() {
               size="sm"
               onClick={fetchAnalytics}
               disabled={isLoading}
-              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto [@media(max-height:700px)]:h-8 [@media(max-height:700px)]:text-xs"
+              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto h-11 sm:h-9"
             >
-              <RefreshCw className={cn('w-4 h-4 [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5', isLoading && 'animate-spin')} />
+              <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
               Refresh
             </Button>
           </div>
@@ -647,9 +647,9 @@ export default function AnalyticsPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mb-6 [@media(max-height:700px)]:mb-3"
+            className="mb-4 sm:mb-6"
           >
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-full text-sm font-medium text-primary [@media(max-height:700px)]:text-xs [@media(max-height:700px)]:py-1">
+            <span className="inline-flex items-center gap-2 px-2.5 py-1.5 sm:px-3 bg-primary/10 border border-primary/20 rounded-full text-xs sm:text-sm font-medium text-primary">
               {userData.university.toUpperCase()} University
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             </span>
@@ -664,7 +664,7 @@ export default function AnalyticsPage() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
-            className="space-y-8 [@media(max-height:700px)]:space-y-5"
+            className="space-y-5 sm:space-y-8"
           >
             {/* Role-specific analytics */}
             {activeView === 'driver' && analytics.driverMetrics && (
@@ -677,7 +677,7 @@ export default function AnalyticsPage() {
 
             {/* Status Pie Chart */}
             {analytics.rideStatusBreakdown.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 [@media(max-height:700px)]:gap-3">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                 <StatusPieChart
                   data={analytics.rideStatusBreakdown}
                   title="Ride Status Breakdown"

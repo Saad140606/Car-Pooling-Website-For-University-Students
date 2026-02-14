@@ -167,64 +167,45 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Track late cancellations for penalties
-      if (isLateCancellation) {
-        const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
-        const userSnap = await tx.get(userRef);
-        if (userSnap.exists) {
-          const userData = userSnap.data() as any;
-          const lateCancellations = (userData.lateCancellations ?? 0) + 1;
-          const totalCancellations = (userData.totalCancellations ?? 0) + 1;
-          const totalParticipations = (userData.totalParticipations ?? 0) + 1;
-          
-          // Calculate cancellation rate
-          const cancellationRate = totalParticipations > 0 
-            ? (totalCancellations / totalParticipations) * 100 
-            : 0;
+      // Track cancellation metrics for abuse prevention
+      const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
+      const cancelUserSnap = await tx.get(userRef);
+      if (cancelUserSnap.exists) {
+        const userData = cancelUserSnap.data() as any;
+        const totalCancellations = (userData.totalCancellations ?? 0) + 1;
+        // DO NOT increment totalParticipations — it tracks rides created/booked, not cancellations
+        const totalParticipations = userData.totalParticipations ?? 0;
+        const lateCancellations = isLateCancellation
+          ? (userData.lateCancellations ?? 0) + 1
+          : (userData.lateCancellations ?? 0);
+        
+        // Calculate cancellation rate
+        const cancellationRate = totalParticipations > 0 
+          ? Math.round((totalCancellations / totalParticipations) * 100)
+          : 0;
 
-          // Determine if account should be locked
-          const shouldLock = cancellationRate > 35 && totalParticipations >= 3;
-          
-          const updates: any = {
-            lateCancellations,
-            totalCancellations,
-            totalParticipations,
-            lastCancellationAt: now,
-          };
+        const updates: any = {
+          totalCancellations,
+          lateCancellations,
+          lastCancellationAt: now,
+        };
 
-          // Apply auto-lock if threshold exceeded
-          if (shouldLock) {
-            const lockUntil = admin.firestore.Timestamp.fromDate(
-              new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-            );
-            updates.accountLockUntil = lockUntil;
-          }
-
-          // Apply cooldown if late cancellation threshold exceeded
-          if (lateCancellations >= 3) {
-            const cooldownUntil = admin.firestore.Timestamp.fromDate(
-              new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
-            );
-            updates.cooldownUntil = cooldownUntil;
-          }
-
-          tx.update(userRef, updates);
+        // Apply auto-lock if threshold exceeded (> 35% after 3+ participations)
+        if (totalParticipations >= 3 && cancellationRate > 35) {
+          updates.accountLockUntil = admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+          );
+          console.log('[CancelRequest] Account locked:', { userId: authenticatedUserId, cancellationRate, totalParticipations });
         }
-      } else {
-        // For non-late cancellations, just increment total count
-        const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
-        const userSnap = await tx.get(userRef);
-        if (userSnap.exists) {
-          const userData = userSnap.data() as any;
-          const totalCancellations = (userData.totalCancellations ?? 0) + 1;
-          const totalParticipations = (userData.totalParticipations ?? 0) + 1;
-          
-          tx.update(userRef, {
-            totalCancellations,
-            totalParticipations,
-            lastCancellationAt: now,
-          });
+
+        // Apply cooldown if 3+ late cancellations (24 hours)
+        if (lateCancellations >= 3) {
+          updates.cooldownUntil = admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+          );
         }
+
+        tx.update(userRef, updates);
       }
 
       // Update booking document if it exists (for analytics and user history)
@@ -270,10 +251,10 @@ export async function POST(req: NextRequest) {
       const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
       const rideData = rideSnap.data() as any;
       
-      // Get canceller name
-      const cancellerSnap = await adminDb.collection('users').doc(authenticatedUserId).get();
+      // Get canceller name from correct university-scoped path
+      const cancellerSnap = await adminDb.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
       const cancellerData = cancellerSnap.data() as any;
-      const cancellerName = cancellerData?.fullName || 'User';
+      const cancellerName = cancellerData?.fullName || cancellerData?.name || 'User';
       
       // Determine who cancelled
       const isPassenger = result.passengerId === authenticatedUserId;

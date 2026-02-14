@@ -401,9 +401,13 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
     if (!user || !userData || !firestore || !existingRequest) return;
     setCancelling(true);
     try {
+      const idToken = await user.getIdToken();
       const res = await fetch('/api/requests/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           university: userData.university,
           rideId: ride.id,

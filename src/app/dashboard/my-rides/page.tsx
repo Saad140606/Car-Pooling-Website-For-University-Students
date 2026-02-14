@@ -722,9 +722,13 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 
       setIsCancelling(true);
       try {
+        const idToken = await user.getIdToken();
         const response = await fetch('/api/rides/cancel', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
           body: JSON.stringify({
             university,
             rideId: ride.id,
@@ -976,8 +980,18 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                     <CancellationConfirmDialog
                       open={showCancelDialog}
                       onOpenChange={setShowCancelDialog}
-                      cancellationRate={0} // Not tracked for driver yet
-                      minutesUntilDeparture={0} // Will be calculated in dialog
+                      cancellationRate={userData ? Math.round(((userData.totalCancellations ?? 0) / Math.max((userData.totalParticipations ?? 1), 1)) * 100) : 0}
+                      minutesUntilDeparture={(() => {
+                        try {
+                          if (!ride.departureTime) return 0;
+                          const depTime = ride.departureTime?.seconds 
+                            ? new Date(ride.departureTime.seconds * 1000)
+                            : new Date(ride.departureTime);
+                          return Math.max(0, Math.floor((depTime.getTime() - Date.now()) / (60 * 1000)));
+                        } catch {
+                          return 0;
+                        }
+                      })()}
                       onConfirm={handleCancelRide}
                       isLoading={isCancelling}
                       cancellerRole="driver"

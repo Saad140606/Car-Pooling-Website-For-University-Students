@@ -97,36 +97,32 @@ export default function RideCard({
       onClick={onCardClick}
       className={clsx(
         'w-full min-w-0 rounded-xl bg-[#1e2340] border border-white/10 shadow-lg text-white flex flex-col overflow-hidden h-full',
-        'animate-bounce-in transition-all duration-300 hover-card-lift hover:shadow-2xl hover:shadow-primary/20',
+        'transition-all duration-300 hover:shadow-2xl hover:shadow-primary/20',
         'hover:border-primary/40',
-        onCardClick ? 'cursor-pointer' : '',
+        onCardClick ? 'cursor-pointer active:scale-[0.98]' : '',
         className
       )}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
     >
-      <div className="p-2 md:p-2.5 space-y-1.5 relative">
+      <div className="p-3.5 sm:p-3 space-y-2.5 sm:space-y-2 relative">
 
         {/* Price and University */}
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 transition-all duration-300" style={{
-          transform: isHovering ? 'scale(1.05)' : 'scale(1)',
-        }}>
-          {university && !hideUniversity && <span className="bg-white/10 hover-lift-sm px-1.5 py-0.5 rounded text-[0.65rem] font-semibold transition-all">{university.toUpperCase()}</span>}
-          <span className="bg-[#3b4cca] hover-glow px-2 py-0.5 rounded-full text-[0.7rem] font-semibold transition-all">
+        <div className="flex items-center gap-2 flex-wrap">
+          {university && !hideUniversity && <span className="bg-white/10 px-2 py-0.5 rounded text-xs font-semibold">{university.toUpperCase()}</span>}
+          <span className="bg-[#3b4cca] px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-sm">
             PKR {price}
           </span>
         </div>
 
         {/* Provider */}
-        <div className="space-y-1 animate-scale-up">
-          <div className="text-xs text-white/60 transition-colors duration-300" style={{
-            color: isHovering ? 'rgb(255 255 255 / 0.8)' : 'rgb(255 255 255 / 0.6)',
-          }}>Provider</div>
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center font-semibold text-[0.6rem] flex-shrink-0 hover-lift-sm transition-all">
+        <div className="space-y-1.5">
+          <div className="text-xs text-white/50 font-medium">Provider</div>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center font-semibold text-xs flex-shrink-0">
               {initials}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <UserNameWithBadge 
                 name={driverName} 
                 verified={driverVerified}
@@ -136,20 +132,20 @@ export default function RideCard({
             </div>
           </div>
           {statusLabel ? (
-            <div className="text-[0.7rem] text-amber-300 font-medium mt-1">{statusLabel}</div>
+            <div className="text-xs text-amber-300 font-medium mt-1">{statusLabel}</div>
           ) : null}
         </div>
 
         {/* Locations */}
-        <div className="relative space-y-0.5">
-          <div className="absolute left-[5px] top-1 bottom-1 border-l border-dashed border-white/20" />
+        <div className="relative space-y-1.5 pl-1">
+          <div className="absolute left-[5px] top-2 bottom-2 border-l-2 border-dashed border-white/15" />
 
           <div className="space-y-0.5">
-            <div className="text-[0.7rem] text-white/50 font-medium">FROM</div>
-            <div className="flex gap-1.5 min-w-0 items-start">
-              <span className="mt-0.5 h-2 w-2 rounded-full bg-green-500 ring-1 ring-[#1e2340] flex-shrink-0" />
+            <div className="text-[11px] text-white/40 font-semibold tracking-wider uppercase">From</div>
+            <div className="flex gap-2 min-w-0 items-start">
+              <span className="mt-1 h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-[#1e2340] flex-shrink-0" />
               <div className="min-w-0 flex-1">
-                <p className="font-semibold text-xs truncate">
+                <p className="font-semibold text-sm sm:text-xs leading-snug break-words">
                   {startLocation}
                 </p>
               </div>
@@ -157,11 +153,11 @@ export default function RideCard({
           </div>
 
           <div className="space-y-0.5">
-            <div className="text-[0.7rem] text-white/50 font-medium">TO</div>
-            <div className="flex gap-1.5 min-w-0 items-start">
-              <span className="mt-0.5 h-2 w-2 rounded-full bg-red-500 ring-1 ring-[#1e2340] flex-shrink-0" />
+            <div className="text-[11px] text-white/40 font-semibold tracking-wider uppercase">To</div>
+            <div className="flex gap-2 min-w-0 items-start">
+              <span className="mt-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-[#1e2340] flex-shrink-0" />
               <div className="min-w-0 flex-1">
-                <p className="font-semibold text-xs truncate">
+                <p className="font-semibold text-sm sm:text-xs leading-snug break-words">
                   {endLocation}
                 </p>
               </div>
@@ -175,7 +171,7 @@ export default function RideCard({
             e.stopPropagation();
             if (onViewRoute) onViewRoute();
           }}
-          className="relative h-14 md:h-16 rounded-lg overflow-hidden bg-[#0f172a] w-full cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-primary/20 group"
+          className="relative h-16 sm:h-14 rounded-lg overflow-hidden bg-[#0f172a] w-full cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-primary/20 group"
         >
           <img
             src="/map.png"
@@ -183,60 +179,58 @@ export default function RideCard({
             className="w-full h-full object-cover"
           />
 
-          <span className="absolute bottom-1 right-1 bg-black/80 backdrop-blur px-1.5 py-0.5 rounded text-[0.65rem] flex items-center gap-0.5 pointer-events-none transition-all duration-300 group-hover:bg-primary/60 group-hover:scale-110">
-            <Search className="w-2.5 h-2.5 animate-float" />
+          <span className="absolute bottom-1.5 right-1.5 bg-black/80 backdrop-blur px-2 py-0.5 rounded-md text-xs flex items-center gap-1 pointer-events-none transition-all duration-300 group-hover:bg-primary/60">
+            <Search className="w-3 h-3" />
             View
           </span>
         </button>
 
         {/* Meta: Date, Seats, Gender, Transport */}
-        <div className="space-y-0.5 text-xs text-white/80 min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Calendar className="w-3 h-3" />
-            <span className="text-[0.7rem]">{dateText}</span>
+        <div className="space-y-1.5 sm:space-y-1 text-sm sm:text-xs text-white/80 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Calendar className="w-3.5 h-3.5 sm:w-3 sm:h-3 text-white/50 flex-shrink-0" />
+            <span className="text-[13px] sm:text-xs">{dateText}</span>
           </div>
 
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Clock className="w-3 h-3" />
-            <span className="text-[0.7rem]">Seats: <span className="font-semibold text-white">{seatsLeft}</span></span>
+          <div className="flex items-center gap-2 min-w-0">
+            <Clock className="w-3.5 h-3.5 sm:w-3 sm:h-3 text-white/50 flex-shrink-0" />
+            <span className="text-[13px] sm:text-xs">Seats: <span className="font-semibold text-white">{seatsLeft}</span></span>
           </div>
 
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Users className="w-3 h-3" />
-            <span className="text-[0.7rem]">{genderPreference}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <Users className="w-3.5 h-3.5 sm:w-3 sm:h-3 text-white/50 flex-shrink-0" />
+            <span className="text-[13px] sm:text-xs">{genderPreference}</span>
           </div>
 
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[0.65rem] text-white/60">Transport:</span>
-            <span className="font-semibold text-white text-[0.7rem]">{transport || 'Car'}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <MapPin className="w-3.5 h-3.5 sm:w-3 sm:h-3 text-white/50 flex-shrink-0" />
+            <span className="text-[13px] sm:text-xs">Transport: <span className="font-semibold text-white">{transport || 'Car'}</span></span>
           </div>
         </div>
 
         {/* Bottom Buttons */}
-        <div className="flex items-center justify-between gap-2 mt-1.5 animate-slide-and-fade">
-          <div className="flex gap-1.5">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onViewStops) onViewStops();
-              }}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 hover:shadow-md text-xs transition-all duration-200 btn-press"
-            >
-              <Search className="w-3 h-3" />
-              View Stops
-            </button>
-          </div>
+        <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-white/5">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onViewStops) onViewStops();
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition-all duration-200 active:scale-95 min-h-[40px] sm:min-h-0"
+          >
+            <Search className="w-3.5 h-3.5" />
+            View Stops
+          </button>
 
           <button
             onClick={(e) => {
               e.stopPropagation();
               if (!disabled && onBook) onBook();
             }}
-            className={`rounded-md py-1 text-xs font-semibold flex items-center justify-center gap-1 transition-all duration-200 btn-press ${disabled ? 'bg-white/10 text-white/60 cursor-not-allowed' : 'bg-gradient-to-r from-[#3b4cca] to-primary hover:shadow-lg hover:shadow-primary/40 text-white hover-glow'}`}
-            style={{ minWidth: '6rem' }}
+            className={`rounded-lg py-2.5 sm:py-1.5 text-xs font-bold flex items-center justify-center gap-1.5 transition-all duration-200 active:scale-95 min-h-[40px] sm:min-h-0 ${disabled ? 'bg-white/10 text-white/60 cursor-not-allowed' : 'bg-gradient-to-r from-[#3b4cca] to-primary hover:shadow-lg hover:shadow-primary/40 text-white'}`}
+            style={{ minWidth: '7rem' }}
             title={disabled && disabledReason ? disabledReason : undefined}
           >
-            <span className="bg-white text-[#3b4cca] w-3 h-3 rounded-full flex items-center justify-center text-[8px]">
+            <span className="bg-white text-[#3b4cca] w-4 h-4 rounded-full flex items-center justify-center text-[10px]">
               ✓
             </span>
             {disabled ? (disabledReason || 'N/A') : 'Book'}

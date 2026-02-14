@@ -351,38 +351,50 @@ export interface CancellationTrackingUpdate {
   cooldownUntil?: Timestamp;
 }
 
+/**
+ * Build cancellation tracking update for user profile.
+ * 
+ * NOTE: This function is designed for CLIENT-side Firestore usage.
+ * For server-side (admin SDK) usage, use buildCancellationTrackingUpdateAdmin() instead.
+ * 
+ * @param currentUser - current user data from Firestore
+ * @param wasConfirmed - whether the booking/request status was CONFIRMED when cancelled (late cancellation)
+ * @param thresholdRate - cancellation rate threshold for account lock (default 35%)
+ * @param minimumParticipations - minimum participations before lock can trigger (default 3)
+ */
 export function buildCancellationTrackingUpdate(
   currentUser: any,
-  isLateCancellation: boolean,
+  wasConfirmed: boolean,
   thresholdRate: number = 35,
   minimumParticipations: number = 3
-): CancellationTrackingUpdate {
+): CancellationTrackingUpdate & { cancellationRate: number } {
   const totalCancellations = (currentUser?.totalCancellations ?? 0) + 1;
-  const lateCancellations = isLateCancellation
+  const lateCancellations = wasConfirmed
     ? (currentUser?.lateCancellations ?? 0) + 1
     : (currentUser?.lateCancellations ?? 0);
+  // DO NOT increment totalParticipations here — it tracks rides created/booked, not cancellations
   const totalParticipations = currentUser?.totalParticipations ?? 0;
   const cancellationRate = totalParticipations > 0
     ? Math.round((totalCancellations / totalParticipations) * 100)
     : 0;
 
-  const update: CancellationTrackingUpdate = {
+  const update: CancellationTrackingUpdate & { cancellationRate: number } = {
     totalCancellations,
     lastCancellationAt: serverTimestamp() as any as Timestamp,
-    lateCancellations
+    lateCancellations,
+    cancellationRate,
   };
 
-  // Apply account lock if threshold exceeded
+  // Apply account lock if threshold exceeded (7 days from now)
   if (shouldLockAccount(cancellationRate, totalParticipations, thresholdRate, minimumParticipations)) {
-    update.accountLockUntil = serverTimestamp() as any as Timestamp;
-    // Add lock expiration date (7 days) - in real transaction, use Timestamp.fromDate
+    const lockDate = getLockExpirationDate(); // 7 days from now
+    update.accountLockUntil = Timestamp.fromDate(lockDate);
   }
 
-  // Apply cooldown if 3+ late cancellations
+  // Apply cooldown if 3+ late cancellations (24 hours from now)
   if (lateCancellations >= 3) {
-    const cooldownDate = getCooldownExpirationDate();
-    // Will be set to serverTimestamp + 24h in actual transaction
-    update.cooldownUntil = serverTimestamp() as any as Timestamp;
+    const cooldownDate = getCooldownExpirationDate(); // 24 hours from now
+    update.cooldownUntil = Timestamp.fromDate(cooldownDate);
   }
 
   return update;

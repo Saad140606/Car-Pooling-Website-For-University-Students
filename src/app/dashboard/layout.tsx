@@ -19,6 +19,7 @@ import { ErrorState } from '@/components/StateComponents';
 import { useToast } from '@/hooks/use-toast';
 import { EnableNotificationsBanner } from '@/components/notifications/EnableNotificationsBanner';
 import RatingPopup from '@/components/post-ride/RatingPopup';
+import { MobileBottomNav } from '@/components/MobileBottomNav';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -267,44 +268,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main Content */}
       <div className="flex flex-1 flex-col">
-        {/* Mobile Header */}
-        <header className="md:hidden flex items-center justify-between p-4 bg-gradient-to-r from-slate-950/80 via-slate-900/60 to-slate-950/80 backdrop-blur-md sticky top-0 z-40 animate-slide-down shadow-lg shadow-primary/5">
+        {/* Mobile Header - Simplified, nav moved to bottom bar */}
+        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-slate-950/90 backdrop-blur-xl sticky top-0 z-40 border-b border-white/5 shadow-sm">
           <Logo />
           {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Avatar className="h-10 w-10 cursor-pointer border-2 border-primary/40 hover:border-primary/60 transition-all duration-200">
+              <Avatar className="h-9 w-9 cursor-pointer border-2 border-primary/40 hover:border-primary/60 transition-all duration-200">
                 <AvatarImage src={user.photoURL ?? ''} />
-                <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold text-sm">{getInitials(userData?.fullName)}</AvatarFallback>
+                <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold text-xs">{getInitials(userData?.fullName)}</AvatarFallback>
               </Avatar>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="rounded-xl">
+            <DropdownMenuContent align="end" className="rounded-xl w-56">
               <DropdownMenuLabel className="flex items-center gap-2">
-                <span>{userData?.fullName}</span>
+                <span className="truncate">{userData?.fullName}</span>
                 <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="rounded-lg">
                 <Link href="/dashboard/account" className={cn("cursor-pointer", pathname === '/dashboard/account' && "bg-muted")}>
                   <User className="mr-2 h-4 w-4" />
-                  Profile
+                  Profile Settings
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {navItems.map((item) => (
-                <DropdownMenuItem key={item.href} asChild className="rounded-lg">
-                  <Link href={item.href} className={cn("cursor-pointer relative", pathname === item.href && "bg-muted")}>
-                    <item.icon className="mr-2 h-4 w-4" />
-                    {item.label}
-                    {item.label === 'My Rides' && unreadCount.total > 0 && (
-                      <NotificationBadge count={unreadCount.ride_status + unreadCount.booking} dot className="ml-auto" position="inline" />
-                    )}
-                    {item.label === 'My Bookings' && unreadCount.total > 0 && (
-                      <NotificationBadge count={unreadCount.booking + unreadCount.chat} dot className="ml-auto" position="inline" />
-                    )}
-                  </Link>
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuItem asChild className="rounded-lg">
+                <Link href="/dashboard/contact" className={cn("cursor-pointer", pathname === '/dashboard/contact' && "bg-muted")}>
+                  <Mail className="mr-2 h-4 w-4" />
+                  Contact
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild className="rounded-lg">
+                <Link href="/dashboard/report" className={cn("cursor-pointer", pathname === '/dashboard/report' && "bg-muted")}>
+                  <Flag className="mr-2 h-4 w-4" />
+                  Report
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="rounded-lg text-destructive focus:text-destructive cursor-pointer">
                 <LogOut className="mr-2 h-4 w-4" />
@@ -316,7 +314,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8 bg-transparent overflow-x-hidden">
+        <main className="flex-1 px-3 md:px-6 lg:px-8 py-3 md:py-6 lg:py-8 pb-24 md:pb-8 bg-transparent overflow-x-hidden">
           <EnableNotificationsBanner />
           {safeChildren.map((child, idx) => (
             <React.Fragment key={
@@ -331,6 +329,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Rating Popup - appears when user has completed rides to rate */}
         <RatingPopup />
       </div>
+      
+      {/* Mobile Bottom Navigation */}
+      {user && <MobileBottomNav />}
     </div>
   );
 }

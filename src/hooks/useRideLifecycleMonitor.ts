@@ -87,8 +87,10 @@ export function useRideLifecycleMonitor({
     // Get current lifecycle status
     const currentLifecycleStatus = ride.lifecycleStatus || 'OPEN';
 
-    // Determine if completion UI should show
+    // Determine if completion threshold has been reached (time-based, independent of status)
     const isPastCompletionThreshold = nowMs >= completionThresholdMs;
+    
+    // Check if ride is in a completion-eligible state
     const isInCompletionState = 
       currentLifecycleStatus === 'IN_PROGRESS' || 
       currentLifecycleStatus === 'COMPLETION_WINDOW';
@@ -98,13 +100,19 @@ export function useRideLifecycleMonitor({
       ? booking.status === 'CONFIRMED' 
       : true; // For drivers, always true if it's their ride
 
+    // CRITICAL FIX: Show completion UI if time threshold passed AND user is confirmed participant
+    // This allows the UI to show even if backend status hasn't updated yet
+    // The backend check will be triggered to update the status
     const shouldShowCompletionUI = 
       isPastCompletionThreshold && 
-      isInCompletionState && 
-      isConfirmedParticipant;
+      isConfirmedParticipant &&
+      // Only show if ride hasn't already been completed or cancelled
+      currentLifecycleStatus !== 'COMPLETED' &&
+      currentLifecycleStatus !== 'CANCELLED' &&
+      currentLifecycleStatus !== 'FAILED';
 
     return {
-      needsCompletion: isInCompletionState,
+      needsCompletion: isInCompletionState || (isPastCompletionThreshold && shouldShowCompletionUI),
       lifecycleStatus: currentLifecycleStatus,
       minutesUntilCompletion,
       shouldShowCompletionUI,
@@ -159,9 +167,11 @@ export function useRideLifecycleMonitor({
     const newState = calculateLifecycleState();
     setState(newState);
 
-    // If we're past completion threshold and ride is IN_PROGRESS, trigger backend
-    if (newState.shouldShowCompletionUI && newState.lifecycleStatus === 'IN_PROGRESS') {
-      console.log('[LifecycleMonitor] Triggering backend check for completion window');
+    // CRITICAL FIX: Trigger backend check if past completion threshold
+    // This ensures the backend updates the lifecycle status from IN_PROGRESS to COMPLETION_WINDOW
+    // Even if the status hasn't been updated yet, we need to trigger the backend
+    if (newState.shouldShowCompletionUI) {
+      console.log('[LifecycleMonitor] Triggering backend check - completion threshold reached');
       triggerBackendCheck();
     }
 

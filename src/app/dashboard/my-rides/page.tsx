@@ -17,7 +17,14 @@ import { Ride as RideType, Booking as BookingType } from '@/lib/types';
 import { decodePolyline } from '@/lib/route';
 import { formatTimestamp, parseTimestampToMs } from '@/lib/timestampUtils';
 import MapLeaflet from '@/components/MapLeaflet';
+import dynamic from 'next/dynamic';
 import ChatButton from '@/components/chat/ChatButton';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+
+const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
+  ssr: false,
+  loading: () => <div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>
+});
 import NotificationBadge from '@/components/NotificationBadge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -805,17 +812,30 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
         });
 
         console.log('[DeleteRide] API response status:', response.status);
+        console.log('[DeleteRide] Response headers:', {
+          contentType: response.headers.get('content-type'),
+          contentLength: response.headers.get('content-length')
+        });
         
         let data;
+        let responseText = '';
         try {
-          data = await response.json();
+          responseText = await response.text();
+          console.log('[DeleteRide] Response text:', responseText.substring(0, 500)); // Log first 500 chars to avoid spam
+          data = responseText ? JSON.parse(responseText) : {};
         } catch (parseErr) {
           console.error('[DeleteRide] Failed to parse response:', parseErr);
-          data = { message: 'Invalid response from server' };
+          console.error('[DeleteRide] Raw response text was:', responseText);
+          data = { error: 'Invalid response from server' };
         }
 
         if (!response.ok) {
-          console.error('[DeleteRide] API error:', { status: response.status, data });
+          console.error('[DeleteRide] API error response:', { 
+            status: response.status, 
+            data,
+            error: data?.error,
+            message: data?.message
+          });
           
           // Specific error handling
           if (response.status === 401) {
@@ -854,10 +874,13 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
         }
 
         // Success!
-        console.log('[DeleteRide] Ride deleted successfully', { rideId: ride.id });
+        console.log('[DeleteRide] Ride deleted successfully', { 
+          rideId: ride.id,
+          response: { ok: data?.ok, message: data?.message, statusCode: response.status }
+        });
         toast({ 
           title: 'Ride Deleted', 
-          description: 'Your ride has been deleted successfully.' 
+          description: data?.message || 'Your ride has been deleted successfully.' 
         });
         setDeleteOpen(false);
         
@@ -1163,10 +1186,12 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     return (
         <>
         <Card 
-          className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative cursor-pointer"
-          onClick={() => setShowRideDetail(true)}
+          className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative"
         >
-            <CardHeader className="p-0 mb-2">
+            <CardHeader 
+              className="p-0 mb-2 cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={() => setShowRideDetail(true)}
+            >
               <div className="flex justify-between items-start gap-2 min-w-0">
                   <div className="min-w-0 flex-1">
                     <div className="space-y-0.5 mb-2">
@@ -1563,6 +1588,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                 university={university}
                 rideId={ride.id}
                 bookingId={selectedPassenger.id}
+                ride={ride}
+                user={user}
                 onCancelSuccess={() => {
                   setShowPassengerDetail(false);
                   setSelectedPassenger(null);
@@ -1819,54 +1846,8 @@ export default function MyRidesPage() {
 }
 
 
-// ---- helpers ----
-// Error boundary to catch and surface Leaflet initialization errors (e.g., double-init in Strict Mode)
-class MapErrorBoundary extends React.Component<{ children: React.ReactNode, onMapError?: () => void }, { hasError: boolean }> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: any) {
-    // Only handle the known Leaflet double-init error; rethrow others to bubble up.
-    const message = String(error?.message || error);
-    if (message.includes('Map container is already initialized') || message.includes('Map container is being reused')) {
-      console.warn('Map initialization error caught by MapErrorBoundary:', message);
-      this.props.onMapError?.();
-    } else {
-      throw error;
-    }
-  }
-
-  render() {
-    if (this.state.hasError) {
-      // Render nothing — parent will decide when to retry mounting the map
-      return null;
-    }
-    return this.props.children;
-  }
-}
-
+// ---- Simple Route Dialog Button (matching my-bookings implementation) ----
 function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoints: LatLngExpression[] }) {
-  const [open, setOpen] = React.useState(false);
-  // When opening the dialog, wait one tick before mounting the MapContainer. This avoids
-  // react-leaflet/leaflet double-init errors caused by React Strict Mode (dev) mounting
-  // the component twice in quick succession.
-  const [showMap, setShowMap] = React.useState(false);
-  // Track retries to apply a short backoff when initialization fails
-  const [retryCount, setRetryCount] = React.useState(0);
-  const retryCountRef = React.useRef<number>(retryCount);
-  const [resetKey, setResetKey] = React.useState(0);
-  const [autoRetryDisabled, setAutoRetryDisabled] = React.useState(false);
-  const MAX_RETRIES = 3;
-
-  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
-
-  // Normalize route and markers to mirror the create-ride map
   const routeLatLngs = React.useMemo(() => {
     if (ride.routePolyline && typeof ride.routePolyline === 'string') {
       return decodePolyline(ride.routePolyline);
@@ -1883,170 +1864,113 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
     return [] as { lat: number; lng: number }[];
   }, [ride.route, ride.routePolyline]);
 
-  const boundsFromRide = React.useMemo(() => {
-    const b = (ride as any).routeBounds;
-    if (b && typeof b.minLat === 'number' && typeof b.maxLat === 'number' && typeof b.minLng === 'number' && typeof b.maxLng === 'number') {
-      return L.latLngBounds([b.minLat, b.minLng], [b.maxLat, b.maxLng]);
-    }
-    if (routeLatLngs.length) return L.latLngBounds(routeLatLngs as any);
-    return undefined;
-  }, [ride, routeLatLngs]);
+  // Determine if ride is leaving FROM or going TO university
+  const isFromUniversity = React.useMemo(() => {
+    const fromStr = String(ride.from || '').toLowerCase();
+    return fromStr.includes('university') || fromStr.includes('campus') || fromStr.includes('uni');
+  }, [ride.from]);
 
-  const decoratedMarkers = React.useMemo(() => {
-    const markers: any[] = [];
-    if (routeLatLngs.length) {
-      markers.push({ lat: routeLatLngs[0].lat, lng: routeLatLngs[0].lng, label: 'Start' });
-      if (routeLatLngs.length > 1) {
-        const end = routeLatLngs[routeLatLngs.length - 1];
-        markers.push({ lat: end.lat, lng: end.lng, label: 'Destination' });
-      }
-    }
-    pickupPoints.forEach((p: any, idx: number) => {
+  // Calculate bounds for the map
+  const mapBounds = React.useMemo(() => {
+    const allPoints: any[] = routeLatLngs;
+    pickupPoints.forEach((p: any) => {
       if (Array.isArray(p) && p.length >= 2) {
-        markers.push({ lat: Number(p[0]), lng: Number(p[1]), label: `Pickup ${idx + 1}` });
+        allPoints.push({ lat: Number(p[0]), lng: Number(p[1]) });
       } else if (p && typeof p.lat === 'number' && typeof p.lng === 'number') {
-        markers.push({ lat: p.lat, lng: p.lng, label: `Pickup ${idx + 1}` });
+        allPoints.push(p);
       }
     });
-    return markers as LatLngExpression[];
-  }, [pickupPoints, routeLatLngs]);
+    if (allPoints.length < 2) return null;
+    return L.latLngBounds(allPoints.map((p: any) => [p.lat, p.lng]));
+  }, [routeLatLngs, pickupPoints]);
 
-  const cleanupMapContainer = React.useCallback(() => {
-    const node = wrapperRef.current;
-
-    // Remove any leaflet container inside the wrapper
-      if (node) {
-      const existing = node.querySelector('.leaflet-container');
-      if (existing) {
-        try {
-          // Remove Leaflet's internal id so future inits don't think the container is already in use
-          try { delete (existing as any)._leaflet_id; } catch (e) {}
-          // Do not remove DOM children; leave React-managed nodes intact. Deleting
-          // the internal id is sufficient to allow a fresh map initialization.
-        } catch (err) {
-          console.warn('Failed to safely clear existing leaflet container in wrapper:', err);
-        }
-      }
-    }
-  }, []);
-
-  React.useEffect(() => {
-    let t: number | undefined;
-    let t2: number | undefined;
-    if (open) {
-      // Use a small delay to give React/Leaflet time to cleanly unmount during Strict Mode re-mounts
-      // and to avoid racing with Leaflet's container initialization. Apply a backoff when retrying.
-      // We intentionally omit `cleanupMapContainer` from the dependency list to keep the deps array
-      // size constant across renders (it has stable identity). See note below.
-      const baseDelay = retryCountRef.current === 0 ? 100 : Math.min(500 * retryCountRef.current, 2000);
-      t = window.setTimeout(() => {
-        // Call the stable cleanup function (defined with empty deps) to remove lingering containers
-        cleanupMapContainer();
-        // Give the browser a moment to settle the DOM after cleanup before mounting the map
-        t2 = window.setTimeout(() => setShowMap(true), 20);
-      }, baseDelay);
-    } else {
-      // Immediately unmount map when dialog closes so Leaflet can cleanup
-      setShowMap(false);
-      // Reset retry counter when closed
-      setRetryCount(0);
-      retryCountRef.current = 0;
-      setAutoRetryDisabled(false);
-    }
-    return () => {
-      if (t) clearTimeout(t);
-      if (t2) clearTimeout(t2);
-    };
-    // `cleanupMapContainer` has a stable identity; omitting it prevents dep-array size changes in dev
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  // Called by the MapErrorBoundary when Leaflet throws the double-init error.
-  const handleMapError = React.useCallback(() => {
-    console.debug('[RouteDialogButton] Map error caught; scheduling cleanup and retry', { retryCount: retryCountRef.current });
-
-    // If we've exceeded the max retries, stop auto retry and show manual reset UI
-    if (retryCountRef.current + 1 > MAX_RETRIES) {
-      console.warn('[RouteDialogButton] Max retries exceeded; disabling automatic retries');
-      setShowMap(false);
-      setAutoRetryDisabled(true);
-      setRetryCount((c) => { const next = c + 1; retryCountRef.current = next; return next; });
-      return;
-    }
-
-    // Unmount map and retry after a brief backoff, but limit attempts to avoid loops
-    setShowMap(false);
-    setRetryCount((c) => { const next = c + 1; retryCountRef.current = next; return next; });
-    const backoff = Math.min(500 * (retryCountRef.current), 2000);
-    window.setTimeout(() => {
-      cleanupMapContainer();
-      setShowMap(true);
-    }, backoff);
-  }, [cleanupMapContainer]);
-
-  const resetMap = React.useCallback(() => {
-    console.debug('[RouteDialogButton] Manual map reset triggered');
-    cleanupMapContainer();
-    setShowMap(false);
-    setAutoRetryDisabled(false);
-    setRetryCount(0);
-    retryCountRef.current = 0;
-    setResetKey((k) => k + 1);
-    window.setTimeout(() => setShowMap(true), 100);
-  }, [cleanupMapContainer]);
+  const startLatLng = routeLatLngs.length > 0 ? routeLatLngs[0] : null;
+  const endLatLng = routeLatLngs.length > 1 ? routeLatLngs[routeLatLngs.length - 1] : null;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog>
       <DialogTrigger asChild>
         <Button variant="outline" className="w-full">
-          <MapPin className="mr-2 h-4 w-4" /> View Route & Pickups
+          <MapPin className="mr-2 h-4 w-4" /> View Route & {isFromUniversity ? 'Dropoffs' : 'Pickups'}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-3xl" onClick={(e) => { e.stopPropagation(); }} onPointerDown={(e) => { e.stopPropagation(); }}>
         <DialogHeader>
-            <DialogTitle>Your Route & Passenger Pickups</DialogTitle>
-            <DialogDescription>
-              View the route for your ride and see where passengers will be picked up along the way.
-            </DialogDescription>
+          <DialogTitle>Your Route & Passenger {isFromUniversity ? 'Dropoffs' : 'Pickups'}</DialogTitle>
+          <DialogDescription>
+            View the route for your ride and see where passengers will be {isFromUniversity ? 'dropped off' : 'picked up'} along the way.
+          </DialogDescription>
         </DialogHeader>
-        <div className="h-[60vh] w-full relative" ref={wrapperRef}>
-          {showMap && (
-            <MapErrorBoundary key={`map-error-${ride.id}-${resetKey}`} onMapError={handleMapError}>
-              <div className="h-full w-full" style={{ height: '100%' }}>
-                <MapLeaflet
-                  key={`myride-map-${ride.id}-${resetKey}`}
-                  route={routeLatLngs as LatLngExpression[]}
-                  markers={decoratedMarkers}
-                  bounds={boundsFromRide}
-                  style={{ height: '100%', width: '100%' }}
-                  // Match create-ride map styling and give a reliable tile source
-                  tileUrl="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  tileAttribution="&copy; OpenStreetMap contributors"
-                  routeColor="#60A5FA"
-                />
-              </div>
-            </MapErrorBoundary>
-          )}
-
-          {(!showMap && retryCount > 0 && !autoRetryDisabled) && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="bg-surface/80 p-4 rounded-md text-sm">
-                Failed to initialize map. Retrying... ({retryCount})
-              </div>
-            </div>
-          )}
-
-          {autoRetryDisabled && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              <div className="bg-surface/80 p-4 rounded-md text-sm">Failed to initialize map after multiple attempts.</div>
-              <div className="flex gap-2">
-                <Button onClick={resetMap} size="sm">Reset Map</Button>
-                <Button size="sm" variant="outline" onClick={() => { setShowMap(false); setOpen(false); }}>Close</Button>
-              </div>
-            </div>
+        <div className="h-[60vh] w-full rounded-lg overflow-hidden border border-slate-700">
+          {startLatLng && endLatLng ? (
+            <MapContainer
+              bounds={mapBounds || undefined}
+              center={mapBounds ? undefined : ([startLatLng.lat, startLatLng.lng] as any)}
+              zoom={mapBounds ? undefined : 13}
+              style={{ height: '100%', width: '100%' }}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; OpenStreetMap contributors'
+              />
+              {routeLatLngs.length > 0 && (
+                <Polyline positions={routeLatLngs as any} pathOptions={{ color: '#60A5FA', weight: 5, opacity: 0.9 }} />
+              )}
+              <Marker
+                position={[startLatLng.lat, startLatLng.lng] as any}
+                icon={L.divIcon({
+                  className: 'start-marker',
+                  html: `<div style="background:#10b981;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${isFromUniversity ? 'Start (University)' : 'Start'}</div>`,
+                  iconAnchor: [20, 24]
+                })}
+              >
+                <Popup>{ride.from || 'Start location'}</Popup>
+              </Marker>
+              <Marker
+                position={[endLatLng.lat, endLatLng.lng] as any}
+                icon={L.divIcon({
+                  className: 'end-marker',
+                  html: `<div style="background:#ef4444;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${isFromUniversity ? 'Destination' : 'Destination (University)'}</div>`,
+                  iconAnchor: [20, 24]
+                })}
+              >
+                <Popup>{ride.to || 'End location'}</Popup>
+              </Marker>
+              {pickupPoints.map((point: any, idx: number) => {
+                let lat: number | null = null;
+                let lng: number | null = null;
+                if (Array.isArray(point) && point.length >= 2) {
+                  lat = Number(point[0]);
+                  lng = Number(point[1]);
+                } else if (point && typeof point.lat === 'number' && typeof point.lng === 'number') {
+                  lat = point.lat;
+                  lng = point.lng;
+                }
+                if (lat !== null && lng !== null) {
+                  return (
+                    <Marker
+                      key={idx}
+                      position={[lat, lng] as any}
+                      icon={L.divIcon({
+                        className: 'pickup-marker',
+                        html: `<div style="background:#3b82f6;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${isFromUniversity ? 'Dropoff' : 'Pickup'}</div>`,
+                        iconAnchor: [20, 24]
+                      })}
+                    >
+                      <Popup>Passenger {isFromUniversity ? 'Dropoff' : 'Pickup'} Point {idx + 1}</Popup>
+                    </Marker>
+                  );
+                }
+                return null;
+              })}
+            </MapContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-slate-400">No route available</div>
           )}
         </div>
       </DialogContent>
     </Dialog>
   );
 }
+
+

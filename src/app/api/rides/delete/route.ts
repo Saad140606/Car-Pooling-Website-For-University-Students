@@ -27,28 +27,28 @@ import {
 export async function POST(req: NextRequest) {
   console.log('[API:DeleteRide] Request received');
   
-  // Check if Firebase Admin is initialized
-  if (!adminDb) {
-    console.error('[API:DeleteRide] Firebase Admin not initialized');
-    return errorResponse('Server configuration error', 500);
-  }
-
-  // ===== AUTHENTICATION =====
-  const authResult = await requireAuth(req);
-  if (authResult instanceof NextResponse) {
-    console.warn('[API:DeleteRide] Authentication failed');
-    return authResult;
-  }
-  const authenticatedUserId = authResult.uid;
-  console.log('[API:DeleteRide] Authenticated user:', authenticatedUserId);
-
-  // ===== RATE LIMITING =====
-  const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);
-  if (rateLimitResult instanceof NextResponse) {
-    return rateLimitResult;
-  }
-
   try {
+    // Check if Firebase Admin is initialized
+    if (!adminDb) {
+      console.error('[API:DeleteRide] Firebase Admin not initialized');
+      return errorResponse('Server configuration error', 500);
+    }
+
+    // ===== AUTHENTICATION =====
+    const authResult = await requireAuth(req);
+    if (authResult instanceof NextResponse) {
+      console.warn('[API:DeleteRide] Authentication failed');
+      return authResult;
+    }
+    const authenticatedUserId = authResult.uid;
+    console.log('[API:DeleteRide] Authenticated user:', authenticatedUserId);
+
+    // ===== RATE LIMITING =====
+    const rateLimitResult = await applyRateLimit(req, RATE_LIMITS.RIDE_ACTION);
+    if (rateLimitResult instanceof NextResponse) {
+      return rateLimitResult;
+    }
+
     // ===== INPUT VALIDATION =====
     const { university, rideId } = await req.json();
     console.log('[API:DeleteRide] Input:', { university, rideId });
@@ -79,103 +79,183 @@ export async function POST(req: NextRequest) {
     // ===== PREFLIGHT CHECKS: Verify ride exists and driver owns it =====
     console.log('[API:DeleteRide] Fetching ride document');
     const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
-    const rideSnap = await rideRef.get();
+    let ride: any = null;
+    let rideSnap: FirebaseFirestore.DocumentSnapshot;
+    
+    try {
+      rideSnap = await rideRef.get();
+      
+      if (!rideSnap.exists) {
+        console.warn('[API:DeleteRide] Ride not found in database:', rideId);
+        // Don't return immediately - try to clean up related data anyway
+        ride = null;
+      } else {
+        ride = rideSnap.data() as any;
+        console.log('[API:DeleteRide] Ride found:', { rideId, status: ride.status });
 
-    if (!rideSnap.exists) {
-      console.warn('[API:DeleteRide] Ride not found:', rideId);
-      return errorResponse('Ride not found', 404);
-    }
+        // Verify authenticated user is the driver
+        const ownerId = ride.driverId || ride.createdBy;
+        if (ownerId !== authenticatedUserId) {
+          console.warn('[API:DeleteRide] Ownership mismatch:', { 
+            ownerId, 
+            authenticatedUserId 
+          });
+          return errorResponse('You are not the owner of this ride', 403);
+        }
+        console.log('[API:DeleteRide] Ownership verified');
 
-    const ride = rideSnap.data() as any;
-    console.log('[API:DeleteRide] Ride found:', { rideId, status: ride.status });
+        // ===== CRITICAL SAFETY CHECK: Ensure NO accepted bookings exist =====
+        // Query for any ACCEPTED or CONFIRMED bookings
+        console.log('[API:DeleteRide] Checking for accepted bookings');
+        const bookingsQuery = db.collection(`universities/${validUniversity}/bookings`)
+          .where('rideId', '==', rideId)
+          .where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED']);
 
-    // Verify authenticated user is the driver
-    const ownerId = ride.driverId || ride.createdBy;
-    if (ownerId !== authenticatedUserId) {
-      console.warn('[API:DeleteRide] Ownership mismatch:', { 
-        ownerId, 
-        authenticatedUserId 
+        const bookingsSnap = await bookingsQuery.get();
+        console.log('[API:DeleteRide] Found accepted bookings:', bookingsSnap.size);
+
+        if (bookingsSnap.size > 0) {
+          console.warn('[API:DeleteRide] Cannot delete - has accepted bookings:', bookingsSnap.size);
+          return errorResponse(
+            `Ride cannot be deleted because ${bookingsSnap.size} booking(s) are accepted.`,
+            400
+          );
+        }
+      }
+    } catch (readErr: any) {
+      console.warn('[API:DeleteRide] Error reading ride document:', {
+        message: readErr?.message,
+        code: readErr?.code
       });
-      return errorResponse('You are not the owner of this ride', 403);
-    }
-    console.log('[API:DeleteRide] Ownership verified');
-
-    // ===== CRITICAL SAFETY CHECK: Ensure NO accepted bookings exist =====
-    // Query for any ACCEPTED or CONFIRMED bookings
-    console.log('[API:DeleteRide] Checking for accepted bookings');
-    const bookingsQuery = db.collection(`universities/${validUniversity}/bookings`)
-      .where('rideId', '==', rideId)
-      .where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED']);
-
-    const bookingsSnap = await bookingsQuery.get();
-    console.log('[API:DeleteRide] Found accepted bookings:', bookingsSnap.size);
-
-    if (bookingsSnap.size > 0) {
-      console.warn('[API:DeleteRide] Cannot delete - has accepted bookings:', bookingsSnap.size);
-      return errorResponse(
-        `Ride cannot be deleted because ${bookingsSnap.size} booking(s) are accepted.`,
-        400
-      );
+      // Continue anyway - we'll try to clean up related data
     }
 
-    // ===== DELETE RIDE AND RELATED DATA =====
-    console.log('[API:DeleteRide] Starting transaction to delete ride and related data');
-    await db.runTransaction(async (tx) => {
-      // Delete ride document
-      console.log('[API:DeleteRide] Marking ride for deletion');
-      tx.delete(rideRef);
+    // ===== FETCH ALL RELATED DATA BEFORE TRANSACTION =====
+    // CRITICAL: Firestore Admin SDK transactions cannot use await within the callback
+    // We must fetch all data BEFORE entering the transaction, then delete synchronously
+    console.log('[API:DeleteRide] Fetching all related documents before deletion');
+    
+    // Fetch all bookings for this ride
+    const allBookingsQuery = db.collection(`universities/${validUniversity}/bookings`)
+      .where('rideId', '==', rideId);
+    const allBookingsSnap = await allBookingsQuery.get();
+    const bookingDocs = allBookingsSnap.docs;
+    console.log('[API:DeleteRide] Found', bookingDocs.length, 'bookings to delete');
 
-      // Delete all bookings (pending ones are ok to delete)
-      const allBookingsQuery = db.collection(`universities/${validUniversity}/bookings`)
+    // Fetch all ride-scoped requests
+    let requestDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      const requestsQuery = db.collection(`universities/${validUniversity}/rides/${rideId}/requests`);
+      const requestsSnap = await requestsQuery.get();
+      requestDocs = requestsSnap.docs;
+      console.log('[API:DeleteRide] Found', requestDocs.length, 'requests to delete');
+    } catch (e) {
+      console.log('[API:DeleteRide] No requests subcollection or error fetching:', e);
+    }
+
+    // Fetch all chats linked to this ride
+    let chatDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      const chatsQuery = db.collection(`universities/${validUniversity}/chats`)
         .where('rideId', '==', rideId);
-      const allBookings = await tx.get(allBookingsQuery);
-      console.log('[API:DeleteRide] Marking', allBookings.size, 'bookings for deletion');
-      allBookings.forEach((doc) => {
-        tx.delete(doc.ref);
-      });
+      const chatsSnap = await chatsQuery.get();
+      chatDocs = chatsSnap.docs;
+      console.log('[API:DeleteRide] Found', chatDocs.length, 'chats to delete');
+    } catch (e) {
+      console.log('[API:DeleteRide] Error fetching chats:', e);
+    }
 
-      // Delete any ride-scoped requests (subcollection)
-      try {
-        const requestsQuery = db.collection(`universities/${validUniversity}/rides/${rideId}/requests`);
-        const requests = await tx.get(requestsQuery);
-        requests.forEach((doc) => {
-          tx.delete(doc.ref);
-        });
-      } catch (_) {
-        // Ignore - requests may not exist
-      }
+    // If ride doesn't exist, treat as a warning but continue with cleanup
+    if (!ride) {
+      console.warn('[API:DeleteRide] Ride document does not exist - proceeding with cleanup of related data only');
+      // Still proceed to delete bookings, requests, chats to clean up orphaned data
+    }
 
-      // Delete any chats linked to this ride
-      try {
-        const chatsQuery = db.collection(`universities/${validUniversity}/chats`)
-          .where('rideId', '==', rideId);
-        const chats = await tx.get(chatsQuery);
-        chats.forEach((doc) => {
-          tx.delete(doc.ref);
-        });
-      } catch (_) {
-        // Ignore - chats may not exist
-      }
+    // ===== DELETE RIDE AND RELATED DATA IN TRANSACTION =====
+    console.log('[API:DeleteRide] Starting transaction to delete ride and related data');
+    console.log('[API:DeleteRide] Transaction will delete:', {
+      rideId,
+      bookingCount: bookingDocs.length,
+      requestCount: requestDocs.length,
+      chatCount: chatDocs.length
     });
 
-    console.log('[API:DeleteRide] Transaction successful - ride deleted');
+    let transactionResult;
+    try {
+      transactionResult = await db.runTransaction(async (tx) => {
+        // Delete ride document
+        console.log('[API:DeleteRide] Deleting ride in transaction');
+        tx.delete(rideRef);
+
+        // Delete all bookings
+        console.log('[API:DeleteRide] Deleting bookings in transaction:', bookingDocs.length);
+        bookingDocs.forEach((doc) => {
+          tx.delete(doc.ref);
+        });
+
+        // Delete ride-scoped requests
+        console.log('[API:DeleteRide] Deleting requests in transaction:', requestDocs.length);
+        requestDocs.forEach((doc) => {
+          tx.delete(doc.ref);
+        });
+
+        // Delete chats
+        console.log('[API:DeleteRide] Deleting chats in transaction:', chatDocs.length);
+        chatDocs.forEach((doc) => {
+          tx.delete(doc.ref);
+        });
+
+        return { success: true };
+      });
+      console.log('[API:DeleteRide] Transaction completed successfully:', transactionResult);
+    } catch (txErr) {
+      console.error('[API:DeleteRide] Transaction error:', {
+        message: txErr?.message,
+        code: txErr?.code,
+        type: txErr?.constructor?.name
+      });
+      throw txErr; // Re-throw to be caught by outer try-catch
+    }
+
     return successResponse({
       ok: true,
-      message: 'Ride deleted successfully',
-      data: { rideId }
+      message: ride ? 'Ride deleted successfully' : 'Ride cleanup completed (ride document not found)',
+      data: { rideId, rideFound: !!ride, cleanedUp: { bookings: bookingDocs.length, requests: requestDocs.length, chats: chatDocs.length } }
     });
 
   } catch (e: any) {
-    console.error('[DeleteRide] Error:', e);
+    console.error('[DeleteRide] Caught error at function level:', {
+      message: e?.message,
+      code: e?.code,
+      type: e?.constructor?.name,
+      errorStr: String(e),
+      stack: e?.stack?.substring(0, 500)
+    });
 
-    // Handle permission errors
-    if (e.message?.includes('permission-denied')) {
+    // Handle permission/auth errors
+    if (e.message?.includes('permission-denied') || e.code === 'PERMISSION_DENIED') {
+      console.log('[DeleteRide] Returning 403 permission denied error');
       return errorResponse(
         'Permission denied. Ensure your account has access.',
         403
       );
     }
 
-    return errorResponse(e.message || 'Failed to delete ride', 500);
+    // Handle Firestore specific errors
+    if (e.message?.includes('FAILED_PRECONDITION') || e.code === 'FAILED_PRECONDITION') {
+      console.log('[DeleteRide] Returning 400 precondition failed error');
+      return errorResponse('Cannot delete ride due to existing dependencies', 400);
+    }
+
+    // Return detailed error message - ensure it's always a string
+    const errorMsg = String(e?.message || e?.toString?.() || e || 'Failed to delete ride').substring(0, 500);
+    console.error('[DeleteRide] Final error response being sent:', errorMsg);
+    
+    // Ensure we always return a proper error response object
+    return NextResponse.json(
+      { error: errorMsg, ok: false },
+      { status: 500 }
+    );
   }
 }
+

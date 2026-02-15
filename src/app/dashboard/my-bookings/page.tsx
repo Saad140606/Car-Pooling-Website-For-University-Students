@@ -81,6 +81,35 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const ride = safeGet(booking, 'ride');
   const driver = safeGet(booking, 'driverDetails') || safeGet(booking, 'ride.driverInfo') || { fullName: 'Driver' };
   
+  // Auto-hide bookings that are more than 3 hours past departure time
+  const shouldHideCard = React.useMemo(() => {
+    const departureData = safeGet(ride, 'departureTime') || safeGet(booking, 'ride.departureTime');
+    if (!departureData) return false;
+
+    try {
+      const departureMs = departureData.seconds 
+        ? departureData.seconds * 1000 
+        : typeof departureData === 'number' 
+          ? departureData 
+          : new Date(departureData).getTime();
+      
+      const now = Date.now();
+      const threeHoursInMs = 3 * 60 * 60 * 1000; // 3 hours
+      const timeSinceDeparture = now - departureMs;
+      
+      // Hide if more than 3 hours have passed since departure
+      return timeSinceDeparture > threeHoursInMs;
+    } catch (e) {
+      console.debug('[BookingCard] Error checking departure time:', e);
+      return false;
+    }
+  }, [ride, booking]);
+
+  // Return null to hide the card if it's more than 3 hours past departure
+  if (shouldHideCard) {
+    return null;
+  }
+  
   const [confirming, setConfirming] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
@@ -1095,7 +1124,7 @@ export default function MyBookingsPage() {
       <div className="section-shell py-8 relative z-10">
         <div className="mb-6 sm:mb-8 animate-page">
           <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Bookings</h1>
-          <p className="text-slate-300">View and manage your ride bookings ({bookings.length})</p>
+          <p className="text-slate-300">View and manage your ride bookings</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1436,53 +1465,6 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
           <div className="flex items-center gap-2 pt-1 border-t border-slate-700/30">
             <CheckCircle2 className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
             <div className="text-xs text-green-400 font-medium">Ride confirmed - Check in when ready</div>
-          </div>
-        )}
-
-        {/* Completion required */}
-        {needsCompletion && (
-          <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-950/20 p-3">
-            <div className="text-xs text-slate-300 font-medium">Completion required</div>
-            <p className="text-[11px] text-slate-400 mt-1">Confirm you completed the ride or cancel with a reason.</p>
-            <div className="flex gap-2 mt-3">
-              <Button
-                onClick={handlePassengerComplete}
-                disabled={isCompleting}
-                className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-500"
-              >
-                {isCompleting ? 'Submitting...' : 'Confirm Completion'}
-              </Button>
-              <Dialog open={showCompletionCancel} onOpenChange={setShowCompletionCancel}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="h-9">Cancel</Button>
-                </DialogTrigger>
-                <DialogContent
-                  onClick={(e) => { e.stopPropagation(); }}
-                  onPointerDown={(e) => { e.stopPropagation(); }}
-                >
-                  <DialogHeader>
-                    <DialogTitle>Cancel Completion</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-2">
-                    <label className="text-sm text-slate-300">Reason (required)</label>
-                    <textarea
-                      className="w-full min-h-[90px] rounded-md border border-slate-700 bg-slate-900/80 p-2 text-sm text-slate-100"
-                      value={cancelReason}
-                      onChange={(e) => setCancelReason(e.target.value)}
-                      placeholder="Explain why you are cancelling..."
-                    />
-                  </div>
-                  <DialogFooter>
-                    <DialogClose asChild>
-                      <Button variant="ghost">Close</Button>
-                    </DialogClose>
-                    <Button onClick={handlePassengerCancel} disabled={isCompleting} className="bg-red-600 hover:bg-red-500">
-                      {isCompleting ? 'Submitting...' : 'Submit Cancellation'}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
           </div>
         )}
       </CardContent>

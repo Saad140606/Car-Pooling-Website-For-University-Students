@@ -12,6 +12,7 @@ import {
 } from '@/firebase/firestore/notifications';
 import { getMessaging, onMessage, type MessagePayload } from 'firebase/messaging';
 import { ringtoneManager } from '@/lib/ringtoneManager';
+import { fcmTokenManager } from '@/lib/fcmTokenManager';
 import { PremiumNotificationDisplay, PremiumNotificationProps } from '@/components/premium/PremiumNotification';
 
 interface NotificationContextType {
@@ -107,6 +108,26 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   // Track the last notification ID to detect new ones
   const lastNotificationIdRef = useRef<string | null>(null);
   const isInitialLoadRef = useRef(true);
+
+  // Initialize FCM token registration
+  useEffect(() => {
+    if (!firestore || !user?.uid) {
+      // Cleanup on logout
+      fcmTokenManager.cleanup().catch(console.error);
+      return;
+    }
+
+    // Register FCM token on login
+    console.log('[NotificationProvider] Initializing FCM token manager for user:', user.uid);
+    fcmTokenManager.initialize(firestore, user.uid).catch((error) => {
+      console.error('[NotificationProvider] Failed to initialize FCM token manager:', error);
+    });
+
+    return () => {
+      // Cleanup on unmount or user change
+      fcmTokenManager.cleanup().catch(console.error);
+    };
+  }, [firestore, user?.uid]);
 
   // Initialize Firestore notifications
   useEffect(() => {

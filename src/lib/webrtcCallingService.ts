@@ -83,7 +83,13 @@ class WebRTCCallingService {
   private createPeerConnection(): RTCPeerConnection {
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
     });
+
+    // Track connection state changes but don't disconnect immediately
+    let connectionFailureCount = 0;
+    const connectionFailureThreshold = 3; // Allow some transient failures
 
     pc.ontrack = (event) => {
       console.debug('[WebRTCCalling] Remote track received:', event.track.kind);
@@ -96,15 +102,52 @@ class WebRTCCallingService {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && this.currentCall) {
-        this.saveICECandidate(this.currentCall.id, event.candidate, this.iceRole || 'caller');
+        this.saveICECandidate(this.currentCall.id, event.candidate, this.iceRole || 'caller')
+          .catch((error) => {
+            console.warn('[WebRTCCalling] Failed to save ICE candidate:', error);
+            // Don't fail the entire call on candidate failure
+          });
       }
     };
 
+    pc.onicegatheringstatechange = () => {
+      console.debug('[WebRTCCalling] ICE gathering state:', pc.iceGatheringState);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.debug('[WebRTCCalling] ICE connection state:', pc.iceConnectionState);
+    };
+
     pc.onconnectionstatechange = () => {
-      console.debug('[WebRTCCalling] Connection state:', pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        this.endCall();
+      const state = pc.connectionState;
+      console.debug('[WebRTCCalling] Connection state changed:', state);
+
+      switch (state) {
+        case 'connected':
+          connectionFailureCount = 0; // Reset on successful connection
+          console.debug('[WebRTCCalling] ✅ Connection established');
+          break;
+        case 'disconnected':
+          connectionFailureCount++;
+          console.warn('[WebRTCCalling] Connection disconnected, attempt:', connectionFailureCount);
+          // Don't end call immediately on disconnect - might recover
+          if (connectionFailureCount >= connectionFailureThreshold) {
+            console.error('[WebRTCCalling] Connection failed after', connectionFailureThreshold, 'attempts');
+            this.endCall().catch(console.error);
+          }
+          break;
+        case 'failed':
+          console.error('[WebRTCCalling] ❌ Connection failed');
+          this.endCall().catch(console.error);
+          break;
+        case 'closed':
+          console.debug('[WebRTCCalling] Connection closed');
+          break;
       }
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.debug('[WebRTCCalling] Signaling state:', pc.signalingState);
     };
 
     return pc;
@@ -295,42 +338,87 @@ class WebRTCCallingService {
     try {
       this.iceRole = 'callee';
       this.hasNotifiedConnected = false;
+      
+      console.debug('[WebRTCCalling] Accepting call:', callId);
+
+      // Get offer from call document first (before creating local stream)
+      const callDoc = doc(this.firestore, 'calls', callId);
+      const callSnapshot = await getDoc(callDoc);
+      const callData = callSnapshot.data() as any;
+      
+      if (!callData) {
+        throw new Error('Call document not found');
+      }
+
+      const offer = callData.offer;
+      if (!offer) {
+        throw new Error('No offer found in call document');
+      }
+
+      console.debug('[WebRTCCalling] Setting remote description from offer...');
+      
+      // Set remote description first
+      try {
+        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(this.deserializeOffer(offer)));
+        console.debug('[WebRTCCalling] ✅ Remote description set');
+      } catch (error) {
+        console.error('[WebRTCCalling] ❌ Failed to set remote description:', error);
+        throw error;
+      }
+
       // Get local stream
+      console.debug('[WebRTCCalling] Requesting local media...');
       const stream = await this.getLocalStream(callType);
-      stream.getTracks().forEach(track => {
+      this.localStream = stream;
+      
+      stream.getTracks().forEach((track, index) => {
+        console.debug('[WebRTCCalling] Adding track:', { index, kind: track.kind });
         if (this.peerConnection && this.localStream) {
           this.peerConnection.addTrack(track, this.localStream);
         }
       });
 
-      // Get offer from call document
-      const callDoc = doc(this.firestore, 'calls', callId);
-      const callSnapshot = await getDoc(callDoc);
-      const offer = callSnapshot.data()?.offer;
+      // Create answer
+      console.debug('[WebRTCCalling] Creating answer...');
+      const answer = await this.peerConnection.createAnswer();
+      
+      // Set local description
+      console.debug('[WebRTCCalling] Setting local description...');
+      await this.peerConnection.setLocalDescription(answer);
+      console.debug('[WebRTCCalling] ✅ Local description set');
 
-      if (offer) {
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(this.deserializeOffer(offer)));
+      // Update call document with answer
+      console.debug('[WebRTCCalling] Updating call document with answer...');
+      await updateDoc(callDoc, {
+        answer: this.serializeOffer(answer),
+        status: 'connected',
+        acceptedAt: serverTimestamp(),
+      });
+      console.debug('[WebRTCCalling] ✅ Call document updated');
 
-        // Create and send answer
-        const answer = await this.peerConnection.createAnswer();
-        await this.peerConnection.setLocalDescription(answer);
-
-        await updateDoc(callDoc, {
-          answer: this.serializeOffer(answer),
+      // Setup current call if not already set
+      if (!this.currentCall) {
+        this.currentCall = {
+          id: callId,
+          callerId: callData.callerId,
+          callerName: callData.callerName,
+          receiverId: this.currentUserId || '',
+          callType,
           status: 'connected',
-        });
-
-        // Listen for caller candidates and remote hangup
-        this.listenForCallUpdates(callId, 'callee');
-
-        if (this.currentCall) {
-          this.listeners.onCallAccepted?.(this.currentCall);
-        }
+          createdAt: callData.createdAt?.toDate?.() || new Date(),
+        };
       }
 
-      console.debug('[WebRTCCalling] Call accepted:', callId);
+      // Listen for caller candidates and remote hangup
+      this.listenForCallUpdates(callId, 'callee');
+
+      console.debug('[WebRTCCalling] ✅ Call accepted successfully');
     } catch (error) {
-      console.error('[WebRTCCalling] Failed to accept call:', error);
+      console.error('[WebRTCCalling] ❌ Failed to accept call:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      this.listeners.onError?.(error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -411,9 +499,26 @@ class WebRTCCallingService {
     try {
       const callDoc = doc(this.firestore, 'calls', callId);
       const target = role === 'callee' ? 'calleeCandidates' : 'callerCandidates';
-      await addDoc(collection(callDoc, target), this.serializeCandidate(candidate));
-    } catch (error) {
-      console.debug('[WebRTCCalling] Failed to save ICE candidate:', error);
+      
+      const candidateData = this.serializeCandidate(candidate);
+      
+      console.debug('[WebRTCCalling] Saving ICE candidate:', { 
+        candidate: candidateData.candidate?.substring(0, 50) + '...', 
+        role, 
+        sdpMLineIndex: candidateData.sdpMLineIndex
+      });
+      
+      await addDoc(collection(callDoc, target), {
+        ...candidateData,
+        addedAt: serverTimestamp()
+      });
+    } catch (error: any) {
+      console.warn('[WebRTCCalling] Failed to save ICE candidate:', {
+        code: error.code,
+        message: error.message,
+        role
+      });
+      // Non-critical error - don't rethrow
     }
   }
 
@@ -426,37 +531,86 @@ class WebRTCCallingService {
     this.cleanupSignaling();
 
     const callDoc = doc(this.firestore, 'calls', callId);
+    
     this.callDocUnsub = onSnapshot(callDoc, async (snap) => {
-      if (!snap.exists()) {
-        this.handleRemoteHangup();
-        return;
-      }
-      const data = snap.data() as any;
-      if (role === 'caller' && data?.answer && !this.peerConnection?.currentRemoteDescription) {
-        try {
-          await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(this.deserializeOffer(data.answer)));
-          if (this.currentCall) this.listeners.onCallAccepted?.(this.currentCall);
-        } catch (error) {
-          console.warn('[WebRTCCalling] Failed to set remote answer:', error);
+      try {
+        if (!snap.exists()) {
+          console.debug('[WebRTCCalling] Call document deleted');
+          this.handleRemoteHangup();
+          return;
         }
-      }
+        
+        const data = snap.data() as any;
+        
+        // Handle answer (for caller) 
+        if (role === 'caller' && data?.answer && !this.peerConnection?.currentRemoteDescription) {
+          try {
+            console.debug('[WebRTCCalling] Setting remote answer...');
+            await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(this.deserializeOffer(data.answer)));
+            console.debug('[WebRTCCalling] ✅ Remote answer set successfully');
+            if (this.currentCall) {
+              this.listeners.onCallAccepted?.(this.currentCall);
+            }
+          } catch (error) {
+            console.error('[WebRTCCalling] ❌ Failed to set remote answer:', error);
+            // Non-fatal - connection might still establish
+          }
+        }
 
-      if (data?.status === 'ended' || data?.status === 'rejected') {
-        this.handleRemoteHangup();
+        // Handle remote status changes
+        if (data?.status === 'ended' || data?.status === 'rejected') {
+          console.debug('[WebRTCCalling] Remote ended/rejected call');
+          this.handleRemoteHangup();
+        }
+      } catch (error) {
+        console.error('[WebRTCCalling] Error in call doc listener:', error);
       }
+    }, (error) => {
+      console.error('[WebRTCCalling] ❌ Snapshot error on call doc:', {
+        code: error.code,
+        message: error.message
+      });
     });
 
+    // Listen for remote ICE candidates
     const remoteCollection = collection(callDoc, role === 'caller' ? 'calleeCandidates' : 'callerCandidates');
+    
     this.remoteCandidatesUnsub = onSnapshot(remoteCollection, (snapshot) => {
       snapshot.docChanges().forEach(change => {
         if (change.type === 'added') {
-          const data = change.doc.data();
           try {
-            this.peerConnection?.addIceCandidate(new RTCIceCandidate(data));
+            const candidateData = change.doc.data();
+            
+            // Ignore if no candidate string
+            if (!candidateData.candidate) {
+              console.debug('[WebRTCCalling] Skipping empty ICE candidate');
+              return;
+            }
+            
+            const iceCandidate = new RTCIceCandidate(candidateData);
+            
+            console.debug('[WebRTCCalling] Adding remote ICE candidate:', {
+              candidate: candidateData.candidate.substring(0, 50) + '...',
+              sdpMLineIndex: candidateData.sdpMLineIndex
+            });
+            
+            this.peerConnection?.addIceCandidate(iceCandidate)
+              .catch((error) => {
+                console.warn('[WebRTCCalling] Failed to add ICE candidate:', {
+                  message: error.message,
+                  candidate: candidateData.candidate.substring(0, 30)
+                });
+                // Non-fatal - connection might work without this candidate
+              });
           } catch (error) {
-            console.warn('[WebRTCCalling] Failed to add ICE candidate:', error);
+            console.warn('[WebRTCCalling] Failed to parse ICE candidate:', error);
           }
         }
+      });
+    }, (error) => {
+      console.error('[WebRTCCalling] ❌ Snapshot error on candidates:', {
+        code: error.code,
+        message: error.message
       });
     });
   }

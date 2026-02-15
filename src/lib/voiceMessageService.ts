@@ -156,7 +156,7 @@ class VoiceMessageService {
   }
 
   /**
-   * Upload voice message to storage
+   * Upload voice message to storage with retry logic
    */
   async uploadVoiceMessage(
     audioBlob: Blob,
@@ -171,14 +171,49 @@ class VoiceMessageService {
       const duration = this.lastRecordingDuration || Math.ceil((Date.now() - this.recordingStartTime) / 1000);
       const mimeType = audioBlob.type || this.getOptimalMimeType() || 'audio/webm';
       const extension = this.getFileExtension(mimeType);
-      const file = new File(
-        [audioBlob],
-        `voice_${Date.now()}.${extension}`,
-        { type: mimeType }
-      );
+      const fileName = `voice_${Date.now()}.${extension}`;
+      const file = new File([audioBlob], fileName, { type: mimeType });
 
       const fullPath = path || `uploads/voice_messages/${Date.now()}_${file.name}`;
-      const url = await uploadFile(file, fullPath, onProgress);
+
+      console.log('[VoiceMessageService] Starting upload:', {
+        path: fullPath,
+        size: audioBlob.size,
+        mimeType,
+        duration
+      });
+
+      let url: string | null = null;
+      let lastError: Error | null = null;
+
+      // Retry up to 3 times with exponential backoff
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          url = await uploadFile(file, fullPath, onProgress);
+          console.log('[VoiceMessageService] ✅ Upload successful on attempt', attempt);
+          break; // Success, exit retry loop
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          console.warn('[VoiceMessageService] Upload attempt', attempt, 'failed:', lastError.message);
+
+          // Don't retry if it's a permission error
+          if ((error as any).code === 'storage/unauthorized' || (error as any).code === 'permission-denied') {
+            console.error('[VoiceMessageService] Permission denied, not retrying');
+            throw lastError;
+          }
+
+          // Wait before retry with exponential backoff
+          if (attempt < 3) {
+            const delayMs = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+            console.log(`[VoiceMessageService] Retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          }
+        }
+      }
+
+      if (!url) {
+        throw lastError || new Error('Failed to upload voice message after 3 attempts');
+      }
 
       const voiceData: VoiceMessageData = {
         url,
@@ -188,10 +223,10 @@ class VoiceMessageService {
         uploadedAt: Date.now(),
       };
 
-      console.debug('[VoiceMessageService] Voice message uploaded:', voiceData);
+      console.log('[VoiceMessageService] Voice message uploaded successfully:', voiceData);
       return voiceData;
     } catch (error) {
-      console.error('[VoiceMessageService] Upload failed:', error);
+      console.error('[VoiceMessageService] ❌ Upload failed:', error);
       throw error;
     }
   }

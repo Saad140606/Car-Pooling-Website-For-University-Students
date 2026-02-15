@@ -1106,13 +1106,17 @@ export async function submitPassengerCompletion(
     const updated = normalized.map((p) => {
       if (p.userId !== passengerId) return p;
       found = true;
-      return {
+      const updated: any = {
         ...p,
         status: action === 'cancelled' ? PassengerStatus.CANCELLED : PassengerStatus.COMPLETED,
         passengerCompletion: action,
         passengerCompletionAt: now(),
-        completionReason: action === 'cancelled' ? reason : undefined,
       };
+      // Only include completionReason if action is 'cancelled' to avoid undefined values
+      if (action === 'cancelled') {
+        updated.completionReason = reason;
+      }
+      return updated;
     });
 
     if (!found) {

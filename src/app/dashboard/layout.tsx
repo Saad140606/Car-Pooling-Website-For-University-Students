@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, AlertTriangle, BarChart3 } from 'lucide-react';
+import { Car, LogOut, PlusCircle, Search, User, Mail, Flag, AlertTriangle, BarChart3, Bell } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -20,12 +20,15 @@ import { useToast } from '@/hooks/use-toast';
 import { EnableNotificationsBanner } from '@/components/notifications/EnableNotificationsBanner';
 import RatingPopup from '@/components/post-ride/RatingPopup';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
+import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
+import { ActivityDot } from '@/components/ActivityIndicatorDot';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
   { href: '/dashboard/create-ride', icon: PlusCircle, label: 'Offer a Ride' },
   { href: '/dashboard/my-rides', icon: Car, label: 'My Rides' },
   { href: '/dashboard/my-bookings', icon: User, label: 'My Bookings' },
+  { href: '/dashboard/notifications', icon: Bell, label: 'Notifications' },
   { href: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
   { href: '/dashboard/contact', icon: Mail, label: 'Contact' },
   { href: '/dashboard/report', icon: Flag, label: 'Report' },
@@ -35,6 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const { user, loading: userLoading, data: userData, initialized } = useUser();
   const { unreadCount } = useNotifications();
+  const { hasRidesActivity, hasBookingsActivity, markRidesAsViewed, markBookingsAsViewed } = useActivityIndicator();
   const auth = useAuth();
   const firestore = useFirestore();
   const router = useRouter();
@@ -44,7 +48,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // ═══ PERF: Cache verification status in sessionStorage to avoid repeated checks ═══
   const VERIFICATION_CACHE_KEY = 'campus_rides_verification_checked';
-  
+  // Mark sections as viewed when navigating to them
+  useEffect(() => {
+    if (pathname === '/dashboard/my-rides') {
+      markRidesAsViewed();
+    } else if (pathname === '/dashboard/my-bookings') {
+      markBookingsAsViewed();
+    }
+  }, [pathname, markRidesAsViewed, markBookingsAsViewed]);  
   useEffect(() => {
     if (!user || !userData || !initialized || !firestore) return;
     
@@ -206,19 +217,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     asChild
                     variant={isActive ? 'secondary' : 'ghost'}
                     className={cn(
-                      'w-full justify-start gap-3 rounded-lg transition-all duration-200 group',
+                      'w-full justify-start gap-3 rounded-lg transition-all duration-200 group relative',
                       isActive && 'bg-gradient-to-r from-primary/25 to-accent/10 shadow-lg shadow-primary/15 text-primary',
                       !isActive && 'text-slate-300 hover:text-slate-100 hover:bg-slate-800/40'
                     )}
                   >
                     <Link href={item.href} className="flex items-center gap-3 w-full relative">
-                      <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                      {/* Activity Indicator Dot for My Rides */}
+                      {item.label === 'My Rides' && (
+                        <div className="relative">
+                          <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                          <ActivityDot show={hasRidesActivity} size={6} color="bg-red-500" position="top-right" pulse={true} />
+                        </div>
+                      )}
+                      {/* Activity Indicator Dot for My Bookings */}
+                      {item.label === 'My Bookings' && (
+                        <div className="relative">
+                          <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                          <ActivityDot show={hasBookingsActivity} size={6} color="bg-red-500" position="top-right" pulse={true} />
+                        </div>
+                      )}
+                      {/* Regular icon for other items */}
+                      {item.label !== 'My Rides' && item.label !== 'My Bookings' && (
+                        <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                      )}
                       <span className={isActive ? 'font-semibold' : 'font-medium'}>{item.label}</span>
                       {item.label === 'My Rides' && unreadCount.total > 0 && (
                         <NotificationBadge count={unreadCount.ride_status + unreadCount.booking} dot className="ml-auto" position="inline" />
                       )}
                       {item.label === 'My Bookings' && unreadCount.total > 0 && (
                         <NotificationBadge count={unreadCount.booking + unreadCount.chat} dot className="ml-auto" position="inline" />
+                      )}
+                      {item.label === 'Notifications' && unreadCount.total > 0 && (
+                        <NotificationBadge count={unreadCount.total} dot className="ml-auto" position="inline" />
                       )}
                     </Link>
                   </Button>
@@ -272,44 +303,54 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <header className="md:hidden flex items-center justify-between px-4 py-3 bg-slate-950/90 backdrop-blur-xl sticky top-0 z-40 border-b border-white/5 shadow-sm">
           <Logo />
           {user && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Avatar className="h-9 w-9 cursor-pointer border-2 border-primary/40 hover:border-primary/60 transition-all duration-200">
-                <AvatarImage src={user.photoURL ?? ''} />
-                <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold text-xs">{getInitials(userData?.fullName)}</AvatarFallback>
-              </Avatar>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="rounded-xl w-56">
-              <DropdownMenuLabel className="flex items-center gap-2">
-                <span className="truncate">{userData?.fullName}</span>
-                <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild className="rounded-lg">
-                <Link href="/dashboard/account" className={cn("cursor-pointer", pathname === '/dashboard/account' && "bg-muted")}>
-                  <User className="mr-2 h-4 w-4" />
-                  Profile Settings
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild className="rounded-lg">
-                <Link href="/dashboard/contact" className={cn("cursor-pointer", pathname === '/dashboard/contact' && "bg-muted")}>
-                  <Mail className="mr-2 h-4 w-4" />
-                  Contact
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild className="rounded-lg">
-                <Link href="/dashboard/report" className={cn("cursor-pointer", pathname === '/dashboard/report' && "bg-muted")}>
-                  <Flag className="mr-2 h-4 w-4" />
-                  Report
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleSignOut} className="rounded-lg text-destructive focus:text-destructive cursor-pointer">
-                <LogOut className="mr-2 h-4 w-4" />
-                <span>Log out</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center gap-3">
+            <Link href="/dashboard/notifications" className="relative p-2 rounded hover:bg-gray-700">
+              <Bell className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
+              {unreadCount.total > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-medium leading-none text-white bg-red-600 rounded-full h-5 w-5">
+                  {Math.min(unreadCount.total, 9)}+
+                </span>
+              )}
+            </Link>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Avatar className="h-9 w-9 cursor-pointer border-2 border-primary/40 hover:border-primary/60 transition-all duration-200">
+                  <AvatarImage src={user.photoURL ?? ''} />
+                  <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold text-xs">{getInitials(userData?.fullName)}</AvatarFallback>
+                </Avatar>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="rounded-xl w-56">
+                <DropdownMenuLabel className="flex items-center gap-2">
+                  <span className="truncate">{userData?.fullName}</span>
+                  <VerificationBadge verified={userData?.universityEmailVerified} showText={false} size="sm" />
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild className="rounded-lg">
+                  <Link href="/dashboard/account" className={cn("cursor-pointer", pathname === '/dashboard/account' && "bg-muted")}>
+                    <User className="mr-2 h-4 w-4" />
+                    Profile Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild className="rounded-lg">
+                  <Link href="/dashboard/contact" className={cn("cursor-pointer", pathname === '/dashboard/contact' && "bg-muted")}>
+                    <Mail className="mr-2 h-4 w-4" />
+                    Contact
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild className="rounded-lg">
+                  <Link href="/dashboard/report" className={cn("cursor-pointer", pathname === '/dashboard/report' && "bg-muted")}>
+                    <Flag className="mr-2 h-4 w-4" />
+                    Report
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleSignOut} className="rounded-lg text-destructive focus:text-destructive cursor-pointer">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Log out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           )}
         </header>
 

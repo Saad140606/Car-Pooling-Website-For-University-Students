@@ -17,7 +17,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
-import { notifyRequestAccepted } from '@/lib/rideNotificationService';
+import { notifyRequestAccepted } from '@/lib/serverNotificationService';
 import { handleAcceptRequest } from '@/lib/rideLifecycle/lifecycleService';
 
 export async function POST(req: NextRequest) {

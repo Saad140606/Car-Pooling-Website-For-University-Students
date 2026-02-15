@@ -1,6 +1,9 @@
 // src/components/ui/NotificationBell.tsx
 'use client';
 
+// src/components/ui/NotificationBell.tsx
+'use client';
+
 import { useState, useEffect } from 'react';
 import { collection, doc, query, where, orderBy, limit, updateDoc } from 'firebase/firestore';
 import Link from 'next/link';
@@ -11,10 +14,19 @@ import { Bell } from 'lucide-react';
 
 export default function NotificationBell() {
   const firestore = useFirestore();
-  const { user, loading: userLoading } = useUser();
+  const { user, data: userData } = useUser();
   const [open, setOpen] = useState(false);
 
-  const q = (user && firestore) ? query(collection(firestore, 'notifications'), where('userId', '==', user.uid), orderBy('createdAt', 'desc'), limit(20)) : null;
+  // Build query with university-scoped path
+  const university = userData?.university;
+  const q = (user && firestore && university) 
+    ? query(
+        collection(firestore, 'universities', university, 'notifications'),
+        where('userId', '==', user.uid),
+        orderBy('createdAt', 'desc'),
+        limit(20)
+      )
+    : null;
   const { data: notifications = [], loading } = useCollection<any>(q);
 
   const unreadCount = (notifications || []).filter(n => !n.isRead).length;
@@ -30,19 +42,19 @@ export default function NotificationBell() {
   }, []);
 
   async function markAsRead(id: string) {
-    if (!firestore) return;
+    if (!firestore || !university) return;
     try {
-      await updateDoc(doc(firestore, 'notifications', id), { isRead: true, readAt: new Date() });
+      await updateDoc(doc(firestore, 'universities', university, 'notifications', id), { isRead: true, readAt: new Date() });
     } catch (e) {
       console.debug('Failed to mark notification read', e);
     }
   }
 
   async function markAllRead() {
-    if (!firestore) return;
+    if (!firestore || !university) return;
     try {
       const batch = notifications.filter(n => !n.isRead).slice(0, 50);
-      await Promise.all(batch.map((n: any) => updateDoc(doc(firestore, 'notifications', n.id), { isRead: true, readAt: new Date() })));
+      await Promise.all(batch.map((n: any) => updateDoc(doc(firestore, 'universities', university, 'notifications', n.id), { isRead: true, readAt: new Date() })));
     } catch (e) {
       console.debug('Failed to mark all notifications read', e);
     }

@@ -17,7 +17,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
-import { notifyRideConfirmed } from '@/lib/rideNotificationService';
+import { notifyRideConfirmed } from '@/lib/serverNotificationService';
 import { handleConfirmSeat } from '@/lib/rideLifecycle/lifecycleService';
 
 export async function POST(req: NextRequest) {
@@ -202,11 +202,7 @@ export async function POST(req: NextRequest) {
           rideData?.driverId,
           rideId,
           requestId,
-          {
-            uid: authenticatedUserId,
-            fullName: passengerData?.fullName || 'Passenger',
-            email: passengerData?.email
-          },
+          passengerData?.fullName || 'Passenger',
           {
             from: rideData?.pickupLocation || rideData?.from || 'Starting point',
             to: rideData?.dropoffLocation || rideData?.to || 'Destination'

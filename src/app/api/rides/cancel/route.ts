@@ -27,7 +27,7 @@ import {
   shouldLockAccount,
   getLockExpirationDate,
 } from '@/lib/rideCancellationService';
-import { notifyRideCancelled } from '@/lib/rideNotificationService';
+import { notifyRideCancelled } from '@/lib/serverNotificationService';
 
 export async function POST(req: NextRequest) {
   console.log('[API:CancelRide] Request received');

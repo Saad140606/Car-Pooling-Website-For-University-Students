@@ -293,19 +293,20 @@ export function sanitizeString(input: unknown): string {
 
 /**
  * Validate and sanitize university parameter
+ * Returns lowercase to match Firestore collection paths
  */
-export function validateUniversity(university: unknown): 'NED' | 'FAST' | null {
+export function validateUniversity(university: unknown): 'ned' | 'fast' | null {
   if (typeof university !== 'string') return null;
   
-  const normalized = university.toUpperCase();
-  if (normalized === 'NED' || normalized === 'FAST') {
+  const normalized = university.toLowerCase();
+  if (normalized === 'ned' || normalized === 'fast') {
     return normalized;
   }
   
-  // Also handle lowercase variants
-  const lowerNorm = university.toLowerCase();
-  if (lowerNorm === 'ned') return 'NED';
-  if (lowerNorm === 'fast') return 'FAST';
+  // Also handle uppercase variants
+  const upperNorm = university.toUpperCase();
+  if (upperNorm === 'NED') return 'ned';
+  if (upperNorm === 'FAST') return 'fast';
   
   return null;
 }

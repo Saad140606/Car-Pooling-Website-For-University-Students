@@ -18,7 +18,7 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
-import { notifyRequestRejected } from '@/lib/rideNotificationService';
+import { notifyRequestRejected } from '@/lib/serverNotificationService';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized

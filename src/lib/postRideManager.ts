@@ -315,9 +315,13 @@ class PostRideManager {
     try {
       const rideRef = doc(this.firestore, 'universities', this.university, 'rides', rideId);
 
+      // Read existing postRideStatus using modular Firestore
+      const rideSnap = await getDoc(rideRef);
+      const existingStatus = rideSnap.data()?.postRideStatus || {};
+
       const updates: any = {
         postRideStatus: {
-          ...(await this.firestore.collection('universities').doc(this.university).collection('rides').doc(rideId).get()).data()?.postRideStatus || {},
+          ...existingStatus,
           completedAt: serverTimestamp(),
         },
       };

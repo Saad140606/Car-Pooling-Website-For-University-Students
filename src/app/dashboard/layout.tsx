@@ -13,8 +13,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { VerificationBadge } from '@/components/VerificationBadge';
-import { useNotifications } from '@/contexts/NotificationContext';
-import NotificationBadge from '@/components/NotificationBadge';
 import { ErrorState } from '@/components/StateComponents';
 import { useToast } from '@/hooks/use-toast';
 import { EnableNotificationsBanner } from '@/components/notifications/EnableNotificationsBanner';
@@ -37,8 +35,16 @@ const navItems = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, loading: userLoading, data: userData, initialized } = useUser();
-  const { unreadCount } = useNotifications();
-  const { hasRidesActivity, hasBookingsActivity, markRidesAsViewed, markBookingsAsViewed } = useActivityIndicator();
+  const {
+    hasRidesActivity,
+    hasBookingsActivity,
+    hasChatActivity,
+    hasNotificationsActivity,
+    markRidesAsViewed,
+    markBookingsAsViewed,
+    markChatAsViewed,
+    markNotificationsAsViewed,
+  } = useActivityIndicator();
   const auth = useAuth();
   const firestore = useFirestore();
   const router = useRouter();
@@ -54,8 +60,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       markRidesAsViewed();
     } else if (pathname === '/dashboard/my-bookings') {
       markBookingsAsViewed();
+    } else if (pathname === '/dashboard/notifications') {
+      markNotificationsAsViewed();
+    } else if (pathname?.startsWith('/dashboard/chats')) {
+      markChatAsViewed();
     }
-  }, [pathname, markRidesAsViewed, markBookingsAsViewed]);  
+  }, [
+    pathname,
+    markRidesAsViewed,
+    markBookingsAsViewed,
+    markNotificationsAsViewed,
+    markChatAsViewed,
+  ]);
   useEffect(() => {
     if (!user || !userData || !initialized || !firestore) return;
     
@@ -234,23 +250,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       {item.label === 'My Bookings' && (
                         <div className="relative">
                           <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
-                          <ActivityDot show={hasBookingsActivity} size={6} color="bg-red-500" position="top-right" pulse={true} />
+                          <ActivityDot show={hasBookingsActivity || hasChatActivity} size={6} color="bg-red-500" position="top-right" pulse={false} />
+                        </div>
+                      )}
+                      {item.label === 'Notifications' && (
+                        <div className="relative">
+                          <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                          <ActivityDot show={hasNotificationsActivity} size={6} color="bg-red-500" position="top-right" pulse={false} />
                         </div>
                       )}
                       {/* Regular icon for other items */}
-                      {item.label !== 'My Rides' && item.label !== 'My Bookings' && (
+                      {item.label !== 'My Rides' && item.label !== 'My Bookings' && item.label !== 'Notifications' && (
                         <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
                       )}
                       <span className={isActive ? 'font-semibold' : 'font-medium'}>{item.label}</span>
-                      {item.label === 'My Rides' && unreadCount.total > 0 && (
-                        <NotificationBadge count={unreadCount.ride_status + unreadCount.booking} dot className="ml-auto" position="inline" />
-                      )}
-                      {item.label === 'My Bookings' && unreadCount.total > 0 && (
-                        <NotificationBadge count={unreadCount.booking + unreadCount.chat} dot className="ml-auto" position="inline" />
-                      )}
-                      {item.label === 'Notifications' && unreadCount.total > 0 && (
-                        <NotificationBadge count={unreadCount.total} dot className="ml-auto" position="inline" />
-                      )}
                     </Link>
                   </Button>
                 </li>
@@ -306,11 +319,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-3">
             <Link href="/dashboard/notifications" className="relative p-2 rounded hover:bg-gray-700">
               <Bell className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
-              {unreadCount.total > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-medium leading-none text-white bg-red-600 rounded-full h-5 w-5">
-                  {Math.min(unreadCount.total, 9)}+
-                </span>
-              )}
+              <ActivityDot show={hasNotificationsActivity} size={6} color="bg-red-500" position="top-right" pulse={false} />
             </Link>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

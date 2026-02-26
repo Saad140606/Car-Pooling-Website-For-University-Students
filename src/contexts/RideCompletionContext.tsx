@@ -73,6 +73,7 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
   const { user, initialized, data: userData } = useUser();
   const firestore = useFirestore();
   const initRef = useRef(false);
+  const suppressAutoOpenRef = useRef(false);
 
   const [state, setState] = useState<CompletionWorkflowState>({
     currentWorkflow: null,
@@ -97,9 +98,18 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
     initRef.current = true;
 
     rideCompletionManager.initialize(firestore, user.uid, university);
+    suppressAutoOpenRef.current = false;
 
     const unsubscribe = rideCompletionManager.subscribe((workflows) => {
       setState(prev => {
+        if (suppressAutoOpenRef.current) {
+          return {
+            ...prev,
+            allPendingWorkflows: workflows,
+            currentWorkflow: null,
+          };
+        }
+
         // If we already have a current workflow, keep it unless it's been removed
         const currentStillExists = prev.currentWorkflow
           ? workflows.some(w => w.oderId === prev.currentWorkflow?.oderId)
@@ -144,7 +154,7 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
 
     // Get initial workflows
     const initial = rideCompletionManager.getPendingWorkflows();
-    if (initial.length > 0) {
+    if (!suppressAutoOpenRef.current && initial.length > 0) {
       setState(prev => ({
         ...prev,
         allPendingWorkflows: initial,
@@ -163,6 +173,7 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     return () => {
       if (!user?.uid) {
+        suppressAutoOpenRef.current = false;
         rideCompletionManager.cleanup();
       }
     };
@@ -403,30 +414,21 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
         currentStep: 'complete',
       }));
 
-      // Auto-advance to next workflow after brief delay
+      // Close completion flow after brief confirmation and keep user on dashboard
       setTimeout(() => {
+        suppressAutoOpenRef.current = true;
         setState(prev => {
-          const remaining = rideCompletionManager.getPendingWorkflows();
-          if (remaining.length > 0) {
-            return {
-              ...prev,
-              currentWorkflow: remaining[0],
-              allPendingWorkflows: remaining,
-              currentStep: 'summary',
-              providerForm: createDefaultProviderForm(),
-              passengerForm: createDefaultPassengerForm(),
-              currentPassengerIndex: 0,
-            };
-          }
           return {
             ...prev,
             currentWorkflow: null,
-            allPendingWorkflows: [],
+            allPendingWorkflows: rideCompletionManager.getPendingWorkflows(),
+            currentStep: 'summary',
             providerForm: createDefaultProviderForm(),
             passengerForm: createDefaultPassengerForm(),
+            currentPassengerIndex: 0,
           };
         });
-      }, 2000);
+      }, 1200);
     } catch (error) {
       console.error('[RideCompletionContext] Submission error:', error);
       setState(prev => ({

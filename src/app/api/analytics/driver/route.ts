@@ -60,6 +60,17 @@ export async function GET(request: NextRequest) {
     // Get all ratings
     const ratingsRef = adminDb.collection(`universities/${university}/ratings`);
     const ratingsSnap = await ratingsRef.where('driverId', '==', userId).get();
+
+    // Get ride completions for this driver's rides (source-of-truth fallback for passenger ratings)
+    const ridesRef = adminDb.collection(`universities/${university}/rides`);
+    const [driverRidesSnap, createdByRidesSnap] = await Promise.all([
+      ridesRef.where('driverId', '==', userId).get(),
+      ridesRef.where('createdBy', '==', userId).get(),
+    ]);
+    const driverRideIds = new Set<string>([
+      ...driverRidesSnap.docs.map((d) => d.id),
+      ...createdByRidesSnap.docs.map((d) => d.id),
+    ]);
     
     // Process earnings per ride
     const earningsPerRide = earningsSnap.docs.map(d => {
@@ -82,17 +93,61 @@ export async function GET(request: NextRequest) {
       const date = toDate(data.createdAt) || new Date();
       return {
         rideId: data.rideId,
+        passengerId: data.passengerId || '',
         rating: data.rating || 0,
         date: date.toISOString(),
       };
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    // Add ratings from rideCompletions passengerWorkflows when ratings collection is missing/incomplete
+    const ratingsByKey = new Map<string, { rideId: string; passengerId: string; rating: number; date: string }>();
+
+    ratingsPerRide.forEach((rating) => {
+      const key = `${rating.rideId}__${rating.passengerId || 'unknown'}`;
+      ratingsByKey.set(key, rating);
+    });
+
+    const completionReads = await Promise.all(
+      Array.from(driverRideIds).map((rideId) =>
+        adminDb.collection(`universities/${university}/rideCompletions`).doc(rideId).get()
+      )
+    );
+
+    completionReads.forEach((completionSnap) => {
+      if (!completionSnap.exists) return;
+
+      const completionData = completionSnap.data() || {};
+      const rideId = String(completionData.rideId || completionSnap.id);
+      const passengerWorkflows = completionData.passengerWorkflows || {};
+
+      Object.entries(passengerWorkflows).forEach(([passengerId, workflowAny]) => {
+        const workflow = workflowAny as any;
+        const rating = Number(workflow?.providerRating || 0);
+        if (!rating || rating < 1 || rating > 5) return;
+
+        const completedAt = toDate(workflow?.completedAt) || toDate(completionData.providerCompletedAt) || new Date();
+        const key = `${rideId}__${passengerId}`;
+
+        if (!ratingsByKey.has(key)) {
+          ratingsByKey.set(key, {
+            rideId,
+            passengerId,
+            rating,
+            date: completedAt.toISOString(),
+          });
+        }
+      });
+    });
+
+    const mergedRatingsPerRide = Array.from(ratingsByKey.values())
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     
     const stats = statsSnap.exists ? statsSnap.data() : null;
     
     // Calculate totals from actual data
     const totalEarningsFromData = earningsPerRide.reduce((sum, e) => sum + e.earnings, 0);
-    const totalRatingsFromData = ratingsPerRide.reduce((sum, r) => sum + r.rating, 0);
-    const ratingsCount = ratingsPerRide.length;
+    const totalRatingsFromData = mergedRatingsPerRide.reduce((sum, r) => sum + r.rating, 0);
+    const ratingsCount = mergedRatingsPerRide.length;
     const averageRatingFromData = ratingsCount > 0 ? totalRatingsFromData / ratingsCount : 0;
     const totalPassengersFromData = earningsSnap.docs.reduce((sum, d) => sum + (d.data().bookedSeats || 0), 0);
     
@@ -105,12 +160,15 @@ export async function GET(request: NextRequest) {
     
     // Calculate rating distribution
     const ratingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    ratingsPerRide.forEach(r => {
+    mergedRatingsPerRide.forEach(r => {
       const key = Math.round(r.rating) as keyof typeof ratingDistribution;
       if (key >= 1 && key <= 5) {
         ratingDistribution[key]++;
       }
     });
+
+    const resolvedAverageRating = ratingsCount > 0 ? averageRatingFromData : (stats?.averageRating || 0);
+    const resolvedRatingsCount = ratingsCount > 0 ? ratingsCount : (stats?.ratingsCount || 0);
     
     return NextResponse.json({
       success: true,
@@ -118,10 +176,10 @@ export async function GET(request: NextRequest) {
         totalEarnings: stats?.totalEarnings || totalEarningsFromData,
         totalRidesCompleted: stats?.totalRidesCompleted || earningsPerRide.length,
         totalPassengersServed: stats?.totalPassengersServed || totalPassengersFromData,
-        averageRating: stats?.averageRating || averageRatingFromData,
-        totalRatingsCount: stats?.ratingsCount || ratingsCount,
+        averageRating: resolvedAverageRating,
+        totalRatingsCount: resolvedRatingsCount,
         earningsPerRide,
-        ratingsPerRide,
+        ratingsPerRide: mergedRatingsPerRide,
         monthlyEarnings,
         ratingDistribution,
         lastUpdated: new Date().toISOString(),

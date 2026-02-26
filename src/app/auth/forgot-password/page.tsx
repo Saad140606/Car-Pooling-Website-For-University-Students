@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { Reveal } from '@/components/Reveal';
 import Logo from '@/components/logo';
 import { ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -19,18 +20,68 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
+  const [selectedUniversity, setSelectedUniversity] = useState<University | null>(null);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [lockUntil, setLockUntil] = useState<number | null>(null);
+  const [lockRemainingSeconds, setLockRemainingSeconds] = useState(0);
   const [rateLimitInfo, setRateLimitInfo] = useState<{
     count: number;
     remaining: number;
     resetDate: Date | null;
   } | null>(null);
 
+  useEffect(() => {
+    const university = getSelectedUniversity();
+    if (!university || !isValidUniversity(university)) {
+      setError('Please select your university portal before resetting password.');
+      return;
+    }
+    setSelectedUniversity(university);
+  }, []);
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
+
+  useEffect(() => {
+    if (!lockUntil) {
+      setLockRemainingSeconds(0);
+      return;
+    }
+
+    setLockRemainingSeconds(Math.max(0, Math.ceil((lockUntil - Date.now()) / 1000)));
+
+    const timer = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((lockUntil - Date.now()) / 1000));
+      setLockRemainingSeconds(remaining);
+      if (remaining <= 0) {
+        setLockUntil(null);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockUntil]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setRateLimitInfo(null);
 
     if (!email || email.trim().length === 0) {
       setError('Please enter your email address');
+      return;
+    }
+
+    if (!selectedUniversity) {
+      setError('Please select your university portal before requesting a reset code.');
+      return;
+    }
+
+    if (cooldownSeconds > 0) {
+      setError(`Please wait ${cooldownSeconds}s before requesting another code.`);
       return;
     }
 
@@ -45,13 +96,21 @@ export default function ForgotPasswordPage() {
       const response = await fetch('/api/send-password-reset-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          university: selectedUniversity,
+        }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        // Check if it's a rate limit error
+        if (response.status === 429 && data.retryAfterSeconds) {
+          setCooldownSeconds(Number(data.retryAfterSeconds) || 0);
+        }
+        if (response.status === 429 && data.lockUntil) {
+          setLockUntil(Number(data.lockUntil));
+        }
         if (response.status === 429 && data.rateLimitInfo) {
           setRateLimitInfo(data.rateLimitInfo);
         }
@@ -64,7 +123,7 @@ export default function ForgotPasswordPage() {
       });
 
       // Navigate to code verification page and pass email
-      router.push(`/auth/reset-password/verify-code?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+      router.push(`/auth/reset-password/verify-code?email=${encodeURIComponent(email.trim().toLowerCase())}&university=${encodeURIComponent(selectedUniversity)}`);
     } catch (err: any) {
       console.error('Error sending password reset OTP:', err);
       setError(err.message || 'Failed to send verification code. Please try again.');
@@ -114,6 +173,22 @@ export default function ForgotPasswordPage() {
                 </Alert>
               )}
 
+              {cooldownSeconds > 0 && (
+                <Alert className="border-blue-500/50 bg-blue-500/10">
+                  <AlertDescription className="text-blue-700 dark:text-blue-300 text-sm">
+                    Please wait <strong>{cooldownSeconds}s</strong> before requesting another code.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {lockRemainingSeconds > 0 && (
+                <Alert className="border-amber-500/50 bg-amber-500/10">
+                  <AlertDescription className="text-amber-700 dark:text-amber-300 text-sm">
+                    Password reset is temporarily locked. Try again in approximately <strong>{Math.ceil(lockRemainingSeconds / 60)} minute(s)</strong>.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {rateLimitInfo && rateLimitInfo.remaining === 0 && (
                 <Alert className="border-amber-500/50 bg-amber-500/10">
                   <AlertDescription className="text-amber-700 dark:text-amber-300 text-sm">
@@ -142,7 +217,7 @@ export default function ForgotPasswordPage() {
                 <label className="block text-sm font-semibold text-slate-200 mb-2">Email Address</label>
                 <Input
                   type="email"
-                  placeholder="you@gmail.com"
+                  placeholder={selectedUniversity === 'fast' ? 'you@nu.edu.pk' : selectedUniversity === 'ned' ? 'you@cloud.neduet.edu.pk' : 'you@uok.edu.pk'}
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
@@ -156,7 +231,7 @@ export default function ForgotPasswordPage() {
               <div className="flex gap-3 pt-2">
                 <Button
                   type="submit"
-                  disabled={isSending || !email}
+                  disabled={isSending || !email || !selectedUniversity || cooldownSeconds > 0 || lockRemainingSeconds > 0}
                   className="flex-1 shadow-lg shadow-primary/30 hover:shadow-primary/50 rounded-lg font-semibold"
                 >
                   {isSending ? (

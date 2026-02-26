@@ -60,6 +60,15 @@ class RideCompletionManager {
   private processedKeys: Set<string> = new Set();
   private callbacks: WorkflowCallback[] = [];
   private initialized = false;
+  private completionAccessDenied = false;
+  private analyticsAccessDenied = false;
+
+  private isPermissionDenied(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const code = 'code' in error ? String((error as any).code || '') : '';
+    const message = 'message' in error ? String((error as any).message || '') : '';
+    return code === 'permission-denied' || message.includes('Missing or insufficient permissions');
+  }
 
   // ============================================================================
   // INITIALIZATION
@@ -189,6 +198,7 @@ class RideCompletionManager {
 
   private async checkExistingCompletionDocs() {
     if (!this.firestore || !this.userId || !this.university) return;
+    if (this.completionAccessDenied) return;
 
     try {
       const completionsRef = collection(this.firestore, 'universities', this.university, 'rideCompletions');
@@ -214,6 +224,11 @@ class RideCompletionManager {
         }
       }
     } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        this.completionAccessDenied = true;
+        console.warn('[CompletionManager] rideCompletions access denied; continuing with local workflow mode');
+        return;
+      }
       console.error('[CompletionManager] Error checking existing docs:', error);
     }
   }
@@ -327,21 +342,32 @@ class RideCompletionManager {
     if (this.processedKeys.has(key)) return;
 
     try {
-      // Check completion doc first
-      const completionRef = doc(this.firestore, 'universities', this.university, 'rideCompletions', rideId);
-      const completionSnap = await getDoc(completionRef);
+      // Check completion doc first (skip if permissions denied)
+      if (!this.completionAccessDenied) {
+        try {
+          const completionRef = doc(this.firestore, 'universities', this.university, 'rideCompletions', rideId);
+          const completionSnap = await getDoc(completionRef);
 
-      if (completionSnap.exists()) {
-        const completionData = completionSnap.data() as RideCompletionDoc;
+          if (completionSnap.exists()) {
+            const completionData = completionSnap.data() as RideCompletionDoc;
 
-        // Check if already completed for this role
-        if (role === 'provider' && completionData.providerWorkflowCompleted) {
-          this.processedKeys.add(key);
-          return;
-        }
-        if (role === 'passenger' && completionData.passengerWorkflows?.[this.userId]?.completed) {
-          this.processedKeys.add(key);
-          return;
+            // Check if already completed for this role
+            if (role === 'provider' && completionData.providerWorkflowCompleted) {
+              this.processedKeys.add(key);
+              return;
+            }
+            if (role === 'passenger' && completionData.passengerWorkflows?.[this.userId]?.completed) {
+              this.processedKeys.add(key);
+              return;
+            }
+          }
+        } catch (error) {
+          if (this.isPermissionDenied(error)) {
+            this.completionAccessDenied = true;
+            console.warn('[CompletionManager] rideCompletions read denied; using local-only workflow guard');
+          } else {
+            throw error;
+          }
         }
       }
 
@@ -361,13 +387,21 @@ class RideCompletionManager {
       const driverId = rideData.driverId || rideData.createdBy;
       if (role === 'provider' && driverId !== this.userId) return;
 
-      // Get confirmed bookings
+      // Get confirmed bookings (role-scoped to avoid permission-denied on broad ride queries)
       const bookingsRef = collection(this.firestore, 'universities', this.university, 'bookings');
-      const bookingsQ = query(
-        bookingsRef,
-        where('rideId', '==', rideId),
-        where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
-      );
+      const bookingsQ = role === 'passenger'
+        ? query(
+            bookingsRef,
+            where('rideId', '==', rideId),
+            where('passengerId', '==', this.userId),
+            where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+          )
+        : query(
+            bookingsRef,
+            where('rideId', '==', rideId),
+            where('driverId', '==', this.userId),
+            where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+          );
       const bookingsSnap = await getDocs(bookingsQ);
 
       const confirmedPassengers: ConfirmedPassengerInfo[] = [];
@@ -388,6 +422,10 @@ class RideCompletionManager {
 
       // For passenger role, the user must have a confirmed booking
       if (role === 'passenger' && confirmedPassengers.length === 0) return;
+
+      // For provider role, workflow is only valid when there is at least
+      // one confirmed passenger booking.
+      if (role === 'provider' && confirmedPassengers.length === 0) return;
 
       // Build the ride summary
       const rideSummary: RideSummary = {
@@ -422,8 +460,10 @@ class RideCompletionManager {
         localCacheKey: key,
       };
 
-      // Ensure completion doc exists in Firestore
-      await this.ensureCompletionDoc(rideId, role, driverId);
+      // Ensure completion doc exists in Firestore (best effort)
+      if (!this.completionAccessDenied) {
+        await this.ensureCompletionDoc(rideId, role, driverId);
+      }
 
       // Add to pending
       this.pendingWorkflows.set(key, workflow);
@@ -433,6 +473,11 @@ class RideCompletionManager {
 
       console.log('[CompletionManager] Workflow created:', key);
     } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        this.completionAccessDenied = true;
+        console.warn('[CompletionManager] Completion workflow Firestore access denied; suppressing repeated retries');
+        return;
+      }
       console.error('[CompletionManager] Error building workflow:', error);
     }
   }
@@ -443,39 +488,49 @@ class RideCompletionManager {
 
   private async ensureCompletionDoc(rideId: string, role: 'provider' | 'passenger', providerId: string) {
     if (!this.firestore || !this.userId || !this.university) return;
+    if (this.completionAccessDenied) return;
 
-    const completionRef = doc(this.firestore, 'universities', this.university, 'rideCompletions', rideId);
-    const snap = await getDoc(completionRef);
+    try {
+      const completionRef = doc(this.firestore, 'universities', this.university, 'rideCompletions', rideId);
+      const snap = await getDoc(completionRef);
 
-    if (!snap.exists()) {
-      // Create new completion doc
-      const docData: Partial<RideCompletionDoc> = {
-        rideId,
-        university: this.university,
-        createdAt: serverTimestamp(),
-        providerWorkflowPending: role === 'provider',
-        providerWorkflowCompleted: false,
-        passengerWorkflows: {},
-        analyticsProcessed: false,
-      };
-
-      if (role === 'passenger') {
-        docData.passengerWorkflows = {
-          [this.userId]: { pending: true, completed: false },
+      if (!snap.exists()) {
+        // Create new completion doc
+        const docData: Partial<RideCompletionDoc> = {
+          rideId,
+          university: this.university,
+          createdAt: serverTimestamp(),
+          providerWorkflowPending: role === 'provider',
+          providerWorkflowCompleted: false,
+          passengerWorkflows: {},
+          analyticsProcessed: false,
         };
-      }
 
-      await setDoc(completionRef, docData);
-    } else {
-      // Update existing doc
-      const updates: any = {};
-      if (role === 'provider') {
-        updates.providerWorkflowPending = true;
+        if (role === 'passenger') {
+          docData.passengerWorkflows = {
+            [this.userId]: { pending: true, completed: false },
+          };
+        }
+
+        await setDoc(completionRef, docData);
       } else {
-        updates[`passengerWorkflows.${this.userId}.pending`] = true;
-        updates[`passengerWorkflows.${this.userId}.completed`] = false;
+        // Update existing doc
+        const updates: any = {};
+        if (role === 'provider') {
+          updates.providerWorkflowPending = true;
+        } else {
+          updates[`passengerWorkflows.${this.userId}.pending`] = true;
+          updates[`passengerWorkflows.${this.userId}.completed`] = false;
+        }
+        await updateDoc(completionRef, updates);
       }
-      await updateDoc(completionRef, updates);
+    } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        this.completionAccessDenied = true;
+        console.warn('[CompletionManager] rideCompletions write denied; skipping doc writes for this session');
+        return;
+      }
+      throw error;
     }
   }
 
@@ -494,13 +549,21 @@ class RideCompletionManager {
     // Build attendance map
     const passengerAttendance: Record<string, any> = {};
     for (const [passengerId, record] of Object.entries(formData.attendanceRecords)) {
-      passengerAttendance[passengerId] = {
+      const attendanceEntry: Record<string, any> = {
         status: record.arrivalStatus,
-        rating: record.arrivalStatus === 'arrived' ? (formData.passengerRatings[passengerId] || 0) : undefined,
-        review: record.arrivalStatus === 'arrived' ? (formData.passengerReviews[passengerId] || '') : undefined,
-        notArrivedReason: record.arrivalStatus === 'did_not_arrive' ? (formData.notArrivedReasons[passengerId] || 'no_show') : undefined,
-        notArrivedReasonCustom: record.arrivalStatus === 'did_not_arrive' ? (formData.notArrivedReasonsCustom[passengerId] || '') : undefined,
       };
+
+      if (record.arrivalStatus === 'arrived') {
+        attendanceEntry.rating = formData.passengerRatings[passengerId] ?? 0;
+        attendanceEntry.review = formData.passengerReviews[passengerId] ?? '';
+      }
+
+      if (record.arrivalStatus === 'did_not_arrive') {
+        attendanceEntry.notArrivedReason = formData.notArrivedReasons[passengerId] ?? 'no_show';
+        attendanceEntry.notArrivedReasonCustom = formData.notArrivedReasonsCustom[passengerId] ?? '';
+      }
+
+      passengerAttendance[passengerId] = attendanceEntry;
     }
 
     // Update completion doc
@@ -509,8 +572,8 @@ class RideCompletionManager {
       providerWorkflowCompleted: true,
       providerCompletedAt: serverTimestamp(),
       providerDecision: formData.rideCompleted ? 'completed' : 'not_completed',
-      providerNotCompletedReason: formData.rideCompleted ? null : formData.notCompletedReason,
-      providerNotCompletedReasonCustom: formData.rideCompleted ? null : formData.notCompletedReasonCustom,
+      providerNotCompletedReason: formData.rideCompleted ? null : (formData.notCompletedReason ?? null),
+      providerNotCompletedReasonCustom: formData.rideCompleted ? null : (formData.notCompletedReasonCustom ?? ''),
       passengerAttendance: formData.rideCompleted ? passengerAttendance : {},
     });
 
@@ -571,17 +634,10 @@ class RideCompletionManager {
       [`passengerWorkflows.${this.userId}.completed`]: true,
       [`passengerWorkflows.${this.userId}.completedAt`]: serverTimestamp(),
       [`passengerWorkflows.${this.userId}.decision`]: formData.rideCompleted ? 'completed' : 'not_completed',
-      [`passengerWorkflows.${this.userId}.notCompletedReason`]: formData.rideCompleted ? null : formData.notCompletedReason,
-      [`passengerWorkflows.${this.userId}.notCompletedReasonCustom`]: formData.rideCompleted ? null : formData.notCompletedReasonCustom,
+      [`passengerWorkflows.${this.userId}.notCompletedReason`]: formData.rideCompleted ? null : (formData.notCompletedReason ?? null),
+      [`passengerWorkflows.${this.userId}.notCompletedReasonCustom`]: formData.rideCompleted ? null : (formData.notCompletedReasonCustom ?? ''),
       [`passengerWorkflows.${this.userId}.providerRating`]: formData.rideCompleted ? (formData.providerRating || null) : null,
       [`passengerWorkflows.${this.userId}.providerReview`]: formData.rideCompleted ? (formData.providerReview || '') : null,
-    });
-
-    // Update ride document
-    const rideRef = doc(this.firestore, 'universities', this.university, 'rides', rideId);
-    batch.update(rideRef, {
-      'postRideStatus.passengerConfirmed': true,
-      'postRideStatus.pendingPassenger': false,
     });
 
     // Update booking with passenger's completion status
@@ -592,11 +648,26 @@ class RideCompletionManager {
       batch.update(bookingRef, {
         passengerCompletion: formData.rideCompleted ? 'completed' : 'cancelled',
         passengerCompletionAt: serverTimestamp(),
-        completionReason: formData.rideCompleted ? null : formData.notCompletedReason,
+        completionReason: formData.rideCompleted ? null : (formData.notCompletedReason ?? null),
       });
     }
 
     await batch.commit();
+
+    // Best-effort ride status write (may be restricted by Firestore rules for passengers)
+    try {
+      const rideRef = doc(this.firestore, 'universities', this.university, 'rides', rideId);
+      await updateDoc(rideRef, {
+        'postRideStatus.passengerConfirmed': true,
+        'postRideStatus.pendingPassenger': false,
+      });
+    } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        console.warn('[CompletionManager] Passenger ride status update denied by rules; completion document already saved');
+      } else {
+        throw error;
+      }
+    }
 
     // Sync analytics for passenger
     await this.syncPassengerAnalytics(rideId, formData);
@@ -616,6 +687,7 @@ class RideCompletionManager {
 
   private async syncAnalyticsForRide(rideId: string, formData: ProviderFormData) {
     if (!this.firestore || !this.userId || !this.university) return;
+    if (this.analyticsAccessDenied) return;
 
     try {
       const workflow = this.pendingWorkflows.get(`${rideId}-provider`);
@@ -750,6 +822,11 @@ class RideCompletionManager {
       await batch.commit();
       console.log('[CompletionManager] Analytics synced for ride:', rideId);
     } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        this.analyticsAccessDenied = true;
+        console.warn('[CompletionManager] Analytics write access denied for client; skipping analytics sync for this session');
+        return;
+      }
       console.error('[CompletionManager] Analytics sync error:', error);
       // Non-fatal: workflow is still marked complete
     }
@@ -757,6 +834,7 @@ class RideCompletionManager {
 
   private async syncPassengerAnalytics(rideId: string, formData: PassengerFormData) {
     if (!this.firestore || !this.userId || !this.university) return;
+    if (this.analyticsAccessDenied) return;
 
     try {
       if (formData.rideCompleted && formData.providerRating) {
@@ -829,6 +907,11 @@ class RideCompletionManager {
         console.log('[CompletionManager] Passenger analytics synced:', rideId);
       }
     } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        this.analyticsAccessDenied = true;
+        console.warn('[CompletionManager] Passenger analytics write access denied for client; skipping analytics sync for this session');
+        return;
+      }
       console.error('[CompletionManager] Passenger analytics sync error:', error);
     }
   }
@@ -875,6 +958,7 @@ class RideCompletionManager {
     this.userId = null;
     this.university = null;
     this.initialized = false;
+    this.analyticsAccessDenied = false;
 
     console.log('[CompletionManager] Cleanup complete');
   }

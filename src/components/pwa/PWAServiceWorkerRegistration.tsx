@@ -22,6 +22,29 @@ export function PWAServiceWorkerRegistration() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    if (process.env.NODE_ENV === 'development') {
+      const cleanupDevServiceWorkers = async () => {
+        try {
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map((registration) => registration.unregister()));
+          }
+
+          if ('caches' in window) {
+            const cacheKeys = await caches.keys();
+            await Promise.all(cacheKeys.map((key) => caches.delete(key)));
+          }
+
+          console.log('[PWA] Development mode: service workers unregistered and caches cleared');
+        } catch (error) {
+          console.warn('[PWA] Development cleanup failed:', error);
+        }
+      };
+
+      cleanupDevServiceWorkers();
+      return;
+    }
+
     // Only register if HTTPS or localhost
     const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
     if (!isSecure) {

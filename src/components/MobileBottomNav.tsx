@@ -2,10 +2,9 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Search, PlusCircle, Car, Bell, User, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useNotifications } from '@/contexts/NotificationContext';
 import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 import { ActivityDot } from '@/components/ActivityIndicatorDot';
 import { useEffect } from 'react';
@@ -20,9 +19,16 @@ const navItems = [
 
 export function MobileBottomNav() {
   const pathname = usePathname();
-  const router = useRouter();
-  const { unreadCount } = useNotifications();
-  const { hasRidesActivity, hasBookingsActivity, markRidesAsViewed, markBookingsAsViewed } = useActivityIndicator();
+  const {
+    hasRidesActivity,
+    hasBookingsActivity,
+    hasChatActivity,
+    hasNotificationsActivity,
+    markRidesAsViewed,
+    markBookingsAsViewed,
+    markChatAsViewed,
+    markNotificationsAsViewed,
+  } = useActivityIndicator();
 
   // Mark sections as viewed when navigating to them
   useEffect(() => {
@@ -30,8 +36,18 @@ export function MobileBottomNav() {
       markRidesAsViewed();
     } else if (pathname === '/dashboard/my-bookings') {
       markBookingsAsViewed();
+    } else if (pathname === '/dashboard/notifications') {
+      markNotificationsAsViewed();
+    } else if (pathname?.startsWith('/dashboard/chats')) {
+      markChatAsViewed();
     }
-  }, [pathname, markRidesAsViewed, markBookingsAsViewed]);
+  }, [
+    pathname,
+    markRidesAsViewed,
+    markBookingsAsViewed,
+    markNotificationsAsViewed,
+    markChatAsViewed,
+  ]);
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.4)]"
@@ -40,13 +56,9 @@ export function MobileBottomNav() {
       <div className="flex items-end justify-around px-1 pt-1.5 pb-1.5">
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
-          const hasNotification = (item.label === 'My Rides' && (unreadCount.ride_status + unreadCount.booking) > 0) ||
-            (item.label === 'Bookings' && (unreadCount.booking + unreadCount.chat) > 0) ||
-            (item.label === 'Alerts' && unreadCount.total > 0);
-          
-          // Activity indicator for My Rides and Bookings
           const hasActivity = (item.label === 'My Rides' && hasRidesActivity) ||
-            (item.label === 'Bookings' && hasBookingsActivity);
+            (item.label === 'Bookings' && (hasBookingsActivity || hasChatActivity)) ||
+            (item.label === 'Alerts' && hasNotificationsActivity);
 
           if (item.isCenter) {
             return (
@@ -86,11 +98,7 @@ export function MobileBottomNav() {
                 )} />
                 {/* Activity Indicator Dot */}
                 {hasActivity && (
-                  <ActivityDot show={true} size={5} color="bg-red-500" position="top-right" pulse={true} />
-                )}
-                {/* Notification Badge (for compatibility with notification system) */}
-                {!hasActivity && hasNotification && (
-                  <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-slate-950" />
+                  <ActivityDot show={true} size={6} color="bg-red-500" position="top-right" pulse={false} />
                 )}
               </div>
               <span className={cn(

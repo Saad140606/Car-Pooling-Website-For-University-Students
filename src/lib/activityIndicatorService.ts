@@ -14,11 +14,72 @@
  * - Efficient cleanup
  */
 
-import { Firestore, collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
-import type { ActivityIndicatorState, ActivityIndicatorTimestamps } from '@/types/activityIndicator';
-import { ACTIVITY_STORAGE_KEY, LAST_VIEWED_STORAGE_KEY } from '@/types/activityIndicator';
+import {
+  Firestore,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  writeBatch,
+  getDocs,
+  orderBy,
+  limit,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  type Timestamp,
+} from 'firebase/firestore';
+import type {
+  ActivityIndicatorState,
+  ActivitySection,
+  UnreadActivityEvent,
+} from '@/types/activityIndicator';
 
 type ActivityCallback = (state: ActivityIndicatorState) => void;
+
+const UNREAD_EVENTS_COLLECTION = 'unreadEvents';
+
+const SECTION_NOTIFICATION_TYPE_MAP: Record<ActivitySection, string[] | null> = {
+  rides: ['ride_request', 'ride_status', 'ride_cancelled', 'booking', 'request_cancelled'],
+  bookings: ['ride_accepted', 'request_accepted', 'ride_started', 'ride_confirmed', 'request_confirmed'],
+  chat: ['chat'],
+  notifications: null,
+};
+
+function sanitizeForDocId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 140);
+}
+
+function mapNotificationToSection(notification: any): ActivitySection | null {
+  const type = String(notification?.type || '').toLowerCase();
+
+  if (type === 'chat' || type === 'chat_message') return 'chat';
+
+  if ([
+    'ride_accepted',
+    'request_accepted',
+    'ride_started',
+    'ride_confirmed',
+    'request_confirmed',
+  ].includes(type)) {
+    return 'bookings';
+  }
+
+  if ([
+    'ride_request',
+    'booking',
+    'ride_status',
+    'ride_cancelled',
+    'request_cancelled',
+    'passenger_cancelled',
+    'completion_window',
+  ].includes(type)) {
+    return 'rides';
+  }
+
+  return null;
+}
 
 class ActivityIndicatorManager {
   private firestore: Firestore | null = null;
@@ -30,9 +91,11 @@ class ActivityIndicatorManager {
     bookings: false,
     rides: false,
     chat: false,
+    notifications: false,
   };
-  private lastViewed: ActivityIndicatorTimestamps = {};
   private initialized = false;
+  private callbackFlushScheduled = false;
+  private inFlightEventWrites = new Set<string>();
 
   /**
    * Initialize the activity indicator manager
@@ -46,112 +109,59 @@ class ActivityIndicatorManager {
     this.userId = userId;
     this.university = university;
 
-    // Load persisted state
-    this.loadPersistedState();
-
-    // Start listening for activity
+    // Start listening for unread events + source notifications
     this.setupListeners();
 
     this.initialized = true;
   }
 
   /**
-   * Load persisted activity state from localStorage
-   */
-  private loadPersistedState() {
-    if (typeof window === 'undefined') return;
-
-    try {
-      const stored = localStorage.getItem(ACTIVITY_STORAGE_KEY);
-      const viewed = localStorage.getItem(LAST_VIEWED_STORAGE_KEY);
-
-      if (stored) {
-        this.state = JSON.parse(stored);
-      }
-      if (viewed) {
-        this.lastViewed = JSON.parse(viewed);
-      }
-    } catch (error) {
-      console.error('[ActivityIndicator] Failed to load persisted state:', error);
-    }
-  }
-
-  /**
-   * Persist activity state to localStorage
-   */
-  private persistState() {
-    if (typeof window === 'undefined') return;
-
-    try {
-      localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(this.state));
-      localStorage.setItem(LAST_VIEWED_STORAGE_KEY, JSON.stringify(this.lastViewed));
-    } catch (error) {
-      console.error('[ActivityIndicator] Failed to persist state:', error);
-    }
-  }
-
-  /**
-   * Setup Firestore listeners for activity tracking
+   * Setup Firestore listeners for unread activity tracking
    */
   private setupListeners() {
     if (!this.firestore || !this.userId || !this.university) return;
 
-    console.log('[ActivityIndicator] Setting up listeners for user:', this.userId);
-
-    // Listen for bookings activity
-    this.setupBookingsListener();
-
-    // Listen for rides activity
-    this.setupRidesListener();
-
-    // Listen for chat activity
-    this.setupChatListener();
+    console.log('[ActivityIndicator] Initializing unread-event listeners for user:', this.userId);
+    this.setupUnreadEventsListener();
+    this.setupNotificationBridgeListener();
   }
 
   /**
-   * Listen for new bookings or booking status changes
-   * Triggers when:
-   * - New booking created
-   * - Booking status changed (confirmed/rejected/cancelled)
-   * - Driver interaction on booking
+   * Source of truth for badge state: unread events collection
    */
-  private setupBookingsListener() {
+  private setupUnreadEventsListener() {
     if (!this.firestore || !this.userId || !this.university) return;
 
-    const bookingsRef = collection(this.firestore, 'universities', this.university, 'bookings');
-    const q = query(
-      bookingsRef,
-      where('passengerId', '==', this.userId),
+    const unreadRef = collection(this.firestore, 'universities', this.university, UNREAD_EVENTS_COLLECTION);
+    const unreadQuery = query(
+      unreadRef,
+      where('userId', '==', this.userId),
+      where('unreadFlag', '==', true)
     );
 
     const unsubscribe = onSnapshot(
-      q,
+      unreadQuery,
       (snapshot) => {
-        // Check if there are new or changed bookings since last view
-        const bookingsLastViewed = this.lastViewed.bookingsLastViewed || 0;
-        let hasNewActivity = false;
+        const nextState: ActivityIndicatorState = {
+          bookings: false,
+          rides: false,
+          chat: false,
+          notifications: false,
+        };
 
-        snapshot.docs.forEach((doc) => {
-          const booking = doc.data();
-          const createdAt = booking.createdAt?.toMillis?.() || 0;
-          const updatedAt = booking.updatedAt?.toMillis?.() || 0;
-          const maxTime = Math.max(createdAt, updatedAt);
-
-          // Activity is new if created/updated after last view
-          if (maxTime > bookingsLastViewed) {
-            hasNewActivity = true;
+        snapshot.docs.forEach((eventDoc) => {
+          const eventData = eventDoc.data() as UnreadActivityEvent;
+          const section = eventData.targetSection;
+          if (section && section in nextState) {
+            nextState[section] = true;
           }
         });
 
-        if (hasNewActivity && this.state.bookings !== true) {
-          this.state.bookings = true;
-          this.persistState();
-          this.notifyCallbacks();
-          console.log('[ActivityIndicator] Bookings activity detected');
-        }
+        this.state = nextState;
+        this.notifyCallbacks();
       },
       (error) => {
-        console.error('[ActivityIndicator] Bookings listener error:', error);
+        console.error('[ActivityIndicator] Unread-events listener error:', error);
       }
     );
 
@@ -159,54 +169,38 @@ class ActivityIndicatorManager {
   }
 
   /**
-   * Listen for new rides or ride status changes
-   * Triggers when:
-   * - Passenger confirms booking
-   * - Passenger cancels
-   * - Ride status changes
-   * - Driver interaction occurs
+   * Bridge unread notifications -> unread activity events (deduped by event id)
    */
-  private setupRidesListener() {
+  private setupNotificationBridgeListener() {
     if (!this.firestore || !this.userId || !this.university) return;
 
-    const ridesRef = collection(this.firestore, 'universities', this.university, 'rides');
-    const q = query(
-      ridesRef,
-      where('driverId', '==', this.userId),
+    const notificationsRef = collection(this.firestore, 'universities', this.university, 'notifications');
+    const notificationsQuery = query(
+      notificationsRef,
+      where('userId', '==', this.userId),
+      where('isRead', '==', false),
+      orderBy('createdAt', 'desc'),
+      limit(200)
     );
 
     const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const ridesLastViewed = this.lastViewed.ridesLastViewed || 0;
-        let hasNewActivity = false;
+      notificationsQuery,
+      async (snapshot) => {
+        for (const notificationDoc of snapshot.docs) {
+          const notification = notificationDoc.data();
+          const baseEventId = `notification:${notificationDoc.id}`;
+          const detectedAt = notification?.createdAt || serverTimestamp();
 
-        snapshot.docs.forEach((doc) => {
-          const ride = doc.data();
-          const createdAt = ride.createdAt?.toMillis?.() || 0;
-          const updatedAt = ride.updatedAt?.toMillis?.() || 0;
-          const maxTime = Math.max(createdAt, updatedAt);
+          await this.ensureUnreadEvent(baseEventId, 'notifications', detectedAt, notificationDoc.id);
 
-          // Check for passenger confirmations or changes
-          const confirmedPassengers = ride.confirmedPassengers || [];
-          const passengerUpdated = confirmedPassengers.some((p: any) => 
-            (p.confirmedAt?.toMillis?.() || 0) > ridesLastViewed
-          );
-
-          if ((maxTime > ridesLastViewed || passengerUpdated) && maxTime > 0) {
-            hasNewActivity = true;
+          const mappedSection = mapNotificationToSection(notification);
+          if (mappedSection && mappedSection !== 'notifications') {
+            await this.ensureUnreadEvent(baseEventId, mappedSection, detectedAt, notificationDoc.id);
           }
-        });
-
-        if (hasNewActivity && this.state.rides !== true) {
-          this.state.rides = true;
-          this.persistState();
-          this.notifyCallbacks();
-          console.log('[ActivityIndicator] Rides activity detected');
         }
       },
       (error) => {
-        console.error('[ActivityIndicator] Rides listener error:', error);
+        console.error('[ActivityIndicator] Notification bridge listener error:', error);
       }
     );
 
@@ -214,87 +208,120 @@ class ActivityIndicatorManager {
   }
 
   /**
-   * Listen for new unread messages in chat
-   * Triggers when new message arrives or read status changes
+   * Deduplicated unread event upsert
    */
-  private setupChatListener() {
+  private async ensureUnreadEvent(
+    baseEventId: string,
+    targetSection: ActivitySection,
+    timestamp: Timestamp | ReturnType<typeof serverTimestamp>,
+    sourceNotificationId?: string
+  ): Promise<void> {
     if (!this.firestore || !this.userId || !this.university) return;
 
-    // First, get user's chat list
-    const chatsRef = collection(this.firestore, 'universities', this.university, 'chats');
-    
-    // Query chats where user is participant
-    const q = query(
-      chatsRef,
-      where('participants', 'array-contains', this.userId)
-    );
+    const logicalEventId = `${baseEventId}:${targetSection}`;
+    const dedupeKey = `${this.userId}:${logicalEventId}`;
+    if (this.inFlightEventWrites.has(dedupeKey)) return;
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const chatLastViewed = this.lastViewed.chatLastViewed || 0;
-        let hasUnreadMessages = false;
+    this.inFlightEventWrites.add(dedupeKey);
 
-        snapshot.docs.forEach((doc) => {
-          const chat = doc.data();
-          const messages = chat.messages || [];
-          const participants = chat.participants || [];
+    try {
+      const unreadRef = collection(this.firestore, 'universities', this.university, UNREAD_EVENTS_COLLECTION);
+      const eventDocId = sanitizeForDocId(dedupeKey);
+      const eventRef = doc(unreadRef, eventDocId);
+      const existing = await getDoc(eventRef);
 
-          // Find this user's read status
-          const userReadStatus = participants.find((p: any) => p.userId === this.userId);
-          const userReadAt = userReadStatus?.readAt?.toMillis?.() || 0;
-
-          // Check if there are unread messages
-          const hasUnread = messages.some((msg: any) => {
-            const msgTime = msg.createdAt?.toMillis?.() || 0;
-            return msgTime > Math.max(userReadAt, chatLastViewed);
-          });
-
-          if (hasUnread) {
-            hasUnreadMessages = true;
-          }
-        });
-
-        if (hasUnreadMessages && this.state.chat !== true) {
-          this.state.chat = true;
-          this.persistState();
-          this.notifyCallbacks();
-          console.log('[ActivityIndicator] Chat activity detected');
-        }
-      },
-      (error) => {
-        console.error('[ActivityIndicator] Chat listener error:', error);
+      if (existing.exists()) {
+        return;
       }
-    );
 
-    this.listeners.push(unsubscribe);
+      await setDoc(eventRef, {
+        eventId: logicalEventId,
+        targetSection,
+        userId: this.userId,
+        unreadFlag: true,
+        timestamp,
+        sourceNotificationId: sourceNotificationId || null,
+        createdAt: serverTimestamp(),
+      } satisfies UnreadActivityEvent & Record<string, any>);
+    } catch (error) {
+      console.error('[ActivityIndicator] Failed to ensure unread event:', error);
+    } finally {
+      this.inFlightEventWrites.delete(dedupeKey);
+    }
+  }
+
+  private async markMappedNotificationsRead(section: ActivitySection) {
+    if (!this.firestore || !this.userId || !this.university) return;
+
+    const notificationsRef = collection(this.firestore, 'universities', this.university, 'notifications');
+    const types = SECTION_NOTIFICATION_TYPE_MAP[section];
+    const batch = writeBatch(this.firestore);
+
+    if (!types) {
+      const allUnreadQuery = query(
+        notificationsRef,
+        where('userId', '==', this.userId),
+        where('isRead', '==', false)
+      );
+      const snapshot = await getDocs(allUnreadQuery);
+      snapshot.docs.forEach((notificationDoc) => {
+        batch.update(notificationDoc.ref, { isRead: true, readAt: serverTimestamp() });
+      });
+      if (!snapshot.empty) {
+        await batch.commit();
+      }
+      return;
+    }
+
+    const typedUnreadQuery = query(
+      notificationsRef,
+      where('userId', '==', this.userId),
+      where('isRead', '==', false),
+      where('type', 'in', types)
+    );
+    const snapshot = await getDocs(typedUnreadQuery);
+    snapshot.docs.forEach((notificationDoc) => {
+      batch.update(notificationDoc.ref, { isRead: true, readAt: serverTimestamp() });
+    });
+    if (!snapshot.empty) {
+      await batch.commit();
+    }
   }
 
   /**
    * Clear activity indicator for a specific section
    * Called when user navigates to that section
    */
-  markAsViewed(section: 'bookings' | 'rides' | 'chat') {
-    const now = Date.now();
+  async markAsViewed(section: ActivitySection): Promise<void> {
+    if (!this.firestore || !this.userId || !this.university) return;
 
-    switch (section) {
-      case 'bookings':
-        this.state.bookings = false;
-        this.lastViewed.bookingsLastViewed = now;
-        break;
-      case 'rides':
-        this.state.rides = false;
-        this.lastViewed.ridesLastViewed = now;
-        break;
-      case 'chat':
-        this.state.chat = false;
-        this.lastViewed.chatLastViewed = now;
-        break;
+    try {
+      const unreadRef = collection(this.firestore, 'universities', this.university, UNREAD_EVENTS_COLLECTION);
+      const unreadSectionQuery = query(
+        unreadRef,
+        where('userId', '==', this.userId),
+        where('targetSection', '==', section),
+        where('unreadFlag', '==', true)
+      );
+
+      const unreadSnapshot = await getDocs(unreadSectionQuery);
+      const batch = writeBatch(this.firestore);
+
+      unreadSnapshot.docs.forEach((eventDoc) => {
+        batch.update(eventDoc.ref, {
+          unreadFlag: false,
+          readAt: serverTimestamp(),
+        });
+      });
+
+      if (!unreadSnapshot.empty) {
+        await batch.commit();
+      }
+
+      await this.markMappedNotificationsRead(section);
+    } catch (error) {
+      console.error(`[ActivityIndicator] Failed to mark ${section} as viewed:`, error);
     }
-
-    this.persistState();
-    this.notifyCallbacks();
-    console.log(`[ActivityIndicator] Marked ${section} as viewed`);
   }
 
   /**
@@ -320,13 +347,21 @@ class ActivityIndicatorManager {
    * Notify all subscribers of state change
    */
   private notifyCallbacks() {
-    this.callbacks.forEach((callback) => {
-      try {
-        callback({ ...this.state });
-      } catch (error) {
-        console.error('[ActivityIndicator] Callback error:', error);
-      }
-    });
+    if (this.callbackFlushScheduled) return;
+    this.callbackFlushScheduled = true;
+
+    setTimeout(() => {
+      this.callbackFlushScheduled = false;
+      const snapshot = { ...this.state };
+
+      this.callbacks.forEach((callback) => {
+        try {
+          callback(snapshot);
+        } catch (error) {
+          console.error('[ActivityIndicator] Callback error:', error);
+        }
+      });
+    }, 16);
   }
 
   /**
@@ -342,21 +377,21 @@ class ActivityIndicatorManager {
     });
     this.listeners = [];
     this.callbacks = [];
+    this.inFlightEventWrites.clear();
     this.initialized = false;
     console.log('[ActivityIndicator] Cleaned up listeners');
   }
 
   /**
-   * Reset all activity indicators
+   * Reset all activity indicators (marks all sections read)
    */
-  reset() {
-    this.state = {
-      bookings: false,
-      rides: false,
-      chat: false,
-    };
-    this.persistState();
-    this.notifyCallbacks();
+  async reset() {
+    await Promise.all([
+      this.markAsViewed('rides'),
+      this.markAsViewed('bookings'),
+      this.markAsViewed('chat'),
+      this.markAsViewed('notifications'),
+    ]);
   }
 }
 

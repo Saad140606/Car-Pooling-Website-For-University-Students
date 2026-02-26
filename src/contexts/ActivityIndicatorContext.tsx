@@ -20,11 +20,13 @@ interface ActivityIndicatorContextType {
   hasBookingsActivity: boolean;
   hasRidesActivity: boolean;
   hasChatActivity: boolean;
+  hasNotificationsActivity: boolean;
 
   // Actions
   markBookingsAsViewed: () => void;
   markRidesAsViewed: () => void;
   markChatAsViewed: () => void;
+  markNotificationsAsViewed: () => void;
   reset: () => void;
 }
 
@@ -37,6 +39,7 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
     bookings: false,
     rides: false,
     chat: false,
+    notifications: false,
   });
   const [isInitialized, setIsInitialized] = useState(false);
 
@@ -73,6 +76,7 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
         bookings: false,
         rides: false,
         chat: false,
+        notifications: false,
       });
     }
   }, [user?.uid, user?.university, userData?.university, initialized, firestore, isInitialized]);
@@ -86,26 +90,41 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
   }, []);
 
   const markBookingsAsViewed = useCallback(() => {
-    activityIndicatorManager.markAsViewed('bookings');
+    activityIndicatorManager.markAsViewed('bookings').catch((error) => {
+      console.error('[ActivityIndicator] Failed to mark bookings viewed:', error);
+    });
   }, []);
 
   const markRidesAsViewed = useCallback(() => {
-    activityIndicatorManager.markAsViewed('rides');
+    activityIndicatorManager.markAsViewed('rides').catch((error) => {
+      console.error('[ActivityIndicator] Failed to mark rides viewed:', error);
+    });
   }, []);
 
   const markChatAsViewed = useCallback(() => {
-    activityIndicatorManager.markAsViewed('chat');
+    activityIndicatorManager.markAsViewed('chat').catch((error) => {
+      console.error('[ActivityIndicator] Failed to mark chat viewed:', error);
+    });
+  }, []);
+
+  const markNotificationsAsViewed = useCallback(() => {
+    activityIndicatorManager.markAsViewed('notifications').catch((error) => {
+      console.error('[ActivityIndicator] Failed to mark notifications viewed:', error);
+    });
   }, []);
 
   const reset = useCallback(() => {
-    activityIndicatorManager.reset();
+    activityIndicatorManager.reset().catch((error) => {
+      console.error('[ActivityIndicator] Failed to reset activity state:', error);
+    });
   }, []);
 
   const hasAnyActivity =
-    activityState.bookings || activityState.rides || activityState.chat;
+    activityState.bookings || activityState.rides || activityState.chat || activityState.notifications;
   const hasBookingsActivity = activityState.bookings;
   const hasRidesActivity = activityState.rides;
   const hasChatActivity = activityState.chat;
+  const hasNotificationsActivity = activityState.notifications;
 
   const value: ActivityIndicatorContextType = {
     activityState,
@@ -113,9 +132,11 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
     hasBookingsActivity,
     hasRidesActivity,
     hasChatActivity,
+    hasNotificationsActivity,
     markBookingsAsViewed,
     markRidesAsViewed,
     markChatAsViewed,
+    markNotificationsAsViewed,
     reset,
   };
 

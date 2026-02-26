@@ -9,6 +9,7 @@ import {
   Wallet, 
   TrendingDown, 
   Car, 
+  Star,
   Calendar,
   ChevronRight,
   Loader2,
@@ -40,6 +41,16 @@ interface PassengerAnalytics {
   totalSpent: number;
   totalRidesTaken: number;
   averageSpentPerRide: number;
+  averageRating: number;
+  totalRatingsCount: number;
+  ratingsPerRide: Array<{
+    rideId: string;
+    rating: number;
+    date: string;
+    review: string;
+    ratedBy: string;
+  }>;
+  ratingDistribution: { [key: number]: number };
   spendingPerRide: SpendingPerRide[];
   monthlySpending: { [key: string]: number };
   topRoutes: TopRoute[];
@@ -132,6 +143,15 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
     // First process any completed rides, then fetch analytics
     processCompletedRides();
   }, [processCompletedRides]);
+
+  useEffect(() => {
+    if (!user || !userData?.university) return;
+    const intervalId = setInterval(() => {
+      fetchAnalytics();
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }, [user, userData?.university, fetchAnalytics]);
   
   // Format currency
   const formatCurrency = (amount: number) => {
@@ -145,6 +165,24 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       month: 'short',
       day: 'numeric',
     });
+  };
+
+  const renderStars = (rating: number, size: 'sm' | 'md' = 'sm') => {
+    const starSize = size === 'sm' ? 'w-3 h-3' : 'w-4 h-4';
+    return (
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((starValue) => (
+          <Star
+            key={starValue}
+            className={`${starSize} ${
+              starValue <= rating
+                ? 'text-yellow-400 fill-yellow-400'
+                : 'text-gray-600'
+            }`}
+          />
+        ))}
+      </div>
+    );
   };
   
   // Get month name
@@ -194,6 +232,9 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
   
   // Compact view for dashboard
   if (compact) {
+    const compactAverageRating = Number(analytics.averageRating ?? 0);
+    const compactTotalRatingsCount = Number(analytics.totalRatingsCount ?? 0);
+
     return (
       <Card className="bg-gradient-to-br from-blue-900/30 to-gray-800/50 border-blue-700/30 hover:border-blue-600/50 transition-colors">
         <CardHeader className="pb-2">
@@ -218,6 +259,19 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                 {formatCurrency(Math.round(analytics.averageSpentPerRide))}
               </p>
               <p className="text-xs text-gray-400 mt-1">Avg per Ride</p>
+            </div>
+
+            {/* Average Rating */}
+            <div className="text-center col-span-2">
+              <div className="flex items-center justify-center gap-1.5">
+                <p className="text-3xl font-bold text-yellow-400">
+                  {compactAverageRating.toFixed(1)}
+                </p>
+                {renderStars(Math.round(compactAverageRating), 'md')}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                from {compactTotalRatingsCount} ratings
+              </p>
             </div>
           </div>
           
@@ -247,12 +301,22 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
   }
   
   // Full view
-  const displayedRides = showAllRides 
-    ? analytics.spendingPerRide 
-    : analytics.spendingPerRide.slice(0, 5);
+  const totalSpent = Number(analytics.totalSpent ?? 0);
+  const totalRidesTaken = Number(analytics.totalRidesTaken ?? 0);
+  const averageSpentPerRide = Number(analytics.averageSpentPerRide ?? 0);
+  const averageRating = Number(analytics.averageRating ?? 0);
+  const totalRatingsCount = Number(analytics.totalRatingsCount ?? 0);
+  const ratingDistribution = analytics.ratingDistribution || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const spendingPerRide = analytics.spendingPerRide || [];
+  const monthlySpending = analytics.monthlySpending || {};
+  const topRoutes = analytics.topRoutes || [];
+
+  const displayedRides = showAllRides
+    ? spendingPerRide
+    : spendingPerRide.slice(0, 5);
   
   // Get sorted monthly spending for chart
-  const sortedMonths = Object.entries(analytics.monthlySpending)
+  const sortedMonths = Object.entries(monthlySpending)
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(-6); // Last 6 months
   
@@ -261,7 +325,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Total Spent */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -294,7 +358,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                 <span className="text-sm text-gray-400">Rides Taken</span>
               </div>
               <p className="text-2xl font-bold text-purple-400">
-                {analytics.totalRidesTaken}
+                {totalRidesTaken}
               </p>
             </CardContent>
           </Card>
@@ -313,12 +377,73 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                 <span className="text-sm text-gray-400">Avg per Ride</span>
               </div>
               <p className="text-2xl font-bold text-cyan-400">
-                {formatCurrency(Math.round(analytics.averageSpentPerRide))}
+                {formatCurrency(Math.round(averageSpentPerRide))}
+              </p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Average Rating */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+        >
+          <Card className="bg-gradient-to-br from-yellow-900/40 to-gray-800/50 border-yellow-700/30">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Star className="w-5 h-5 text-yellow-400" />
+                <span className="text-sm text-gray-400">Average Rating</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="text-2xl font-bold text-yellow-400">
+                  {averageRating.toFixed(1)}
+                </p>
+                {renderStars(Math.round(averageRating))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                {totalRatingsCount} ratings
               </p>
             </CardContent>
           </Card>
         </motion.div>
       </div>
+
+      {/* Rating Distribution */}
+      <Card className="bg-gray-800/50 border-gray-700">
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Star className="w-5 h-5 text-yellow-400" />
+            Rating Distribution
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2.5">
+            {[5, 4, 3, 2, 1].map((starValue) => {
+              const count = ratingDistribution?.[starValue] || 0;
+              const percentage = totalRatingsCount > 0
+                ? (count / totalRatingsCount) * 100
+                : 0;
+
+              return (
+                <div key={starValue} className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 min-w-[48px]">
+                    <span className="text-sm text-gray-300">{starValue}</span>
+                    <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
+                  </div>
+                  <div className="flex-1 h-2 rounded-full bg-gray-700 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-yellow-500 to-amber-400 rounded-full transition-all duration-300"
+                      style={{ width: `${percentage}%` }}
+                    />
+                  </div>
+                  <span className="text-sm text-gray-400 min-w-[20px] text-right">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
       
       {/* Monthly Spending Chart */}
       {sortedMonths.length > 0 && (
@@ -356,7 +481,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       )}
       
       {/* Top Routes */}
-      {analytics.topRoutes.length > 0 && (
+      {topRoutes.length > 0 && (
         <Card className="bg-gray-800/50 border-gray-700">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
@@ -366,7 +491,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {analytics.topRoutes.map((route, index) => (
+              {topRoutes.map((route, index) => (
                 <motion.div
                   key={route.route}
                   initial={{ opacity: 0, x: -20 }}
@@ -460,13 +585,13 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                 ))}
               </AnimatePresence>
               
-              {analytics.spendingPerRide.length > 5 && (
+              {spendingPerRide.length > 5 && (
                 <Button
                   variant="ghost"
                   className="w-full text-blue-400 hover:text-blue-300"
                   onClick={() => setShowAllRides(!showAllRides)}
                 >
-                  {showAllRides ? 'Show Less' : `Show All (${analytics.spendingPerRide.length})`}
+                  {showAllRides ? 'Show Less' : `Show All (${spendingPerRide.length})`}
                 </Button>
               )}
             </div>

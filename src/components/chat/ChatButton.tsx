@@ -6,10 +6,12 @@ import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, Dialog
 import ChatRoom from './ChatRoom';
 import NotificationBadge from '@/components/NotificationBadge';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 import { MessageCircle } from 'lucide-react';
 
 export default function ChatButton({ chatId, university, label = 'Chat', disabled = false, className = '' }: { chatId: string, university: string, label?: string, disabled?: boolean, className?: string }) {
   const { getUnreadForChat, markChatAsRead } = useNotifications();
+  const { markChatAsViewed } = useActivityIndicator();
   const [open, setOpen] = React.useState(false);
   const unreadCount = getUnreadForChat(chatId);
 
@@ -17,8 +19,9 @@ export default function ChatButton({ chatId, university, label = 'Chat', disable
     if (open) {
       // Mark notifications as read when chat is opened
       markChatAsRead(chatId);
+      markChatAsViewed();
     }
-  }, [open, chatId, markChatAsRead]);
+  }, [open, chatId, markChatAsRead, markChatAsViewed]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

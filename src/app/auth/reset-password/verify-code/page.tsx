@@ -11,6 +11,7 @@ import { Reveal } from '@/components/Reveal';
 import Logo from '@/components/logo';
 import { ShieldCheck, ArrowLeft, Loader2, Clock } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
 
 function VerifyCodePageContent() {
   const router = useRouter();
@@ -18,7 +19,9 @@ function VerifyCodePageContent() {
   const { toast } = useToast();
 
   const emailFromUrl = searchParams.get('email');
+  const universityFromUrl = searchParams.get('university');
   const [email, setEmail] = useState<string>('');
+  const [selectedUniversity, setSelectedUniversity] = useState<University | null>(null);
   const [code, setCode] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
@@ -31,10 +34,17 @@ function VerifyCodePageContent() {
     if (emailFromUrl) {
       setEmail(decodeURIComponent(emailFromUrl));
     } else {
-      // No email provided, redirect back
       router.push('/auth/forgot-password');
     }
-  }, [emailFromUrl, router]);
+
+    const decodedUniversity = universityFromUrl ? decodeURIComponent(universityFromUrl) : getSelectedUniversity();
+    if (decodedUniversity && isValidUniversity(decodedUniversity)) {
+      setSelectedUniversity(decodedUniversity);
+      return;
+    }
+
+    setError('University session missing. Please start again from forgot password.');
+  }, [emailFromUrl, universityFromUrl, router]);
 
   // Timer for OTP expiry
   useEffect(() => {
@@ -60,6 +70,11 @@ function VerifyCodePageContent() {
     e.preventDefault();
     setError('');
 
+    if (!selectedUniversity) {
+      setError('University session missing. Please restart from forgot password.');
+      return;
+    }
+
     if (!code || code.trim().length === 0) {
       setError('Please enter the verification code');
       return;
@@ -75,7 +90,7 @@ function VerifyCodePageContent() {
       const response = await fetch('/api/verify-password-reset-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code }),
+        body: JSON.stringify({ email, code, university: selectedUniversity }),
       });
 
       if (!response.ok) {
@@ -89,7 +104,7 @@ function VerifyCodePageContent() {
       });
 
       // Navigate to set password page
-      router.push(`/auth/reset-password/set-password?email=${encodeURIComponent(email)}`);
+      router.push(`/auth/reset-password/set-password?email=${encodeURIComponent(email)}&university=${encodeURIComponent(selectedUniversity || '')}`);
     } catch (err: any) {
       // Don't log to console - show user-friendly message only
       const errorMsg = err.message || 'Invalid or expired verification code';
@@ -107,12 +122,17 @@ function VerifyCodePageContent() {
   const handleResendCode = async () => {
     if (!canResend || isResending) return;
 
+    if (!selectedUniversity) {
+      setError('University session missing. Please restart from forgot password.');
+      return;
+    }
+
     setIsResending(true);
     try {
       const response = await fetch('/api/send-password-reset-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, university: selectedUniversity }),
       });
 
       if (!response.ok) {
@@ -210,7 +230,7 @@ function VerifyCodePageContent() {
               <div className="flex gap-3 pt-2">
                 <Button
                   type="submit"
-                  disabled={isVerifying || code.length < 6}
+                  disabled={isVerifying || code.length < 6 || !selectedUniversity}
                   className="flex-1 shadow-lg shadow-primary/30 hover:shadow-primary/50 rounded-lg font-semibold"
                 >
                   {isVerifying ? (
@@ -241,7 +261,7 @@ function VerifyCodePageContent() {
                 type="button"
                 variant="ghost"
                 onClick={handleResendCode}
-                disabled={!canResend || isResending}
+                disabled={!canResend || isResending || !selectedUniversity}
                 className="w-full text-primary hover:text-primary/80 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isResending ? (

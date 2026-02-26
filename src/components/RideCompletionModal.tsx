@@ -17,7 +17,9 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useRideCompletion } from '@/contexts/RideCompletionContext';
+import { useAuth } from '@/firebase';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -35,6 +37,7 @@ import {
   UserX,
   Bike,
   ChevronRight,
+  LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type {
@@ -129,19 +132,22 @@ function ModalHeader({ step, isProvider, submitting }: { step: string; isProvide
     <div className="relative flex-shrink-0">
       <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/5" />
       <div className="relative border-b border-white/[0.06] px-4 sm:px-6 py-4 sm:py-5">
-        <div className="max-w-2xl mx-auto">
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-[10px] sm:text-xs font-bold text-primary uppercase tracking-[0.15em]">
-              Required Workflow
-            </span>
+        <div className="max-w-2xl mx-auto flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+              <span className="text-[10px] sm:text-xs font-bold text-primary uppercase tracking-[0.15em]">
+                Required Workflow
+              </span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold text-white">
+              {submitting ? 'Submitting...' : (stepLabels[step] || 'Complete Your Ride')}
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+              {isProvider ? 'Ride Provider' : 'Passenger'} • Cannot be skipped
+            </p>
           </div>
-          <h1 className="text-xl sm:text-2xl font-bold text-white">
-            {submitting ? 'Submitting...' : (stepLabels[step] || 'Complete Your Ride')}
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-            {isProvider ? 'Ride Provider' : 'Passenger'} • Cannot be skipped
-          </p>
+          <HeaderLogoutButton />
         </div>
       </div>
       {/* Progress bar */}
@@ -152,6 +158,34 @@ function ModalHeader({ step, isProvider, submitting }: { step: string; isProvide
         />
       </div>
     </div>
+  );
+}
+
+function HeaderLogoutButton() {
+  const auth = useAuth();
+  const router = useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await auth?.signOut();
+      router.replace('/');
+    } catch {
+      setLoggingOut(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleLogout}
+      disabled={loggingOut}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] hover:text-white transition-colors disabled:opacity-60"
+    >
+      <LogOut className="w-3.5 h-3.5" />
+      {loggingOut ? 'Logging out...' : 'Logout'}
+    </button>
   );
 }
 
@@ -262,12 +296,42 @@ function PassengerFlow() {
 // SHARED: SUMMARY STEP
 // ============================================================================
 
+function buildGoogleRouteUrl(from: string, to: string, pickups: string[]) {
+  const params = new URLSearchParams({
+    api: '1',
+    origin: from,
+    destination: to,
+    travelmode: 'driving',
+  });
+
+  if (pickups.length > 0) {
+    params.set('waypoints', pickups.slice(0, 8).join('|'));
+  }
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 function SummaryStep() {
   const { currentWorkflow, goToStep } = useRideCompletion();
   if (!currentWorkflow) return null;
 
   const { rideSummary, confirmedPassengers, userRole } = currentWorkflow;
   const isProvider = userRole === 'provider';
+  const departureTimeText = rideSummary.departureTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const departureDateText = rideSummary.departureTime.toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const pickupPoints = Array.from(
+    new Set(
+      confirmedPassengers
+        .map((p) => p.pickupLocation?.trim())
+        .filter((location): location is string => Boolean(location))
+    )
+  );
+  const routeUrl = buildGoogleRouteUrl(rideSummary.from, rideSummary.to, pickupPoints);
 
   return (
     <div className="space-y-4">
@@ -318,6 +382,16 @@ function SummaryStep() {
               </div>
             </div>
           </div>
+
+          <a
+            href={routeUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-4 inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-primary/15 border border-primary/25 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+          >
+            View Route on Map
+            <ChevronRight className="w-3.5 h-3.5" />
+          </a>
         </div>
 
         {/* Stats */}
@@ -335,10 +409,9 @@ function SummaryStep() {
             </div>
             <div className="bg-white/[0.03] rounded-xl p-3 text-center">
               <Clock className="w-4 h-4 text-slate-400 mx-auto mb-1" />
-              <p className="text-lg font-bold text-white">
-                {rideSummary.departureTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </p>
-              <p className="text-[10px] text-slate-500">Departure</p>
+              <p className="text-base sm:text-lg font-bold text-white leading-tight">{departureTimeText}</p>
+              <p className="text-[10px] text-slate-400 leading-tight mt-0.5">{departureDateText}</p>
+              <p className="text-[10px] text-slate-500 mt-1">Departure</p>
             </div>
           </div>
         </div>

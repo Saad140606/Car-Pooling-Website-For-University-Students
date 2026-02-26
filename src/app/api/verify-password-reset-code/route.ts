@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { adminDb } from '@/firebase/firebaseAdmin';
+import admin from 'firebase-admin';
 import {
   applyRateLimit,
   isValidEmail,
@@ -16,8 +17,31 @@ import {
   RATE_LIMITS,
 } from '@/lib/api-security';
 
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_ATTEMPTS = 3;
+const LOCKOUT_DURATION_MS = 14 * 24 * 60 * 60 * 1000;
+type University = 'fast' | 'ned' | 'karachi';
+
+function isValidUniversity(university: unknown): university is University {
+  return university === 'fast' || university === 'ned' || university === 'karachi';
+}
+
+function toMillis(value: any): number {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (value?.toMillis && typeof value.toMillis === 'function') return value.toMillis();
+  if (value?.toDate && typeof value.toDate === 'function') return value.toDate().getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function logSecurityEvent(university: University, eventType: string, details: Record<string, unknown>) {
+  if (!adminDb) return;
+  return adminDb.collection(`universities/${university}/securityLogs`).add({
+    eventType,
+    ...details,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }).catch(() => undefined);
+}
 
 function hashOtp(otp: string): string {
   return crypto.createHash('sha256').update(otp).digest('hex');
@@ -31,10 +55,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { email, code } = await request.json();
+    const { email, code, university } = await request.json();
 
     // ===== INPUT VALIDATION =====
-    if (!email || !code || typeof email !== 'string' || typeof code !== 'string') {
+    if (!email || !code || typeof email !== 'string' || typeof code !== 'string' || !isValidUniversity(university)) {
       return errorResponse('Missing or invalid email or code', 400);
     }
 
@@ -51,72 +75,88 @@ export async function POST(request: NextRequest) {
     const normalizedEmail = email.toLowerCase().trim();
     const hashedCode = hashOtp(trimmedCode);
 
-    // Retrieve OTP from Firestore
-    const resetRef = adminDb.collection('passwordResets').doc(normalizedEmail);
+    const resetKey = crypto.createHash('sha256').update(`${university}:${normalizedEmail}`).digest('hex');
+    const resetRef = adminDb.collection('passwordResets').doc(resetKey);
     const resetDoc = await resetRef.get();
 
     if (!resetDoc.exists) {
-      // SECURITY: Generic message to prevent email enumeration
       return errorResponse('Invalid or expired verification code', 400);
     }
 
     const data = resetDoc.data();
+    if (!data || data.email !== normalizedEmail || data.university !== university) {
+      return errorResponse('Invalid or expired verification code', 400);
+    }
     
-    // ===== BRUTE FORCE PROTECTION =====
-    const attempts = (data?.attempts || 0) as number;
-    const lockedUntil = data?.lockedUntil?.toDate?.()?.getTime() || 0;
+    const attempts = Number(data?.attempts || 0);
+    const lockedUntil = toMillis(data?.lockedUntil);
 
-    // Check if account is locked
     if (lockedUntil > Date.now()) {
-      const remainingMinutes = Math.ceil((lockedUntil - Date.now()) / 60000);
+      const remainingMinutes = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 60000));
       return errorResponse(
         `Too many failed attempts. Please try again in ${remainingMinutes} minutes.`,
         429
       );
     }
 
-    const expiresAt = data?.expiresAt?.toDate?.() || new Date(0);
+    const expiresAt = toMillis(data?.expiresAt);
     const storedHash = data?.hashedOtp;
 
-    // Check if OTP has expired
-    if (Date.now() > expiresAt.getTime()) {
+    if (!expiresAt || Date.now() > expiresAt) {
       return errorResponse('Verification code has expired. Please request a new one.', 400);
     }
 
-    // Verify OTP (compare hashes)
     if (hashedCode !== storedHash) {
-      // Increment attempt counter
       const newAttempts = attempts + 1;
-      const updateData: Record<string, any> = {
+      const updateData: Record<string, unknown> = {
         attempts: newAttempts,
-        lastAttemptAt: new Date(),
+        lastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
         lastAttemptIP: getClientIP(request),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
-      // Lock if max attempts exceeded
       if (newAttempts >= MAX_ATTEMPTS) {
-        updateData.lockedUntil = new Date(Date.now() + LOCKOUT_DURATION_MS);
-        await resetRef.update(updateData);
-        return errorResponse(
-          'Too many failed attempts. Please try again in 15 minutes.',
-          429
-        );
+        updateData.lockedUntil = admin.firestore.Timestamp.fromMillis(Date.now() + LOCKOUT_DURATION_MS);
       }
 
-      await resetRef.update(updateData);
-      const remainingAttempts = MAX_ATTEMPTS - newAttempts;
+      await resetRef.set(updateData, { merge: true });
+
+      if (newAttempts >= MAX_ATTEMPTS) {
+        if (data.uid) {
+          await adminDb.collection('universities').doc(university).collection('users').doc(String(data.uid)).set({
+            passwordResetLockUntil: admin.firestore.Timestamp.fromMillis(Date.now() + LOCKOUT_DURATION_MS),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+
+        await logSecurityEvent(university, 'password_reset_code_locked', {
+          uid: data.uid || null,
+          email: normalizedEmail,
+          clientIp: getClientIP(request),
+        });
+
+        return errorResponse('Too many failed attempts. Please try again later.', 429);
+      }
+
+      const remainingAttempts = Math.max(0, MAX_ATTEMPTS - newAttempts);
       return errorResponse(
         `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts !== 1 ? 's' : ''} remaining.`,
         400
       );
     }
 
-    // ===== SUCCESS: Mark as verified =====
-    await resetRef.update({
+    await resetRef.set({
       verified: true,
-      verifiedAt: new Date(),
-      attempts: 0, // Reset attempts on success
+      verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      attempts: 0,
       lockedUntil: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    await logSecurityEvent(university, 'password_reset_code_verified', {
+      uid: data.uid || null,
+      email: normalizedEmail,
+      clientIp: getClientIP(request),
     });
 
     return successResponse({
@@ -124,7 +164,6 @@ export async function POST(request: NextRequest) {
       message: 'Code verified successfully',
     });
   } catch (error: any) {
-    // SECURITY: Generic error message
     console.error('Verify password reset code error:', error.code || 'UNKNOWN');
     return errorResponse('Failed to verify code. Please try again.', 500);
   }

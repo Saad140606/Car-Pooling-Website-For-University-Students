@@ -1,25 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Basic helpers
     function isAuth() { return request.auth != null; }
     function isAdmin() { return isAuth() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
 
-    // 🔒 CRITICAL: Admins collection (managed server-side only)
-    // Users can only read their own admin status, cannot create/modify admin records
     match /admins/{adminId} {
       allow get: if isAuth() && request.auth.uid == adminId;
-      allow list: if false; // No one can list all admins
-      allow create, update, delete: if false; // Only server-side can manage
+      allow create, update, delete, list: if false;
     }
 
-    // Public rides (readable by anyone)
     match /public_rides/{publicRideId} {
       allow get, list: if true;
       allow create, update, delete: if isAdmin();
     }
 
-    // Contact messages: allow anonymous creation but validate payload
     match /contact_messages/{msgId} {
       allow create: if (
         request.resource.data.createdAt is timestamp
@@ -28,46 +22,37 @@ service cloud.firestore {
         && request.resource.data.message is string
         && request.resource.data.message.size() >= 10
         && (request.resource.data.uid is string || request.resource.data.uid == null)
-        && (request.resource.data.status in ['unread', 'read', 'archived'] || !request.resource.data.keys().hasAny(['status']))
+        && (request.resource.data.status in ['open', 'resolved'])
       );
       allow get, list, update, delete: if isAdmin();
     }
 
-    // Reports: only authenticated users can create, admins can manage
     match /reports/{reportId} {
       allow create: if isAuth()
         && request.resource.data.reportedBy.uid == request.auth.uid
         && request.resource.data.reportedBy.role in ['driver', 'passenger']
-        && (request.resource.data.reporterName is string || !request.resource.data.keys().hasAny(['reporterName']))
-        && (request.resource.data.reporterEmail is string || !request.resource.data.keys().hasAny(['reporterEmail']))
-        && (request.resource.data.reporterUniversity is string || !request.resource.data.keys().hasAny(['reporterUniversity']))
         && (request.resource.data.againstUserUid is string || request.resource.data.againstUserUid == null)
         && (request.resource.data.rideId is string || request.resource.data.rideId == null)
-        && request.resource.data.category in ['misbehavior','safety','fraud','app_issue']
+        && request.resource.data.category in ['misbehavior', 'safety', 'fraud', 'app_issue']
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 10
         && request.resource.data.createdAt is timestamp
-        && request.resource.data.status in ['pending','investigating','resolved'];
+        && request.resource.data.status in ['pending', 'reviewed', 'action_taken'];
       allow get, list, update, delete: if isAdmin();
     }
-    
-    // Chats (all) - admins can read
-    match /chats/{document=**} {
-      allow get, list: if isAdmin();
+
+    match /fcm_tokens/{uid} {
+      allow create, update, delete, get: if isAuth() && request.auth.uid == uid;
+      allow list: if false;
+      match /throttles/{throttleId} {
+        allow create, update, delete, get: if isAuth() && request.auth.uid == uid;
+        allow list: if false;
+      }
     }
 
-    // Universities and nested collections
     match /universities/{univId} {
-      // Allow anyone to read/list universities (for public ride listings)
       allow get, list: if true;
-      
-      // Admin can read everything in universities
-      match /{document=**} {
-        allow get, list: if isAdmin();
-      }
 
-      // University-scoped user profiles
-      // ===== CRITICAL: University field is immutable - prevents cross-university account takeover =====
       match /users/{userId} {
         allow create: if isAuth()
           && request.auth.uid == userId
@@ -81,71 +66,36 @@ service cloud.firestore {
         allow update, delete: if isAuth() && request.auth.uid == userId
           && request.resource.data.email == resource.data.email
           && request.resource.data.university == resource.data.university
-          && request.resource.data.university == univId
-          // ===== CRITICAL: Allow cancellation tracking updates (only these fields) =====
-          && (
-            // Auto-updates from backend (server-controlled):
-            // totalParticipations, totalCancellations, lateCancellations, etc.
-            // For direct updates, only allow these cancellation-tracking fields
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'email', 'fullName', 'gender', 'contactNumber', 'transport', 'bio',
-              'universityEmail', 'universityEmailVerified', 'idVerified', 'isVerified',
-              'totalParticipations', 'totalCancellations', 'lateCancellations',
-              'lastCancellationAt', 'accountLockUntil', 'cooldownUntil', 'updatedAt'
-            ])
-          );
-          // ===== CRITICAL: University can NEVER change after creation =====
+          && request.resource.data.university == univId;
       }
 
-      // Rides under a university
       match /rides/{rideId} {
-        // Allow anyone to list rides
-        allow list: if true;
+        allow get, list: if true;
 
-        allow get: if true;
+        allow create: if isAuth()
+          && (
+            (request.resource.data.createdBy is string && request.resource.data.createdBy == request.auth.uid)
+            || (request.resource.data.driverId is string && request.resource.data.driverId == request.auth.uid)
+          )
+          && request.resource.data.university == univId;
 
-        // ===== RIDE CREATE =====
-        // Allow authenticated users to create rides - validate driverId matches auth
-        allow create: if isAuth() && request.resource.data.driverId == request.auth.uid;
+        allow update, delete: if isAdmin() || (isAuth() && (
+          (resource.data.createdBy is string && resource.data.createdBy == request.auth.uid)
+          || (resource.data.driverId is string && resource.data.driverId == request.auth.uid)
+        ));
 
-        // ===== RIDE UPDATE/DELETE - UNIFIED RULE =====
-        // CRITICAL: Standardized on driverId as canonical ownership field
-        // Three update scenarios merged into ONE rule to prevent conflicts:
-        // 1. Driver (via driverId) or admin can update/delete anything
-        // 2. Passengers can ONLY update confirmedPassengers, availableSeats, status for booking confirmation
-        // 3. Driver can cancel ride (set status to 'cancelled' and optional cancellation fields)
-        // 4. LIFECYCLE FIELDS: Only server (admin SDK) can modify lifecycleStatus, transitionLog,
-        //    completionWindowEnd, ratingsOpen, pendingRequests, cancelledPassengers
-        //    These are written via API routes using admin SDK, not client-side.
-        allow update, delete: if isAdmin()
-          || (isAuth() && resource.data.driverId == request.auth.uid)
-          || (isAuth() && resource.data.driverId == request.auth.uid && hasOnly(request.resource.data.diff(resource.data).affectedKeys(), ['status', 'cancelledAt', 'cancelledBy', 'cancellationReason', 'updatedAt']) && request.resource.data.status == 'cancelled')
-          || (isAuth() 
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedPassengers', 'availableSeats', 'status', 'updatedAt'])
-              && request.resource.data.keys().hasAll(['confirmedPassengers', 'availableSeats'])
-              && request.resource.data.confirmedPassengers.toSet().difference(resource.data.get('confirmedPassengers', []).toSet()).hasOnly([request.auth.uid])
-              && request.resource.data.availableSeats == resource.data.availableSeats - 1
-          );
+        allow update: if isAuth()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedPassengers', 'availableSeats', 'status', 'updatedAt'])
+          && request.resource.data.confirmedPassengers.toSet().difference(resource.data.get('confirmedPassengers', []).toSet()).hasOnly([request.auth.uid]);
 
-        // Requests for a ride
         match /requests/{requestId} {
-          // Riders create their own request docs
           allow create: if isAuth() && request.resource.data.passengerId == request.auth.uid;
-
-          // Allow read if: admin, or user is the passenger, or user is the driver/creator of the ride.
-          // Important: when the document doesn't exist yet, resource.data.* is undefined which would
-          // normally deny. Allow riders to probe their own deterministic requestId `${rideId}_${uid}`
-          // so the app can check existence without a permission-denied error.
           allow get: if isAdmin() || (isAuth() && (
             (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
             || (resource.data.driverId is string && resource.data.driverId == request.auth.uid)
             || requestId.matches('^' + rideId + '_' + request.auth.uid + '$')
           ));
-
-          // Listing is allowed to authenticated users. UI filters ensure proper scoping.
           allow list: if isAdmin() || isAuth();
-
-          // Updates are allowed to the passenger or the driver (or admins).
           allow update, delete: if isAdmin() || (isAuth() && (
             (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
             || (resource.data.driverId is string && resource.data.driverId == request.auth.uid)
@@ -153,182 +103,107 @@ service cloud.firestore {
         }
       }
 
-      // Bookings
       match /bookings/{bookingId} {
-        allow create: if isAuth() && (request.resource.data.passengerId == request.auth.uid || request.resource.data.driverId == request.auth.uid);
-        allow get: if isAdmin() || (isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid));
-        // Relaxed: allow authenticated users to list bookings scoped to this university.
-        // UI queries are filtered by passengerId/driverId; this prevents permission-denied loops seen in production.
-        allow list: if isAdmin() || isAuth();
-        // ===== CANCELLATION: Allow passenger/driver to update booking status and cancellation fields =====
-        allow update, delete: if isAdmin() 
-          || (isAuth() && (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid)
-            && (
-              // Allow updates to cancellation fields only
-              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelledBy', 'cancellationReason', 'isLateCancellation', 'updatedAt'])
-              || true // Allow any update for now (passenger/driver authorized above)
-            )
-          );
-      }
-
-      // ===== LIFECYCLE RATINGS (anonymous, server-validated) =====
-      // Ratings are created via API routes (admin SDK) to ensure server-side validation.
-      // Clients can only read their own ratings.
-      match /lifecycle_ratings/{ratingId} {
-        allow create: if false; // Only server (admin SDK) can create ratings
-        allow get: if isAuth(); // Authenticated users can read individual ratings
-        allow list: if isAuth(); // Authenticated users can list (query filtered by rideId)
-        allow update, delete: if false; // Ratings are immutable
-      }
-
-      // ===== USER RATING STATS (aggregate scores only) =====
-      // Prevents identity exposure — only aggregate scores are readable.
-      match /user_rating_stats/{userId} {
-        allow get: if isAuth(); // Anyone authenticated can view aggregate stats
-        allow list: if isAuth();
-        allow create, update, delete: if false; // Only server can modify
-      }
-
-      // Notifications - Allow authenticated users to access their own notifications
-      // CRITICAL FIX: Allow any authenticated user to CREATE notifications (needed for API routes)
-      // but restrict reading/updating to the owner or admins
-      match /notifications/{notificationId} {
-        // Allow any authenticated user to create notifications
-        // (API routes create notifications for other users during ride events)
-        allow create: if isAuth() && request.resource.data.userId is string;
-        
-        // Only allow users to read their own notifications
-        allow get, list: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
-        
-        // Only allow users to update their own notifications (mark as read)
-        allow update: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin()) 
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
-        
-        // Only allow users to delete their own notifications
-        allow delete: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
-      }
-
-      // Chats and messages
-      match /chats/{chatId} {
-        allow create: if isAuth() && request.resource.data.rideId is string && (
-          (request.resource.data.participants is list && request.auth.uid in request.resource.data.participants)
-          || (request.resource.data.passengerId is string && request.resource.data.providerId is string && (request.auth.uid == request.resource.data.passengerId || request.auth.uid == request.resource.data.providerId))
+        allow create: if isAuth() && (
+          request.resource.data.passengerId == request.auth.uid
+          || request.resource.data.driverId == request.auth.uid
         );
-
-        allow list, get: if isAdmin() || (isAuth() && (
-          (resource.data.participants is list && request.auth.uid in resource.data.participants)
-          || (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+        allow get: if isAdmin() || (isAuth() && (
+          resource.data.passengerId == request.auth.uid
+          || resource.data.driverId == request.auth.uid
         ));
-
+        allow list: if isAdmin() || isAuth();
         allow update, delete: if isAdmin() || (isAuth() && (
+          resource.data.passengerId == request.auth.uid
+          || resource.data.driverId == request.auth.uid
+        ));
+      }
+
+      match /chats/{chatId} {
+        allow create: if isAuth();
+        allow get, list, update, delete: if isAdmin() || (isAuth() && (
           (resource.data.participants is list && request.auth.uid in resource.data.participants)
-          || (resource.data.passengerId is string && resource.data.providerId is string && (request.auth.uid == resource.data.passengerId || request.auth.uid == resource.data.providerId))
+          || (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
+          || (resource.data.providerId is string && resource.data.providerId == request.auth.uid)
         ));
 
         match /messages/{messageId} {
-          allow create: if isAuth() && request.resource.data.senderId == request.auth.uid && (
-            (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
-            || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
-          ) && request.resource.data.timestamp is timestamp && (request.resource.data.type in ['text','image','video','emoji','voice']);
-
-          allow list, get: if isAdmin() || (isAuth() && (
-            (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
-            || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
-          ));
-
-          // Allow participants to update seenBy array only
-          allow update: if isAdmin() || (isAuth() && (
-            (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants is list && request.auth.uid in get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.participants)
-            || ((get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId is string) && (get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId is string) && (request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.passengerId || request.auth.uid == get(/databases/$(database)/documents/universities/$(univId)/chats/$(chatId)).data.providerId))
-          ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenBy']));
-
+          allow create: if isAuth() && request.resource.data.senderId == request.auth.uid;
+          allow get, list: if isAuth();
+          allow update: if isAuth();
           allow delete: if false;
         }
       }
-    }
 
-    // Per-user FCM tokens
-    match /fcm_tokens/{uid} {
-      // Allow users to create/update/delete their own token documents
-      allow create, update, delete: if isAuth() && request.auth.uid == uid;
-      // Allow the owner to read their token (clients commonly read to dedupe tokens).
-      allow get: if isAuth() && request.auth.uid == uid;
-      // Do not allow listing all tokens
-      allow list: if false;
-    }
-
-    // Email verifications for university email verification
-    match /email_verifications/{uid} {
-      allow create: if false; // Only server can create
-      allow get: if isAuth() && request.auth.uid == uid;
-      allow update, delete: if false;
-      allow list: if false;
-    }
-
-    // Calls collection: Real-time calling system
-    match /calls/{callId} {
-      // Allow create for initiating a call (supports legacy caller/callee fields)
-      allow create: if isAuth()
-        && (
-          (request.resource.data.callerId is string && request.resource.data.callerId == request.auth.uid)
-          || (request.resource.data.caller is string && request.resource.data.caller == request.auth.uid)
-        )
-        && (
-          (request.resource.data.receiverId is string)
-          || (request.resource.data.callee is string)
-        )
-        && (
-          (request.resource.data.callType in ['audio', 'video'])
-          || (request.resource.data.mode in ['audio', 'video'])
-        )
-        && request.resource.data.status in ['ringing', 'connected', 'rejected', 'missed', 'ended']
-        && (request.resource.data.createdAt is timestamp || request.resource.data.createdAt is number)
-        && (!('candidates' in request.resource.data) || request.resource.data.candidates is list);
-      
-      // Allow get/update for participants only
-      allow get, update: if isAuth()
-        && (
-          (resource.data.callerId == request.auth.uid)
-          || (resource.data.receiverId == request.auth.uid)
-          || (resource.data.caller == request.auth.uid)
-          || (resource.data.callee == request.auth.uid)
-        );
-      
-      // Allow delete only for participants
-      allow delete: if isAuth()
-        && (
-          (resource.data.callerId == request.auth.uid)
-          || (resource.data.receiverId == request.auth.uid)
-          || (resource.data.caller == request.auth.uid)
-          || (resource.data.callee == request.auth.uid)
-        );
-      
-      // No listing calls
-      allow list: if false;
-
-      // ICE candidates subcollections
-      match /callerCandidates/{candidateId} {
-        allow create, get, list, delete: if isAuth()
-          && (
-            (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callerId == request.auth.uid)
-            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.receiverId == request.auth.uid)
-            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid)
-            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid)
-          );
+      match /lifecycle_ratings/{ratingId} {
+        allow create, update, delete: if false;
+        allow get, list: if isAuth();
       }
 
-      match /calleeCandidates/{candidateId} {
-        allow create, get, list, delete: if isAuth()
-          && (
-            (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callerId == request.auth.uid)
-            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.receiverId == request.auth.uid)
-            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.caller == request.auth.uid)
-            || (get(/databases/$(database)/documents/universities/$(univId)/calls/$(callId)).data.callee == request.auth.uid)
-          );
+      match /user_rating_stats/{userId} {
+        allow get, list: if isAuth();
+        allow create, update, delete: if false;
+      }
+
+      match /rideCompletions/{rideId} {
+        allow get, list: if isAuth();
+        allow create, update: if isAuth();
+        allow delete: if isAdmin();
+      }
+
+      match /unreadEvents/{eventDocId} {
+        allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+        allow get, list: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
+        allow update: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin())
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.eventId == resource.data.eventId
+          && request.resource.data.targetSection == resource.data.targetSection;
+        allow delete: if isAdmin();
+      }
+
+      match /notifications/{notificationId} {
+        allow create: if isAuth() && request.resource.data.userId is string;
+        allow get, list: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin());
+        allow update: if isAuth() && (resource.data.userId == request.auth.uid || isAdmin())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt', 'isDeleted']);
+        allow delete: if isAdmin();
+      }
+
+      match /email_verifications/{uid} {
+        allow create: if false;
+        allow get: if isAuth() && request.auth.uid == uid;
+        allow update, delete, list: if false;
+      }
+
+      match /calls/{callId} {
+        allow create: if isAuth()
+          && request.resource.data.callerId == request.auth.uid
+          && request.resource.data.receiverId is string
+          && request.resource.data.callType in ['audio', 'video']
+          && request.resource.data.status in ['ringing', 'connected', 'rejected', 'missed', 'ended']
+          && request.resource.data.createdAt is timestamp;
+
+        allow get, update, delete: if isAuth() && (
+          resource.data.callerId == request.auth.uid
+          || resource.data.receiverId == request.auth.uid
+        );
+        allow list: if false;
+
+        match /callerCandidates/{candidateId} {
+          allow create, get, list, delete: if isAuth();
+        }
+
+        match /calleeCandidates/{candidateId} {
+          allow create, get, list, delete: if isAuth();
+        }
+      }
+
+      match /{document=**} {
+        allow read: if isAdmin();
+        allow write: if false;
       }
     }
 
-    // Admin fallback: allow read access to any document
     match /{document=**} {
       allow read: if isAdmin();
       allow write: if false;

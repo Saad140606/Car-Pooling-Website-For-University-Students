@@ -56,6 +56,10 @@ export async function GET(request: NextRequest) {
     // Get all spending records
     const spendingRef = adminDb.collection(`universities/${university}/passengerSpending`);
     const spendingSnap = await spendingRef.where('passengerId', '==', userId).get();
+
+    // Get ratings received by this passenger from providers
+    const passengerRatingsRef = adminDb.collection(`universities/${university}/passengerRatings`);
+    const passengerRatingsSnap = await passengerRatingsRef.where('passengerId', '==', userId).get();
     
     // Process spending per ride
     const spendingPerRide = spendingSnap.docs.map(d => {
@@ -101,6 +105,108 @@ export async function GET(request: NextRequest) {
       .map(([route, data]) => ({ route, ...data }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
+
+    // Process ratings per ride (source 1: passengerRatings collection)
+    const ratingsByKey = new Map<string, {
+      rideId: string;
+      rating: number;
+      date: string;
+      review: string;
+      ratedBy: string;
+    }>();
+
+    passengerRatingsSnap.docs.forEach((ratingDoc) => {
+      const ratingData = ratingDoc.data();
+      const rideId = String(ratingData.rideId || '');
+      const ratedBy = String(ratingData.ratedBy || ratingData.driverId || '');
+      const rating = Number(ratingData.rating || 0);
+
+      if (!rideId || !ratedBy || rating < 1 || rating > 5) return;
+
+      const date = toDate(ratingData.createdAt) || new Date();
+      const key = `${rideId}__${ratedBy}`;
+
+      ratingsByKey.set(key, {
+        rideId,
+        rating,
+        date: date.toISOString(),
+        review: String(ratingData.review || ''),
+        ratedBy,
+      });
+    });
+
+    // Process ratings per ride (source 2 fallback: rideCompletions.passengerAttendance)
+    let completionSnaps: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      // Preferred path: query completions where this passenger has a numeric attendance rating
+      const completionQuery = await adminDb
+        .collection(`universities/${university}/rideCompletions`)
+        .where(`passengerAttendance.${userId}.rating`, '>=', 1)
+        .get();
+      completionSnaps = completionQuery.docs;
+    } catch {
+      // Fallback path: derive ride IDs from bookings and read corresponding completion docs
+      const passengerBookingsRef = adminDb.collection(`universities/${university}/bookings`);
+      const passengerBookingsSnap = await passengerBookingsRef.where('passengerId', '==', userId).get();
+      const rideIds = Array.from(
+        new Set(
+          passengerBookingsSnap.docs
+            .map((bookingDoc) => String(bookingDoc.data().rideId || ''))
+            .filter((rideId) => rideId.length > 0)
+        )
+      );
+
+      const completionDocSnaps = await Promise.all(
+        rideIds.map((rideId) =>
+          adminDb.collection(`universities/${university}/rideCompletions`).doc(rideId).get()
+        )
+      );
+      completionSnaps = completionDocSnaps
+        .filter((snap) => snap.exists)
+        .map((snap) => snap as FirebaseFirestore.QueryDocumentSnapshot);
+    }
+
+    completionSnaps.forEach((completionSnap) => {
+      const completionData = completionSnap.data() || {};
+      const attendance = completionData.passengerAttendance || {};
+      const entry = attendance[userId];
+
+      if (!entry) return;
+      const rating = Number(entry.rating || 0);
+      if (rating < 1 || rating > 5) return;
+
+      const rideId = String(completionData.rideId || completionSnap.id);
+      const ratedBy = String(completionData.providerId || completionData.driverId || 'provider');
+      const date = toDate(completionData.providerCompletedAt) || toDate(completionData.completedAt) || new Date();
+      const key = `${rideId}__${ratedBy}`;
+
+      if (!ratingsByKey.has(key)) {
+        ratingsByKey.set(key, {
+          rideId,
+          rating,
+          date: date.toISOString(),
+          review: String(entry.review || ''),
+          ratedBy,
+        });
+      }
+    });
+
+    const ratingsPerRide = Array.from(ratingsByKey.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    const totalRatingsCount = ratingsPerRide.length;
+    const averageRating = totalRatingsCount > 0
+      ? ratingsPerRide.reduce((sum, ratingItem) => sum + ratingItem.rating, 0) / totalRatingsCount
+      : 0;
+
+    const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    ratingsPerRide.forEach((ratingItem) => {
+      const key = Math.round(ratingItem.rating) as keyof typeof ratingDistribution;
+      if (key >= 1 && key <= 5) {
+        ratingDistribution[key]++;
+      }
+    });
     
     return NextResponse.json({
       success: true,
@@ -108,6 +214,10 @@ export async function GET(request: NextRequest) {
         totalSpent: stats?.totalSpent || totalSpentFromData,
         totalRidesTaken: stats?.totalRidesTaken || totalRidesFromData,
         averageSpentPerRide: totalRidesFromData > 0 ? (stats?.totalSpent || totalSpentFromData) / totalRidesFromData : 0,
+        averageRating,
+        totalRatingsCount,
+        ratingsPerRide,
+        ratingDistribution,
         spendingPerRide,
         monthlySpending,
         topRoutes,

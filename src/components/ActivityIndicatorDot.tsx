@@ -64,25 +64,21 @@ export function ActivityDot({
     'bottom-left': 'bottom-0 left-0',
   };
 
+  if (!show) return null;
+
   return (
-    <div className={`relative inline-block ${className}`}>
-      {/* Animated dot indicator */}
-      {show && (
-        <div
-          className={`absolute ${positionClasses[position]} ${color} rounded-full transition-all duration-300 ease-in-out ${
-            pulse ? 'animate-pulse' : ''
-          }`}
-          style={{
-            width: `${size}px`,
-            height: `${size}px`,
-            // Offset by half the size to position from center
-            transform: `translate(${position.includes('right') ? size / 2 : -size / 2}px, ${position.includes('bottom') ? size / 2 : -size / 2}px)`,
-          }}
-          aria-label="Unread activity indicator"
-          role="status"
-        />
-      )}
-    </div>
+    <span
+      className={`pointer-events-none absolute z-20 ${positionClasses[position]} ${color} rounded-full shadow-sm ring-2 ring-slate-950/90 transition-opacity duration-200 ease-out ${
+        pulse ? 'animate-pulse' : ''
+      } ${className}`}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        transform: `translate(${position.includes('right') ? size / 2 : -size / 2}px, ${position.includes('bottom') ? size / 2 : -size / 2}px)`,
+      }}
+      aria-label="Unread activity indicator"
+      role="status"
+    />
   );
 }
 

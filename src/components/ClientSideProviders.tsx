@@ -6,7 +6,6 @@ import { RingtoneInitializer } from '@/hooks/useRingtoneInitializer';
 import { CallingProvider } from '@/contexts/CallingContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
 import { ActivityIndicatorProvider } from '@/contexts/ActivityIndicatorContext';
-import { PostRideProvider } from '@/contexts/PostRideWorkflowContext';
 import { RideCompletionProvider } from '@/contexts/RideCompletionContext';
 import { BackgroundCallHandler } from '@/components/calling/BackgroundCallHandler';
 import { IncomingCallScreen } from '@/components/calling/IncomingCallScreen';
@@ -25,15 +24,13 @@ export default function ClientSideProviders({ children }: Props) {
       <CallingProvider>
         <NotificationProvider>
           <ActivityIndicatorProvider>
-            <PostRideProvider>
-              <RideCompletionProvider>
-                <BackgroundCallHandler />
-                <IncomingCallScreen />
-                <ActiveCallScreen />
-                <RideCompletionModal />
-                {children}
-              </RideCompletionProvider>
-            </PostRideProvider>
+            <RideCompletionProvider>
+              <BackgroundCallHandler />
+              <IncomingCallScreen />
+              <ActiveCallScreen />
+              <RideCompletionModal />
+              {children}
+            </RideCompletionProvider>
           </ActivityIndicatorProvider>
         </NotificationProvider>
       </CallingProvider>

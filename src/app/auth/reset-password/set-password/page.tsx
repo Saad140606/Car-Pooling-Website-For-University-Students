@@ -11,6 +11,7 @@ import { Reveal } from '@/components/Reveal';
 import Logo from '@/components/logo';
 import { ShieldCheck, ArrowLeft, Loader2, Eye, EyeOff, Check, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
 
 function SetPasswordPageContent() {
   const router = useRouter();
@@ -18,7 +19,9 @@ function SetPasswordPageContent() {
   const { toast } = useToast();
 
   const emailFromUrl = searchParams.get('email');
+  const universityFromUrl = searchParams.get('university');
   const [email, setEmail] = useState<string>('');
+  const [selectedUniversity, setSelectedUniversity] = useState<University | null>(null);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -34,16 +37,23 @@ function SetPasswordPageContent() {
     if (emailFromUrl) {
       setEmail(decodeURIComponent(emailFromUrl));
     } else {
-      // No email provided, redirect back
       router.push('/auth/forgot-password');
     }
-  }, [emailFromUrl, router]);
+
+    const decodedUniversity = universityFromUrl ? decodeURIComponent(universityFromUrl) : getSelectedUniversity();
+    if (decodedUniversity && isValidUniversity(decodedUniversity)) {
+      setSelectedUniversity(decodedUniversity);
+      return;
+    }
+
+    setError('University session missing. Please restart password reset from your portal.');
+  }, [emailFromUrl, universityFromUrl, router]);
 
   // Password validation checks
   const passwordLength = password.length;
   const isPasswordValid = passwordLength >= 8;
   const passwordsMatch = password && confirmPassword && password === confirmPassword;
-  const canSubmit = isPasswordValid && passwordsMatch && !isResetting;
+  const canSubmit = isPasswordValid && passwordsMatch && !isResetting && !!selectedUniversity;
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +74,11 @@ function SetPasswordPageContent() {
       return;
     }
 
+    if (!selectedUniversity) {
+      setError('University session missing. Please restart password reset from your portal.');
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -77,6 +92,7 @@ function SetPasswordPageContent() {
         body: JSON.stringify({
           email,
           newPassword: password,
+          university: selectedUniversity,
         }),
       });
 

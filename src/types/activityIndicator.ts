@@ -7,12 +7,24 @@ export interface ActivityIndicatorState {
   bookings: boolean;
   rides: boolean;
   chat: boolean;
+  notifications: boolean;
 }
 
 export interface ActivityIndicatorTimestamps {
   bookingsLastViewed?: number;
   ridesLastViewed?: number;
   chatLastViewed?: number;
+  notificationsLastViewed?: number;
+}
+
+export type ActivitySection = 'bookings' | 'rides' | 'chat' | 'notifications';
+
+export interface UnreadActivityEvent {
+  eventId: string;
+  targetSection: ActivitySection;
+  userId: string;
+  unreadFlag: boolean;
+  timestamp: any;
 }
 
 export const ACTIVITY_STORAGE_KEY = 'campus_rides_activity_indicators';

@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { adminDb, adminAuth } from '@/firebase/firebaseAdmin';
-import { checkPasswordChangeRateLimit } from '@/lib/passwordRateLimitAdmin';
+import admin from 'firebase-admin';
+import { getUniversityEmailDomain } from '@/lib/university-verification';
 
 // Configure email transporter
 const transporter = nodemailer.createTransport({
@@ -16,9 +17,43 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const OTP_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
-const SEND_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes window
-const MAX_SENDS_PER_WINDOW = 3;
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const REQUEST_COOLDOWN_MS = 5 * 1000;
+const MAX_RESETS_PER_WINDOW = 3;
+const RESET_LOCK_MS = 14 * 24 * 60 * 60 * 1000;
+const GENERIC_SUCCESS_MESSAGE = 'If the account is eligible, a verification code will be sent to your email.';
+
+type University = 'fast' | 'ned' | 'karachi';
+
+function isValidUniversity(university: unknown): university is University {
+  return university === 'fast' || university === 'ned' || university === 'karachi';
+}
+
+function toMillis(value: any): number {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (value?.toMillis && typeof value.toMillis === 'function') return value.toMillis();
+  if (value?.toDate && typeof value.toDate === 'function') return value.toDate().getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getClientIp(request: NextRequest): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0]?.trim() || 'unknown';
+  }
+  return request.headers.get('x-real-ip') || 'unknown';
+}
+
+function logSecurityEvent(university: University, eventType: string, details: Record<string, unknown>) {
+  if (!adminDb) return;
+  return adminDb.collection(`universities/${university}/securityLogs`).add({
+    eventType,
+    ...details,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }).catch(() => undefined);
+}
 
 function generateOtp(): string {
   return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
@@ -30,92 +65,166 @@ function hashOtp(otp: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const { email } = await request.json();
+    const { email, university } = await request.json();
+    const clientIp = getClientIp(request);
 
-    if (!email || typeof email !== 'string') {
+    if (!email || typeof email !== 'string' || !isValidUniversity(university)) {
       return NextResponse.json(
-        { error: 'Missing or invalid email' },
+        { error: 'Missing or invalid request fields' },
         { status: 400 }
       );
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+    const requiredDomain = getUniversityEmailDomain(university);
+    if (!requiredDomain || !normalizedEmail.endsWith(requiredDomain.toLowerCase())) {
+      return NextResponse.json(
+        { error: `Use your ${requiredDomain} email on this portal.` },
+        { status: 400 }
+      );
+    }
 
-    // Check if user exists in Firebase Auth and get UID
+    const genericSuccess = NextResponse.json({
+      success: true,
+      message: GENERIC_SUCCESS_MESSAGE,
+    });
+
     let uid: string;
     try {
       const userRecord = await adminAuth.getUserByEmail(normalizedEmail);
       uid = userRecord.uid;
     } catch (err: any) {
-      // Don't reveal if email exists or not for security
-      return NextResponse.json(
-        { error: 'If an account exists with this email, you will receive a password reset code.' },
-        { status: 200 }
-      );
-    }
-
-    // Check password change rate limit (3 changes per 14 days)
-    const userRef = adminDb.collection('users').doc(uid);
-    const userDoc = await userRef.get();
-    const userData = userDoc.data();
-    
-    const rateLimitCheck = checkPasswordChangeRateLimit({
-      passwordChangeCount: userData?.passwordChangeCount,
-      passwordChangeWindowStart: userData?.passwordChangeWindowStart,
-    });
-
-    if (!rateLimitCheck.allowed) {
-      return NextResponse.json(
-        { 
-          error: rateLimitCheck.message,
-          rateLimitInfo: {
-            count: rateLimitCheck.count,
-            remaining: rateLimitCheck.remaining,
-            resetDate: rateLimitCheck.resetDate,
-          }
-        },
-        { status: 429 }
-      );
-    }
-
-    // Check if user exists in Firebase Auth
-    try {
-      // We'll store OTP in Firestore and validate the email format
-      const resetRef = adminDb.collection('passwordResets').doc(normalizedEmail);
-      const resetDoc = await resetRef.get();
-
-      // Rate limiting: check if user has sent too many OTPs recently
-      if (resetDoc.exists) {
-        const data = resetDoc.data();
-        const lastSendTime = data?.lastSendTime?.toMillis?.() || 0;
-        const sendCount = data?.sendCount || 0;
-        const now = Date.now();
-
-        if (now - lastSendTime < SEND_LIMIT_WINDOW_MS && sendCount >= MAX_SENDS_PER_WINDOW) {
-          return NextResponse.json(
-            { error: 'Too many OTP requests. Please try again in a few minutes.' },
-            { status: 429 }
-          );
-        }
-      }
-
-      // Generate new OTP
-      const otp = generateOtp();
-      const hashedOtp = hashOtp(otp);
-      const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
-
-      // Store OTP in Firestore
-      await resetRef.set({
-        hashedOtp,
-        expiresAt,
+      await logSecurityEvent(university, 'password_reset_request_unknown_email', {
         email: normalizedEmail,
-        createdAt: new Date(),
-        lastSendTime: new Date(),
-        sendCount: (resetDoc.exists ? (resetDoc.data().sendCount || 0) : 0) + 1,
-        verified: false,
+        clientIp,
+      });
+      return genericSuccess;
+    }
+
+    const userRef = adminDb.collection('universities').doc(university).collection('users').doc(uid);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      await logSecurityEvent(university, 'password_reset_request_profile_missing', {
+        uid,
+        email: normalizedEmail,
+        clientIp,
+      });
+      return genericSuccess;
+    }
+
+    const userData = userDoc.data() || {};
+    const profileEmail = String(userData.email || '').toLowerCase().trim();
+    const hasVerifiedEmail = Boolean(userData.universityEmailVerified || userData.emailVerified);
+
+    if (profileEmail !== normalizedEmail || !hasVerifiedEmail) {
+      await logSecurityEvent(university, 'password_reset_request_ineligible', {
+        uid,
+        email: normalizedEmail,
+        profileEmail,
+        hasVerifiedEmail,
+        clientIp,
+      });
+      return genericSuccess;
+    }
+
+    try {
+      const resetKey = crypto.createHash('sha256').update(`${university}:${normalizedEmail}`).digest('hex');
+      const resetRef = adminDb.collection('passwordResets').doc(resetKey);
+      const now = Date.now();
+
+      const transactionResult = await adminDb.runTransaction(async (tx) => {
+        const [freshUserDoc] = await Promise.all([tx.get(userRef)]);
+        const freshData = freshUserDoc.data() || {};
+
+        const lockUntilMs = toMillis(freshData.passwordResetLockUntil);
+        if (lockUntilMs > now) {
+          const retryAfterSeconds = Math.max(1, Math.ceil((lockUntilMs - now) / 1000));
+          return { status: 'locked' as const, retryAfterSeconds, lockUntilMs };
+        }
+
+        const lastRequestMs = toMillis(freshData.lastPasswordResetRequestAt);
+        if (lastRequestMs > 0 && now - lastRequestMs < REQUEST_COOLDOWN_MS) {
+          const retryAfterSeconds = Math.max(1, Math.ceil((REQUEST_COOLDOWN_MS - (now - lastRequestMs)) / 1000));
+          return { status: 'cooldown' as const, retryAfterSeconds };
+        }
+
+        const windowStartMs = toMillis(freshData.passwordResetWindowStart);
+        const isWindowExpired = !windowStartMs || now - windowStartMs >= RESET_LOCK_MS;
+        const effectiveAttempts = isWindowExpired ? 0 : Number(freshData.passwordResetAttempts || 0);
+        const effectiveWindowStart = isWindowExpired ? now : windowStartMs;
+
+        if (effectiveAttempts >= MAX_RESETS_PER_WINDOW) {
+          const newLockUntil = now + RESET_LOCK_MS;
+          tx.set(userRef, {
+            passwordResetLockUntil: admin.firestore.Timestamp.fromMillis(newLockUntil),
+            passwordResetWindowStart: admin.firestore.Timestamp.fromMillis(effectiveWindowStart),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          return {
+            status: 'locked' as const,
+            retryAfterSeconds: Math.max(1, Math.ceil((newLockUntil - now) / 1000)),
+            lockUntilMs: newLockUntil,
+          };
+        }
+
+        const otp = generateOtp();
+        const hashedOtp = hashOtp(otp);
+        const expiresAtMs = now + OTP_EXPIRY_MS;
+
+        tx.set(resetRef, {
+          uid,
+          email: normalizedEmail,
+          university,
+          hashedOtp,
+          expiresAt: admin.firestore.Timestamp.fromMillis(expiresAtMs),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastSendTime: admin.firestore.FieldValue.serverTimestamp(),
+          verified: false,
+          attempts: 0,
+          lockedUntil: null,
+          requestIp: clientIp,
+        }, { merge: true });
+
+        tx.set(userRef, {
+          lastPasswordResetRequestAt: admin.firestore.Timestamp.fromMillis(now),
+          passwordResetWindowStart: admin.firestore.Timestamp.fromMillis(effectiveWindowStart),
+          passwordResetLockUntil: null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+        return { status: 'ok' as const, otp };
       });
 
-      // Send OTP via email
+      if (transactionResult.status === 'cooldown') {
+        return NextResponse.json(
+          {
+            error: 'Please wait before requesting another code.',
+            retryAfterSeconds: transactionResult.retryAfterSeconds,
+          },
+          { status: 429 }
+        );
+      }
+
+      if (transactionResult.status === 'locked') {
+        await logSecurityEvent(university, 'password_reset_request_locked', {
+          uid,
+          email: normalizedEmail,
+          clientIp,
+          lockUntilMs: transactionResult.lockUntilMs || null,
+        });
+        return NextResponse.json(
+          {
+            error: 'Password reset is temporarily locked for this account.',
+            retryAfterSeconds: transactionResult.retryAfterSeconds,
+            lockUntil: transactionResult.lockUntilMs || null,
+          },
+          { status: 429 }
+        );
+      }
+
+      const otp = transactionResult.otp;
+
       const mailOptions = {
         from: process.env.FIREBASE_EMAIL_USER,
         to: normalizedEmail,
@@ -163,19 +272,27 @@ export async function POST(request: NextRequest) {
 
       await transporter.sendMail(mailOptions);
 
-      return NextResponse.json({
-        success: true,
-        message: 'Verification code sent to your email',
+      await logSecurityEvent(university, 'password_reset_code_sent', {
+        uid,
+        email: normalizedEmail,
+        clientIp,
       });
+
+      return genericSuccess;
     } catch (err: any) {
-      console.error('Error in password reset OTP flow:', err);
+      await logSecurityEvent(university, 'password_reset_send_failed', {
+        email: normalizedEmail,
+        clientIp,
+        errorCode: err?.code || 'UNKNOWN',
+      });
+      console.error('Error in password reset OTP flow:', err?.code || err?.message || 'UNKNOWN');
       return NextResponse.json(
-        { error: 'Failed to send OTP. Please try again.' },
+        { error: 'Unable to process password reset right now. Please try again.' },
         { status: 500 }
       );
     }
   } catch (error: any) {
-    console.error('Password reset OTP API error:', error);
+    console.error('Password reset OTP API error:', error?.code || error?.message || 'UNKNOWN');
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

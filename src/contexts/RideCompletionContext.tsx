@@ -72,7 +72,6 @@ const RideCompletionContext = createContext<RideCompletionContextType | undefine
 export function RideCompletionProvider({ children }: { children: React.ReactNode }) {
   const { user, initialized, data: userData } = useUser();
   const firestore = useFirestore();
-  const initRef = useRef(false);
   const suppressAutoOpenRef = useRef(false);
 
   const [state, setState] = useState<CompletionWorkflowState>({
@@ -92,10 +91,6 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
     if (!initialized || !firestore || !user?.uid) return;
     const university = user.university || userData?.university;
     if (!university) return;
-
-    // Prevent double init
-    if (initRef.current) return;
-    initRef.current = true;
 
     rideCompletionManager.initialize(firestore, user.uid, university);
     suppressAutoOpenRef.current = false;
@@ -165,19 +160,10 @@ export function RideCompletionProvider({ children }: { children: React.ReactNode
 
     return () => {
       unsubscribe();
-      initRef.current = false;
+      rideCompletionManager.cleanup();
+      suppressAutoOpenRef.current = false;
     };
   }, [user?.uid, user?.university, userData?.university, initialized, firestore]);
-
-  // Cleanup on logout
-  useEffect(() => {
-    return () => {
-      if (!user?.uid) {
-        suppressAutoOpenRef.current = false;
-        rideCompletionManager.cleanup();
-      }
-    };
-  }, [user?.uid]);
 
   // ============================================================================
   // NAVIGATION

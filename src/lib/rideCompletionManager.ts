@@ -21,11 +21,11 @@ import {
   doc,
   getDoc,
   getDocs,
+  runTransaction,
   setDoc,
   updateDoc,
   writeBatch,
   serverTimestamp,
-  Timestamp,
 } from 'firebase/firestore';
 import type {
   PendingCompletionWorkflow,
@@ -35,9 +35,8 @@ import type {
   ProviderFormData,
   PassengerFormData,
   CompletionLocalCache,
-  CompletionAnalyticsPayload,
 } from '@/types/rideCompletion';
-import { shouldTriggerWorkflow, toSafeDate } from '@/types/rideCompletion';
+import { toSafeDate } from '@/types/rideCompletion';
 
 const LOCAL_CACHE_KEY = 'campus_rides_completion_cache';
 const WORKFLOW_FORM_PREFIX = 'campus_rides_wf_';
@@ -53,7 +52,6 @@ class RideCompletionManager {
   private providerListener: (() => void) | null = null;
   private passengerListener: (() => void) | null = null;
   private completionDocListeners: Map<string, () => void> = new Map();
-  private scheduledTimers: Map<string, NodeJS.Timeout> = new Map();
 
   // State
   private pendingWorkflows: Map<string, PendingCompletionWorkflow> = new Map();
@@ -304,31 +302,14 @@ class RideCompletionManager {
     const key = `${rideId}-${role}`;
     if (this.processedKeys.has(key)) return;
 
-    const departureTime = toSafeDate(rideData.departureTime);
-    if (!departureTime) return;
+    // Strict lifecycle gate: show only when completed and form is pending in Firestore.
+    if (rideData.status !== 'completed') return;
+    if (rideData.postRideFormRequired !== true) return;
+    if (rideData.postRideFormSubmitted === true) return;
 
-    // Ride must be past departure + 5 minutes
-    if (shouldTriggerWorkflow(departureTime)) {
-      // Check if already cancelled
-      if (rideData.status === 'cancelled' || rideData.lifecycleStatus === 'CANCELLED') return;
-
-      this.buildWorkflowFromRide(rideId, role).catch(err => {
-        console.error('[CompletionManager] Failed to build workflow:', err);
-      });
-    } else {
-      // Schedule a timer for when it becomes eligible
-      const triggerAt = departureTime.getTime() + 5 * 60 * 1000;
-      const delay = triggerAt - Date.now();
-      if (delay > 0 && delay < 24 * 60 * 60 * 1000) { // Only schedule within 24h
-        if (!this.scheduledTimers.has(key)) {
-          const timer = setTimeout(() => {
-            this.scheduledTimers.delete(key);
-            this.buildWorkflowFromRide(rideId, role).catch(() => {});
-          }, delay + 1000); // +1s buffer
-          this.scheduledTimers.set(key, timer);
-        }
-      }
-    }
+    this.buildWorkflowFromRide(rideId, role).catch(err => {
+      console.error('[CompletionManager] Failed to build workflow:', err);
+    });
   }
 
   // ============================================================================
@@ -380,8 +361,10 @@ class RideCompletionManager {
       const departureTime = toSafeDate(rideData.departureTime);
       if (!departureTime) return;
 
-      // Verify trigger condition
-      if (!shouldTriggerWorkflow(departureTime)) return;
+      // Verify strict post-ride form trigger condition from Firestore state.
+      if (rideData.status !== 'completed') return;
+      if (rideData.postRideFormRequired !== true) return;
+      if (rideData.postRideFormSubmitted === true) return;
 
       // Verify role
       const driverId = rideData.driverId || rideData.createdBy;
@@ -604,6 +587,11 @@ class RideCompletionManager {
 
     await batch.commit();
 
+    const wasMarked = await this.markPostRideFormSubmitted(rideId);
+    if (!wasMarked) {
+      console.log('[CompletionManager] Post-ride form already submitted for ride:', rideId);
+    }
+
     // Sync analytics
     await this.syncAnalyticsForRide(rideId, formData);
 
@@ -653,6 +641,11 @@ class RideCompletionManager {
     }
 
     await batch.commit();
+
+    const wasMarked = await this.markPostRideFormSubmitted(rideId);
+    if (!wasMarked) {
+      console.log('[CompletionManager] Post-ride form already submitted for ride:', rideId);
+    }
 
     // Best-effort ride status write (may be restricted by Firestore rules for passengers)
     try {
@@ -938,6 +931,43 @@ class RideCompletionManager {
     return Array.from(this.pendingWorkflows.values());
   }
 
+  private async markPostRideFormSubmitted(rideId: string): Promise<boolean> {
+    if (!this.firestore || !this.university) return false;
+
+    const rideRef = doc(this.firestore, 'universities', this.university, 'rides', rideId);
+
+    try {
+      const updated = await runTransaction(this.firestore, async (tx) => {
+        const snap = await tx.get(rideRef);
+        if (!snap.exists()) {
+          throw new Error('Ride not found while completing post-ride form');
+        }
+
+        const data = snap.data();
+        if (data?.postRideFormSubmitted === true) {
+          return false;
+        }
+
+        tx.update(rideRef, {
+          postRideFormSubmitted: true,
+          postRideFormRequired: false,
+          postRideSubmittedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        return true;
+      });
+
+      return updated;
+    } catch (error) {
+      if (this.isPermissionDenied(error)) {
+        console.warn('[CompletionManager] Could not update ride post-ride flags due to permissions');
+        return false;
+      }
+      throw error;
+    }
+  }
+
   // ============================================================================
   // CLEANUP
   // ============================================================================
@@ -946,12 +976,10 @@ class RideCompletionManager {
     this.providerListener?.();
     this.passengerListener?.();
     this.completionDocListeners.forEach(unsub => unsub());
-    this.scheduledTimers.forEach(timer => clearTimeout(timer));
 
     this.providerListener = null;
     this.passengerListener = null;
     this.completionDocListeners.clear();
-    this.scheduledTimers.clear();
     this.pendingWorkflows.clear();
     this.processedKeys.clear();
     this.callbacks = [];

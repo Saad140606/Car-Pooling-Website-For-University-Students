@@ -1,25 +1,19 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useUser } from '@/firebase/auth/use-user';
 import { useFirestore } from '@/firebase/provider';
-import { collection, query, where, orderBy, limit, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { useCollection } from '@/firebase/firestore/use-collection';
-import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Bell,
   CheckCheck,
-  Trash2,
   MapPin,
   MessageCircle,
   AlertCircle,
   Phone,
-  Home,
   Clock,
-  ChevronRight,
   Loader2,
 } from 'lucide-react';
 import type { Notification } from '@/types/notification';
@@ -59,9 +53,6 @@ interface NotificationWithId extends Notification {
 export default function NotificationsPage() {
   const firestore = useFirestore();
   const { user, data: userData, loading: userLoading } = useUser();
-  const router = useRouter();
-  const [selectedFilter, setSelectedFilter] = useState<'all' | 'unread'>('all');
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   const university = userData?.university;
 
@@ -76,77 +67,13 @@ export default function NotificationsPage() {
         )
       : null;
 
-  const { data: allNotifications = [], loading: notificationsLoading } = useCollection<NotificationWithId>(q);
-
-  // Filter notifications
-  const notifications = useMemo(() => {
-    if (selectedFilter === 'unread') {
-      return allNotifications.filter((n) => !n.isRead);
-    }
-    return allNotifications;
-  }, [allNotifications, selectedFilter]);
+  const { data: notificationsData, loading: notificationsLoading } = useCollection<NotificationWithId>(q);
+  const allNotifications = useMemo(
+    () => (Array.isArray(notificationsData) ? notificationsData : []),
+    [notificationsData]
+  );
 
   const unreadCount = useMemo(() => allNotifications.filter((n) => !n.isRead).length, [allNotifications]);
-
-  const handleMarkAsRead = async (notificationId: string) => {
-    if (!firestore || !university) return;
-    try {
-      await updateDoc(doc(firestore, 'universities', university, 'notifications', notificationId), {
-        isRead: true,
-        readAt: new Date(),
-      });
-    } catch (error) {
-      console.error('Failed to mark notification as read:', error);
-    }
-  };
-
-  const handleMarkAllAsRead = async () => {
-    if (!firestore || !university) return;
-    const unreadNotifications = allNotifications.filter((n) => !n.isRead);
-    try {
-      await Promise.all(
-        unreadNotifications.map((n) =>
-          updateDoc(doc(firestore, 'universities', university, 'notifications', n.id), {
-            isRead: true,
-            readAt: new Date(),
-          })
-        )
-      );
-    } catch (error) {
-      console.error('Failed to mark all notifications as read:', error);
-    }
-  };
-
-  const handleDelete = async (notificationId: string) => {
-    if (!firestore || !university) return;
-    setDeletingIds((prev) => new Set([...prev, notificationId]));
-    try {
-      // In Firestore, we can't delete documents from client without special rules
-      // Instead, we'll mark them as deleted
-      await updateDoc(doc(firestore, 'universities', university, 'notifications', notificationId), {
-        isDeleted: true,
-      });
-    } catch (error) {
-      console.error('Failed to delete notification:', error);
-    } finally {
-      setDeletingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(notificationId);
-        return next;
-      });
-    }
-  };
-
-  const handleNotificationClick = (notification: NotificationWithId) => {
-    handleMarkAsRead(notification.id);
-
-    // Navigate based on notification type
-    if (notification.relatedRideId) {
-      router.push(`/dashboard/my-rides/${notification.relatedRideId}`);
-    } else if (notification.actionUrl) {
-      router.push(notification.actionUrl);
-    }
-  };
 
   const formatTime = (timestamp: any) => {
     if (!timestamp) return 'Just now';
@@ -185,9 +112,8 @@ export default function NotificationsPage() {
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="w-full max-w-4xl mx-auto px-4 py-6 space-y-5">
+      <div className="flex items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
             <Bell className="h-8 w-8 text-blue-600" />
@@ -195,251 +121,66 @@ export default function NotificationsPage() {
           </h1>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Stay updated with your ride activity</p>
         </div>
-        {unreadCount > 0 && (
-          <Button variant="outline" onClick={handleMarkAllAsRead} className="text-sm">
-            Mark all as read
-          </Button>
-        )}
+        <div className="px-3 py-1.5 rounded-full border border-white/10 bg-slate-900/60 text-xs font-semibold text-slate-200">
+          {allNotifications.length} total • {unreadCount} unread
+        </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={selectedFilter} onValueChange={(v) => setSelectedFilter(v as 'all' | 'unread')}>
-        <TabsList className="grid w-full max-w-xs grid-cols-2">
-          <TabsTrigger value="all">
-            All Notifications
-            {allNotifications.length > 0 && <span className="ml-2 text-xs">({allNotifications.length})</span>}
-          </TabsTrigger>
-          <TabsTrigger value="unread">
-            Unread
-            {unreadCount > 0 && (
-              <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium leading-none text-white bg-red-600 rounded-full">
-                {unreadCount}
-              </span>
-            )}
-          </TabsTrigger>
-        </TabsList>
+      {notificationsLoading ? (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+        </div>
+      ) : allNotifications.length === 0 ? (
+        <Card className="border-white/10 bg-slate-900/40 backdrop-blur-sm">
+          <CardContent className="pt-12 pb-12 text-center">
+            <Bell className="h-12 w-12 mx-auto text-slate-400 mb-4" />
+            <h3 className="text-lg font-semibold text-white">No notifications yet</h3>
+            <p className="text-sm text-slate-400 mt-2">Your latest ride updates will appear here.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {allNotifications.map((notification) => {
+            const IconComponent = NOTIFICATION_ICONS[notification.type as keyof typeof NOTIFICATION_ICONS] || Bell;
+            const iconColor = NOTIFICATION_COLORS[notification.type] || 'text-gray-600';
 
-        <TabsContent value="all" className="space-y-3 mt-6">
-          {notificationsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
-            </div>
-          ) : notifications.length === 0 ? (
-            <Card>
-              <CardContent className="pt-12 pb-12 text-center">
-                <Bell className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">No notifications yet</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                  {selectedFilter === 'unread' ? 'You have read all your notifications!' : 'Your notifications will appear here'}
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            notifications.map((notification) => {
-              const IconComponent = NOTIFICATION_ICONS[notification.type as keyof typeof NOTIFICATION_ICONS] || Bell;
-              const iconColor = NOTIFICATION_COLORS[notification.type] || 'text-gray-600';
-
-              return (
-                <Card
-                  key={notification.id}
-                  className={`cursor-pointer transition-all hover:shadow-md ${
-                    !notification.isRead ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : ''
-                  }`}
-                  onClick={() => handleNotificationClick(notification)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex gap-4">
-                      {/* Icon */}
-                      <div className={`flex-shrink-0 pt-1 ${iconColor}`}>
-                        <IconComponent className="h-6 w-6" />
+            return (
+              <Card
+                key={notification.id}
+                className={`border-white/10 bg-slate-900/55 backdrop-blur-sm transition-all ${
+                  !notification.isRead ? 'ring-1 ring-blue-500/40' : ''
+                }`}
+              >
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-start gap-3 sm:gap-4">
+                    <div className="relative mt-0.5">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-800/80 border border-white/10">
+                        <IconComponent className={`h-5 w-5 ${iconColor}`} />
                       </div>
-
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <h3 className={`font-semibold text-sm ${!notification.isRead ? 'text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>
-                              {notification.title}
-                            </h3>
-                            <p className={`text-sm mt-1 ${!notification.isRead ? 'text-gray-700 dark:text-gray-400' : 'text-gray-600 dark:text-gray-500'}`}>
-                              {notification.message}
-                            </p>
-                            {notification.metadata?.senderName && (
-                              <p className="text-xs text-gray-500 dark:text-gray-600 mt-2">From: {notification.metadata.senderName}</p>
-                            )}
-                          </div>
-
-                          {/* Unread indicator and actions */}
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            {!notification.isRead && (
-                              <div className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0" />
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Time and actions */}
-                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                          <span className="text-xs text-gray-500 dark:text-gray-500">{formatTime(notification.createdAt)}</span>
-                          <div className="flex items-center gap-2">
-                            {!notification.isRead && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs h-auto py-1"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMarkAsRead(notification.id);
-                                }}
-                              >
-                                Mark read
-                              </Button>
-                            )}
-                            {notification.relatedRideId && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs h-auto py-1 gap-1"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  router.push(`/dashboard/my-rides/${notification.relatedRideId}`);
-                                }}
-                              >
-                                View <ChevronRight className="h-3 w-3" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-xs h-auto py-1 text-gray-500 hover:text-red-600"
-                              disabled={deletingIds.has(notification.id)}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(notification.id);
-                              }}
-                            >
-                              {deletingIds.has(notification.id) ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3 w-3" />
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
+                      {!notification.isRead && <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-blue-500" />}
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
-        </TabsContent>
 
-        <TabsContent value="unread" className="space-y-3 mt-6">
-          {/* Same content as 'all' but filtered */}
-          {notificationsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
-            </div>
-          ) : notifications.length === 0 ? (
-            <Card>
-              <CardContent className="pt-12 pb-12 text-center">
-                <CheckCheck className="h-12 w-12 mx-auto text-green-400 mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">All caught up!</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">You have read all your notifications.</p>
-              </CardContent>
-            </Card>
-          ) : (
-            notifications.map((notification) => {
-              const IconComponent = NOTIFICATION_ICONS[notification.type as keyof typeof NOTIFICATION_ICONS] || Bell;
-              const iconColor = NOTIFICATION_COLORS[notification.type] || 'text-gray-600';
-
-              return (
-                <Card
-                  key={notification.id}
-                  className="cursor-pointer transition-all hover:shadow-md bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
-                  onClick={() => handleNotificationClick(notification)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex gap-4">
-                      {/* Icon */}
-                      <div className={`flex-shrink-0 pt-1 ${iconColor}`}>
-                        <IconComponent className="h-6 w-6" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 className="text-sm sm:text-base font-semibold text-white truncate">{notification.title}</h3>
+                        <span className="text-[11px] sm:text-xs text-slate-400 whitespace-nowrap">
+                          {formatTime(notification.createdAt)}
+                        </span>
                       </div>
 
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-sm text-gray-900 dark:text-white">
-                              {notification.title}
-                            </h3>
-                            <p className="text-sm mt-1 text-gray-700 dark:text-gray-400">
-                              {notification.message}
-                            </p>
-                            {notification.metadata?.senderName && (
-                              <p className="text-xs text-gray-500 dark:text-gray-600 mt-2">From: {notification.metadata.senderName}</p>
-                            )}
-                          </div>
+                      <p className="text-sm text-slate-300 mt-1 leading-relaxed">{notification.message}</p>
 
-                          {/* Unread indicator */}
-                          <div className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0 mt-1" />
-                        </div>
-
-                        {/* Time and actions */}
-                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-200 dark:border-blue-800">
-                          <span className="text-xs text-gray-500 dark:text-gray-600">{formatTime(notification.createdAt)}</span>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-xs h-auto py-1"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleMarkAsRead(notification.id);
-                              }}
-                            >
-                              Mark read
-                            </Button>
-                            {notification.relatedRideId && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs h-auto py-1 gap-1"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  router.push(`/dashboard/my-rides/${notification.relatedRideId}`);
-                                }}
-                              >
-                                View <ChevronRight className="h-3 w-3" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-xs h-auto py-1 text-gray-500 hover:text-red-600"
-                              disabled={deletingIds.has(notification.id)}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(notification.id);
-                              }}
-                            >
-                              {deletingIds.has(notification.id) ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3 w-3" />
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
+                      {notification.metadata?.senderName && (
+                        <p className="text-xs text-slate-400 mt-2">From: {notification.metadata.senderName}</p>
+                      )}
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
-        </TabsContent>
-      </Tabs>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

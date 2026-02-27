@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import clsx from 'clsx';
-import { Calendar, Users, Search, Clock, MapPin } from 'lucide-react';
+import { Calendar, Users, Search, Clock, MapPin, Navigation } from 'lucide-react';
 import { UserNameWithBadge } from './UserNameWithBadge';
 import { parseTimestamp } from '@/lib/timestampUtils';
 
@@ -21,6 +21,7 @@ type RideCardProps = {
   stops?: any[];
   onViewRoute?: () => void;
   onViewStops?: () => void;
+  onGoogleMaps?: () => void;
   onBook?: () => void;
   onCardClick?: () => void;
   disabled?: boolean;
@@ -45,6 +46,7 @@ export default function RideCard({
   stops,
   onViewRoute,
   onViewStops,
+  onGoogleMaps,
   onBook,
   onCardClick,
   disabled,
@@ -226,6 +228,19 @@ export default function RideCard({
             <Search className="w-3.5 h-3.5" />
             View Stops
           </button>
+
+          {onGoogleMaps && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onGoogleMaps();
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 text-xs font-medium transition-all duration-200 active:scale-95 min-h-[40px] sm:min-h-0 border border-blue-500/20"
+            >
+              <Navigation className="w-3.5 h-3.5" />
+              Maps
+            </button>
+          )}
 
           <button
             onClick={(e) => {

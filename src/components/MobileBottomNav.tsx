@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Search, PlusCircle, Car, Bell, User, BarChart3 } from 'lucide-react';
+import { Search, PlusCircle, Car, User, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 import { ActivityDot } from '@/components/ActivityIndicatorDot';
@@ -13,8 +13,8 @@ const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find' },
   { href: '/dashboard/my-rides', icon: Car, label: 'My Rides' },
   { href: '/dashboard/create-ride', icon: PlusCircle, label: 'Offer', isCenter: true },
-  { href: '/dashboard/notifications', icon: Bell, label: 'Alerts' },
   { href: '/dashboard/my-bookings', icon: User, label: 'Bookings' },
+  { href: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
 ];
 
 export function MobileBottomNav() {
@@ -57,8 +57,7 @@ export function MobileBottomNav() {
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
           const hasActivity = (item.label === 'My Rides' && hasRidesActivity) ||
-            (item.label === 'Bookings' && (hasBookingsActivity || hasChatActivity)) ||
-            (item.label === 'Alerts' && hasNotificationsActivity);
+            (item.label === 'Alerts' && (hasBookingsActivity || hasChatActivity));
 
           if (item.isCenter) {
             return (

@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { useCollection as useBookingCollection } from '@/firebase/firestore/use-collection';
-import { MapPin, Clock, Users, CheckCircle2, X, Trash, AlertCircle, Calendar } from 'lucide-react';
+import { MapPin, Clock, Users, CheckCircle2, X, Trash, AlertCircle, Calendar, Navigation } from 'lucide-react';
 import { Ride as RideType, Booking as BookingType } from '@/lib/types';
 import { formatTimestamp } from '@/lib/timestampUtils';
 import { UserNameWithBadge } from '@/components/UserNameWithBadge';
@@ -19,6 +19,7 @@ import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialo
 import ChatButton from '@/components/chat/ChatButton';
 import PassengerDetailModal from '@/components/PassengerDetailModal';
 import { LatLngExpression } from 'leaflet';
+import { openGoogleMapsRoute } from '@/lib/googleMapsRoute';
 
 // Small helper: truncate string to n characters with ellipsis
 function truncateChars(s?: string | null, n = 30) {
@@ -473,6 +474,27 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
                     {ride.status}
                   </Badge>
                 </div>
+
+                <Button
+                  variant="outline"
+                  className="w-full border-blue-500/30 text-blue-300 hover:bg-blue-500/20"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const opened = openGoogleMapsRoute({
+                      route: ride.route,
+                      stops: ride.stops,
+                      fromName: ride.from,
+                      toName: ride.to,
+                      travelMode: ride.transportMode === 'bike' ? 'bicycling' : 'driving',
+                    });
+                    if (!opened) {
+                      toast({ variant: 'destructive', title: 'Route unavailable', description: 'No route data available for this ride.' });
+                    }
+                  }}
+                >
+                  <Navigation className="h-4 w-4 mr-2" />
+                  View Route on Google Maps
+                </Button>
               </div>
             </div>
 

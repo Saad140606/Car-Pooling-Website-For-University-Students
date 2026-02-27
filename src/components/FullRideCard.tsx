@@ -14,6 +14,7 @@ import { decodePolyline } from '@/lib/route';
 import { detectUniversityFromString } from '@/lib/universities';
 import { parseTimestamp } from '@/lib/timestampUtils';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
+import { openGoogleMapsRoute } from '@/lib/googleMapsRoute';
 
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
   useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
@@ -543,6 +544,18 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         onViewRoute={() => setOpenView(true)}
         onViewStops={() => setOpenStops(true)}
         onCardClick={() => setOpenDetail(true)}
+        onGoogleMaps={() => {
+          const opened = openGoogleMapsRoute({
+            route: ride.route,
+            stops: ride.stops,
+            fromName: ride.from,
+            toName: ride.to,
+            travelMode: ride.transportMode === 'bike' ? 'bicycling' : 'driving',
+          });
+          if (!opened) {
+            toast({ variant: 'destructive', title: 'Route unavailable', description: 'No route data available for this ride.' });
+          }
+        }}
         onBook={() => {
           if (!user) {
             router.push('/auth/select-university');

@@ -285,13 +285,13 @@ interface StatCardsGridProps {
 
 export function StatCardsGrid({ children, columns = 4 }: StatCardsGridProps) {
   const gridCols = {
-    2: 'grid-cols-1 xs:grid-cols-2',
-    3: 'grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-3',
-    4: 'grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
+    2: 'grid-cols-1 sm:grid-cols-2',
+    3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+    4: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4',
   };
 
   return (
-    <div className={cn('grid gap-3 sm:gap-4 [@media(max-height:700px)]:gap-2', gridCols[columns])}>
+    <div className={cn('grid gap-3 sm:gap-4 [@media(max-height:700px)]:gap-2 min-w-0', gridCols[columns])}>
       {children}
     </div>
   );
@@ -314,6 +314,7 @@ interface DriverStatsProps {
   seatEfficiency: number;
   totalEarnings: number;
   completionRate: number;
+  cancellationRate?: number;
 }
 
 export function DriverStatCards({
@@ -329,7 +330,9 @@ export function DriverStatCards({
   seatEfficiency,
   totalEarnings,
   completionRate,
+  cancellationRate,
 }: DriverStatsProps) {
+  const resolvedCancellationRate = cancellationRate ?? (totalRides > 0 ? Math.round((cancelledRides / totalRides) * 100) : 0);
   return (
     <StatCardsGrid columns={4}>
       <StatCard
@@ -372,10 +375,10 @@ export function DriverStatCards({
       />
       <StatCard
         title="Cancellation Rate"
-        value={totalRides > 0 ? Math.round((cancelledRides / totalRides) * 100) : 0}
+        value={resolvedCancellationRate}
         suffix="%"
         icon={<XCircle className="w-full h-full" />}
-        variant={cancelledRides > totalRides * 0.2 ? 'error' : 'warning'}
+        variant={resolvedCancellationRate > 20 ? 'error' : 'warning'}
         delay={5}
       />
       <StatCard
@@ -442,6 +445,7 @@ interface PassengerStatsProps {
   totalRides: number;
   completedRides: number;
   cancelledRides: number;
+  completionRate?: number;
   averageRating: number | null;
   trustScore: number;
   activeDays: number;
@@ -451,12 +455,14 @@ interface PassengerStatsProps {
   averageCostPerRide: number;
   requestToConfirmRate: number;
   ridesRequested: number;
+  cancellationRate?: number;
 }
 
 export function PassengerStatCards({
   totalRides,
   completedRides,
   cancelledRides,
+  completionRate,
   averageRating,
   trustScore,
   activeDays,
@@ -466,7 +472,10 @@ export function PassengerStatCards({
   averageCostPerRide,
   requestToConfirmRate,
   ridesRequested,
+  cancellationRate,
 }: PassengerStatsProps) {
+  const resolvedCancellationRate = cancellationRate ?? (totalRides > 0 ? Math.round((cancelledRides / totalRides) * 100) : 0);
+  const resolvedCompletionRate = completionRate ?? Math.max(0, Math.min(100, 100 - resolvedCancellationRate));
   return (
     <StatCardsGrid columns={4}>
       <StatCard
@@ -516,11 +525,11 @@ export function PassengerStatCards({
         delay={5}
       />
       <StatCard
-        title="Booking Success Rate"
-        value={requestToConfirmRate}
+        title="Completion Rate"
+        value={resolvedCompletionRate}
         suffix="%"
         icon={<Target className="w-full h-full" />}
-        variant={requestToConfirmRate >= 80 ? 'success' : 'warning'}
+        variant={resolvedCompletionRate >= 80 ? 'success' : 'warning'}
         delay={6}
       />
       <StatCard
@@ -560,10 +569,10 @@ export function PassengerStatCards({
       />
       <StatCard
         title="Cancellation Rate"
-        value={totalRides > 0 ? Math.round((cancelledRides / totalRides) * 100) : 0}
+        value={resolvedCancellationRate}
         suffix="%"
         icon={<XCircle className="w-full h-full" />}
-        variant={cancelledRides > totalRides * 0.2 ? 'error' : 'warning'}
+        variant={resolvedCancellationRate > 20 ? 'error' : 'warning'}
         delay={11}
         compact
       />

@@ -3,6 +3,14 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isAuth() { return request.auth != null; }
     function isAdmin() { return isAuth() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isRideActionLocked(univId) {
+      return isAuth()
+        && exists(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid))
+        && (
+          get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data.accountLockUntil is timestamp
+          && request.time < get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data.accountLockUntil
+        );
+    }
 
     match /admins/{adminId} {
       allow get: if isAuth() && request.auth.uid == adminId;
@@ -50,6 +58,53 @@ service cloud.firestore {
       }
     }
 
+    // Spark push flow (no Cloud Functions): user token mirror
+    match /users/{userId} {
+      allow get: if isAuth() && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create, update: if isAuth()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'fcmToken',
+          'fcmTokens',
+          'fcmTokenUpdatedAt',
+          'pushEnabled'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // Spark push flow (example queue): top-level ride request docs
+    match /rides/{rideId} {
+      allow create: if isAuth()
+        && request.resource.data.type == 'request'
+        && (
+          (request.resource.data.createdBy is string && request.resource.data.createdBy == request.auth.uid)
+          || (request.resource.data.passengerId is string && request.resource.data.passengerId == request.auth.uid)
+        );
+
+      allow get, list: if isAuth();
+
+      // Clients can only update lightweight notification/audit fields on docs they own.
+      allow update: if isAuth()
+        && (
+          (resource.data.createdBy is string && resource.data.createdBy == request.auth.uid)
+          || (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
+        )
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'notificationSent',
+          'notificationStatus',
+          'notificationAttemptedAt',
+          'notificationSentAt',
+          'notificationSuccessCount',
+          'notificationFailureCount',
+          'notificationError'
+        ]);
+
+      allow delete: if isAdmin();
+    }
+
     match /universities/{univId} {
       allow get, list: if true;
 
@@ -73,6 +128,7 @@ service cloud.firestore {
         allow get, list: if true;
 
         allow create: if isAuth()
+          && !isRideActionLocked(univId)
           && (
             (request.resource.data.createdBy is string && request.resource.data.createdBy == request.auth.uid)
             || (request.resource.data.driverId is string && request.resource.data.driverId == request.auth.uid)
@@ -89,7 +145,7 @@ service cloud.firestore {
           && request.resource.data.confirmedPassengers.toSet().difference(resource.data.get('confirmedPassengers', []).toSet()).hasOnly([request.auth.uid]);
 
         match /requests/{requestId} {
-          allow create: if isAuth() && request.resource.data.passengerId == request.auth.uid;
+          allow create: if isAuth() && !isRideActionLocked(univId) && request.resource.data.passengerId == request.auth.uid;
           allow get: if isAdmin() || (isAuth() && (
             (resource.data.passengerId is string && resource.data.passengerId == request.auth.uid)
             || (resource.data.driverId is string && resource.data.driverId == request.auth.uid)
@@ -104,7 +160,7 @@ service cloud.firestore {
       }
 
       match /bookings/{bookingId} {
-        allow create: if isAuth() && (
+        allow create: if isAuth() && !isRideActionLocked(univId) && (
           request.resource.data.passengerId == request.auth.uid
           || request.resource.data.driverId == request.auth.uid
         );

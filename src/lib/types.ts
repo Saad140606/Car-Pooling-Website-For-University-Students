@@ -35,6 +35,29 @@ export interface UserProfile {
   accountLockUntil?: Timestamp; // Account locked until this timestamp
   // Cooldown period after 3 late cancellations
   cooldownUntil?: Timestamp; // User cannot cancel again until this time
+
+  // ===== FEEDBACK PROMPT STATE =====
+  feedback?: {
+    firstRide?: {
+      submittedAt?: Timestamp;
+      skippedAt?: Timestamp;
+      score?: number;
+      category?: string;
+      comment?: string;
+      updatedAt?: Timestamp;
+    };
+    app?: {
+      submittedAt?: Timestamp;
+      skippedAt?: Timestamp;
+      lastPromptAt?: Timestamp;
+      nextPromptAt?: Timestamp;
+      promptCount?: number;
+      score?: number;
+      category?: string;
+      comment?: string;
+      updatedAt?: Timestamp;
+    };
+  };
 }
 
 // Canonical user profile used for new hierarchical storage under
@@ -62,6 +85,28 @@ export interface CanonicalUserProfile {
   idVerifiedAt?: Timestamp;
   // Computed field: true if both email + ID verified
   isVerified?: boolean;
+  // Feedback prompt state
+  feedback?: {
+    firstRide?: {
+      submittedAt?: Timestamp;
+      skippedAt?: Timestamp;
+      score?: number;
+      category?: string;
+      comment?: string;
+      updatedAt?: Timestamp;
+    };
+    app?: {
+      submittedAt?: Timestamp;
+      skippedAt?: Timestamp;
+      lastPromptAt?: Timestamp;
+      nextPromptAt?: Timestamp;
+      promptCount?: number;
+      score?: number;
+      category?: string;
+      comment?: string;
+      updatedAt?: Timestamp;
+    };
+  };
 }
 
 export interface Ride {

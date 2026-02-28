@@ -7,6 +7,7 @@
 
 import { getMessaging, getToken, deleteToken } from 'firebase/messaging';
 import { Firestore, doc, setDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 const VAPID_KEY = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
 
@@ -56,13 +57,27 @@ export class FCMTokenManager {
 
     try {
       const messaging = getMessaging();
+      const registration = await this.getServiceWorkerRegistration();
       
       // Get the FCM token
-      // Note: This requires service worker at /firebase-messaging-sw.js
-      const token = await getToken(messaging, {
+      // Use the main PWA service worker to avoid scope conflicts.
+      let token = await getToken(messaging, {
         vapidKey: VAPID_KEY,
-        serviceWorkerRegistration: await this.getServiceWorkerRegistration(),
+        serviceWorkerRegistration: registration,
       });
+
+      if (!token && registration) {
+        try {
+          const existingSubscription = await registration.pushManager.getSubscription();
+          if (existingSubscription) {
+            await existingSubscription.unsubscribe();
+            token = await getToken(messaging, {
+              vapidKey: VAPID_KEY,
+              serviceWorkerRegistration: registration,
+            });
+          }
+        } catch (_) {}
+      }
 
       if (!token) {
         console.warn('[FCMTokenManager] Failed to get FCM token. This may indicate:');
@@ -81,6 +96,14 @@ export class FCMTokenManager {
         registeredAt: Timestamp.now(),
         platform: this.getPlatformInfo(),
         userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+      }, { merge: true });
+
+      // Spark-compatible external-worker structure:
+      // Also mirror token to `users/{uid}.fcmToken`.
+      const userDocRef = doc(this.firestore, 'users', this.userId);
+      await setDoc(userDocRef, {
+        fcmToken: token,
+        fcmTokenUpdatedAt: Timestamp.now(),
       }, { merge: true });
 
       console.log('[FCMTokenManager] ✅ Token registered in Firestore');
@@ -136,16 +159,31 @@ export class FCMTokenManager {
         this.tokenRefreshInterval = null;
       }
 
-      // Delete token from Firestore
-      const tokenDocRef = doc(this.firestore, 'fcm_tokens', this.userId);
-      await deleteDoc(tokenDocRef);
+      // Only attempt Firestore cleanup if user is still authenticated as the same uid.
+      // During logout transitions, writes can fail with permission-denied.
+      const auth = getAuth();
+      const canWrite = auth.currentUser?.uid === this.userId;
+
+      if (canWrite) {
+        const tokenDocRef = doc(this.firestore, 'fcm_tokens', this.userId);
+        await deleteDoc(tokenDocRef);
+
+        const userDocRef = doc(this.firestore, 'users', this.userId);
+        await setDoc(userDocRef, {
+          fcmToken: null,
+          fcmTokenUpdatedAt: Timestamp.now(),
+        }, { merge: true });
+      }
 
       console.log('[FCMTokenManager] Token cleaned up from Firestore');
 
       // Clear local storage
       this.clearTokenLocally();
     } catch (error) {
-      console.warn('[FCMTokenManager] Error during cleanup:', error);
+      const code = (error as any)?.code;
+      if (code !== 'permission-denied') {
+        console.warn('[FCMTokenManager] Error during cleanup:', error);
+      }
     }
 
     this.userId = null;
@@ -161,9 +199,52 @@ export class FCMTokenManager {
     }
 
     try {
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-      console.log('[FCMTokenManager] Service worker registered:', registration.scope);
-      return registration;
+      const legacyRegistration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+      if (legacyRegistration) {
+        await legacyRegistration.unregister().catch(() => {});
+      }
+
+      const waitForActiveWorker = async (registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> => {
+        if (registration.active) {
+          return registration;
+        }
+
+        try {
+          await navigator.serviceWorker.ready;
+        } catch (_) {}
+
+        if (registration.active) {
+          return registration;
+        }
+
+        await new Promise<void>((resolve) => {
+          const sw = registration.installing || registration.waiting;
+          if (!sw) {
+            window.setTimeout(resolve, 250);
+            return;
+          }
+          const done = () => resolve();
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'activated') done();
+          });
+          window.setTimeout(done, 1500);
+        });
+
+        return registration;
+      };
+
+      const existingRootRegistration = await navigator.serviceWorker.getRegistration('/');
+      if (existingRootRegistration) {
+        return await waitForActiveWorker(existingRootRegistration);
+      }
+
+      const registration = await navigator.serviceWorker.register('/service-worker.js', {
+        scope: '/',
+        updateViaCache: 'none',
+      });
+
+      console.log('[FCMTokenManager] Service worker registered for FCM:', registration.scope);
+      return await waitForActiveWorker(registration);
     } catch (error) {
       console.warn('[FCMTokenManager] Failed to register service worker:', error);
       return undefined;
@@ -225,6 +306,8 @@ export class FCMTokenManager {
       if (newToken && this.userId && this.firestore) {
         const tokenDocRef = doc(this.firestore, 'fcm_tokens', this.userId);
         await setDoc(tokenDocRef, { token: newToken }, { merge: true });
+        const userDocRef = doc(this.firestore, 'users', this.userId);
+        await setDoc(userDocRef, { fcmToken: newToken, fcmTokenUpdatedAt: Timestamp.now() }, { merge: true });
         console.log('[FCMTokenManager] ✅ New token registered');
         return newToken;
       }

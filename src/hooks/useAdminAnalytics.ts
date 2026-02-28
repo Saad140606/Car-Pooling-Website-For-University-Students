@@ -9,6 +9,7 @@ export interface UniversityStats {
   users: {
     total: number;
     verified: number;
+    universityVerified: number;
     unverified: number;
     active: number;
   };
@@ -31,6 +32,12 @@ export interface UniversityStats {
     files: number;
   };
   earnings: {
+    total: number;
+    daily: number;
+    weekly: number;
+    monthly: number;
+  };
+  spendings: {
     total: number;
     daily: number;
     weekly: number;
@@ -61,12 +68,63 @@ export interface AdminAnalytics {
 }
 
 const emptyStats: UniversityStats = {
-  users: { total: 0, verified: 0, unverified: 0, active: 0 },
+  users: { total: 0, verified: 0, universityVerified: 0, unverified: 0, active: 0 },
   rides: { total: 0, active: 0, completed: 0, cancelled: 0 },
   bookings: { total: 0, confirmed: 0, cancelled: 0, pending: 0, seatsBooked: 0 },
   messages: { total: 0, voice: 0, files: 0 },
   earnings: { total: 0, daily: 0, weekly: 0, monthly: 0 },
+  spendings: { total: 0, daily: 0, weekly: 0, monthly: 0 },
 };
+
+function normalizeStatus(status: any): string {
+  return String(status || '').trim().toLowerCase();
+}
+
+function isCancelledStatus(status: any): boolean {
+  const s = normalizeStatus(status);
+  return ['cancelled', 'canceled', 'rejected', 'declined', 'expired'].includes(s);
+}
+
+function isConfirmedBookingStatus(status: any): boolean {
+  const s = normalizeStatus(status);
+  return ['confirmed', 'accepted', 'booked', 'completed'].includes(s);
+}
+
+function toNumber(value: any, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function resolveBookingSeats(data: any): number {
+  return Math.max(
+    1,
+    toNumber(data?.seats, 0) ||
+      toNumber(data?.seatsBooked, 0) ||
+      toNumber(data?.requestedSeats, 0) ||
+      1
+  );
+}
+
+function resolveBookingFare(data: any): number {
+  const seats = resolveBookingSeats(data);
+  const direct =
+    toNumber(data?.totalFare, 0) ||
+    toNumber(data?.fare, 0) ||
+    toNumber(data?.amount, 0) ||
+    toNumber(data?.amountPaid, 0) ||
+    toNumber(data?.paymentAmount, 0);
+  if (direct > 0) return direct;
+
+  const seatPrice =
+    toNumber(data?.pricePerSeat, 0) ||
+    toNumber(data?.price, 0) ||
+    toNumber(data?.ridePricePerSeat, 0) ||
+    toNumber(data?.ridePrice, 0) ||
+    toNumber(data?.ride?.pricePerSeat, 0) ||
+    toNumber(data?.ride?.price, 0);
+
+  return seatPrice > 0 ? seatPrice * seats : 0;
+}
 
 function getLast7Days(): string[] {
   const days: string[] = [];
@@ -153,12 +211,13 @@ export function useAdminAnalytics(): AdminAnalytics {
           const docs = snapshot.docs;
           const total = docs.length;
           const verified = docs.filter((d) => d.data().universityEmailVerified === true || d.data().emailVerified === true).length;
+          const universityVerified = docs.filter((d) => d.data().universityEmailVerified === true).length;
           const unverified = total - verified;
           const active = docs.filter((d) => d.data().status === "active" || !d.data().status).length;
 
           setFast((prev) => ({
             ...prev,
-            users: { total, verified, unverified, active },
+            users: { total, verified, universityVerified, unverified, active },
           }));
 
           // Update user growth trend
@@ -192,12 +251,13 @@ export function useAdminAnalytics(): AdminAnalytics {
           const docs = snapshot.docs;
           const total = docs.length;
           const verified = docs.filter((d) => d.data().universityEmailVerified === true || d.data().emailVerified === true).length;
+          const universityVerified = docs.filter((d) => d.data().universityEmailVerified === true).length;
           const unverified = total - verified;
           const active = docs.filter((d) => d.data().status === "active" || !d.data().status).length;
 
           setNed((prev) => ({
             ...prev,
-            users: { total, verified, unverified, active },
+            users: { total, verified, universityVerified, unverified, active },
           }));
 
           // Update user growth trend
@@ -231,12 +291,13 @@ export function useAdminAnalytics(): AdminAnalytics {
           const docs = snapshot.docs;
           const total = docs.length;
           const verified = docs.filter((d) => d.data().universityEmailVerified === true || d.data().emailVerified === true).length;
+          const universityVerified = docs.filter((d) => d.data().universityEmailVerified === true).length;
           const unverified = total - verified;
           const active = docs.filter((d) => d.data().status === "active" || !d.data().status).length;
 
           setKarachi((prev) => ({
             ...prev,
-            users: { total, verified, unverified, active },
+            users: { total, verified, universityVerified, unverified, active },
           }));
 
           // Update user growth trend
@@ -269,9 +330,15 @@ export function useAdminAnalytics(): AdminAnalytics {
         const unsubFastRides = onSnapshot(fastRidesRef, (snapshot) => {
           const docs = snapshot.docs;
           const total = docs.length;
-          const active = docs.filter((d) => ["active", "in_progress", "scheduled"].includes(d.data().status)).length;
-          const completed = docs.filter((d) => d.data().status === "completed").length;
-          const cancelled = docs.filter((d) => d.data().status === "cancelled").length;
+          const active = docs.filter((d) => {
+            const s = normalizeStatus(d.data().status);
+            return ["active", "in_progress", "scheduled", "ongoing", "available", "full"].includes(s);
+          }).length;
+          const completed = docs.filter((d) => {
+            const s = normalizeStatus(d.data().status);
+            return ["completed", "finished"].includes(s);
+          }).length;
+          const cancelled = docs.filter((d) => isCancelledStatus(d.data().status)).length;
 
           // Calculate earnings
           let totalEarnings = 0;
@@ -317,9 +384,15 @@ export function useAdminAnalytics(): AdminAnalytics {
         const unsubNedRides = onSnapshot(nedRidesRef, (snapshot) => {
           const docs = snapshot.docs;
           const total = docs.length;
-          const active = docs.filter((d) => ["active", "in_progress", "scheduled"].includes(d.data().status)).length;
-          const completed = docs.filter((d) => d.data().status === "completed").length;
-          const cancelled = docs.filter((d) => d.data().status === "cancelled").length;
+          const active = docs.filter((d) => {
+            const s = normalizeStatus(d.data().status);
+            return ["active", "in_progress", "scheduled", "ongoing", "available", "full"].includes(s);
+          }).length;
+          const completed = docs.filter((d) => {
+            const s = normalizeStatus(d.data().status);
+            return ["completed", "finished"].includes(s);
+          }).length;
+          const cancelled = docs.filter((d) => isCancelledStatus(d.data().status)).length;
 
           // Calculate earnings
           let totalEarnings = 0;
@@ -365,9 +438,15 @@ export function useAdminAnalytics(): AdminAnalytics {
         const unsubKarachiRides = onSnapshot(karachiRidesRef, (snapshot) => {
           const docs = snapshot.docs;
           const total = docs.length;
-          const active = docs.filter((d) => ["active", "in_progress", "scheduled"].includes(d.data().status)).length;
-          const completed = docs.filter((d) => d.data().status === "completed").length;
-          const cancelled = docs.filter((d) => d.data().status === "cancelled").length;
+          const active = docs.filter((d) => {
+            const s = normalizeStatus(d.data().status);
+            return ["active", "in_progress", "scheduled", "ongoing", "available", "full"].includes(s);
+          }).length;
+          const completed = docs.filter((d) => {
+            const s = normalizeStatus(d.data().status);
+            return ["completed", "finished"].includes(s);
+          }).length;
+          const cancelled = docs.filter((d) => isCancelledStatus(d.data().status)).length;
 
           // Calculate earnings
           let totalEarnings = 0;
@@ -413,14 +492,21 @@ export function useAdminAnalytics(): AdminAnalytics {
         const unsubFastBookings = onSnapshot(fastBookingsRef, (snapshot) => {
           const docs = snapshot.docs;
           const total = docs.length;
-          const confirmed = docs.filter((d) => d.data().status === "confirmed" || d.data().status === "accepted").length;
-          const cancelled = docs.filter((d) => d.data().status === "cancelled").length;
-          const pending = docs.filter((d) => d.data().status === "pending").length;
-          const seatsBooked = docs.reduce((sum, d) => sum + (d.data().seats || d.data().seatsBooked || 1), 0);
+          const confirmed = docs.filter((d) => isConfirmedBookingStatus(d.data().status)).length;
+          const cancelled = docs.filter((d) => isCancelledStatus(d.data().status)).length;
+          const pending = docs.filter((d) => normalizeStatus(d.data().status) === "pending").length;
+          const seatsBooked = docs.reduce((sum, d) => sum + resolveBookingSeats(d.data()), 0);
+          const totalSpendings = docs.reduce((sum, d) => {
+            return isConfirmedBookingStatus(d.data().status)
+              ? sum + resolveBookingFare(d.data())
+              : sum;
+          }, 0);
 
           setFast((prev) => ({
             ...prev,
             bookings: { total, confirmed, cancelled, pending, seatsBooked },
+            earnings: { ...prev.earnings, total: totalSpendings },
+            spendings: { ...prev.spendings, total: totalSpendings },
           }));
 
           // Update bookings per day trend
@@ -442,6 +528,15 @@ export function useAdminAnalytics(): AdminAnalytics {
               ...item,
               fast: bookingsByDay[item.date] || item.fast,
             })),
+            earningsPerDay: prev.earningsPerDay.map((item) => ({
+              ...item,
+              fast: docs
+                .filter((d) => {
+                  const createdAt = toDate(d.data().createdAt);
+                  return createdAt && createdAt.toISOString().split("T")[0] === item.date && isConfirmedBookingStatus(d.data().status);
+                })
+                .reduce((sum, d) => sum + resolveBookingFare(d.data()), 0),
+            })),
           }));
 
           console.log("[AdminAnalytics] FAST bookings:", total);
@@ -453,14 +548,21 @@ export function useAdminAnalytics(): AdminAnalytics {
         const unsubNedBookings = onSnapshot(nedBookingsRef, (snapshot) => {
           const docs = snapshot.docs;
           const total = docs.length;
-          const confirmed = docs.filter((d) => d.data().status === "confirmed" || d.data().status === "accepted").length;
-          const cancelled = docs.filter((d) => d.data().status === "cancelled").length;
-          const pending = docs.filter((d) => d.data().status === "pending").length;
-          const seatsBooked = docs.reduce((sum, d) => sum + (d.data().seats || d.data().seatsBooked || 1), 0);
+          const confirmed = docs.filter((d) => isConfirmedBookingStatus(d.data().status)).length;
+          const cancelled = docs.filter((d) => isCancelledStatus(d.data().status)).length;
+          const pending = docs.filter((d) => normalizeStatus(d.data().status) === "pending").length;
+          const seatsBooked = docs.reduce((sum, d) => sum + resolveBookingSeats(d.data()), 0);
+          const totalSpendings = docs.reduce((sum, d) => {
+            return isConfirmedBookingStatus(d.data().status)
+              ? sum + resolveBookingFare(d.data())
+              : sum;
+          }, 0);
 
           setNed((prev) => ({
             ...prev,
             bookings: { total, confirmed, cancelled, pending, seatsBooked },
+            earnings: { ...prev.earnings, total: totalSpendings },
+            spendings: { ...prev.spendings, total: totalSpendings },
           }));
 
           // Update bookings per day trend
@@ -482,6 +584,15 @@ export function useAdminAnalytics(): AdminAnalytics {
               ...item,
               ned: bookingsByDay[item.date] || item.ned,
             })),
+            earningsPerDay: prev.earningsPerDay.map((item) => ({
+              ...item,
+              ned: docs
+                .filter((d) => {
+                  const createdAt = toDate(d.data().createdAt);
+                  return createdAt && createdAt.toISOString().split("T")[0] === item.date && isConfirmedBookingStatus(d.data().status);
+                })
+                .reduce((sum, d) => sum + resolveBookingFare(d.data()), 0),
+            })),
           }));
 
           console.log("[AdminAnalytics] NED bookings:", total);
@@ -493,14 +604,21 @@ export function useAdminAnalytics(): AdminAnalytics {
         const unsubKarachiBookings = onSnapshot(karachiBookingsRef, (snapshot) => {
           const docs = snapshot.docs;
           const total = docs.length;
-          const confirmed = docs.filter((d) => d.data().status === "confirmed" || d.data().status === "accepted").length;
-          const cancelled = docs.filter((d) => d.data().status === "cancelled").length;
-          const pending = docs.filter((d) => d.data().status === "pending").length;
-          const seatsBooked = docs.reduce((sum, d) => sum + (d.data().seats || d.data().seatsBooked || 1), 0);
+          const confirmed = docs.filter((d) => isConfirmedBookingStatus(d.data().status)).length;
+          const cancelled = docs.filter((d) => isCancelledStatus(d.data().status)).length;
+          const pending = docs.filter((d) => normalizeStatus(d.data().status) === "pending").length;
+          const seatsBooked = docs.reduce((sum, d) => sum + resolveBookingSeats(d.data()), 0);
+          const totalSpendings = docs.reduce((sum, d) => {
+            return isConfirmedBookingStatus(d.data().status)
+              ? sum + resolveBookingFare(d.data())
+              : sum;
+          }, 0);
 
           setKarachi((prev) => ({
             ...prev,
             bookings: { total, confirmed, cancelled, pending, seatsBooked },
+            earnings: { ...prev.earnings, total: totalSpendings },
+            spendings: { ...prev.spendings, total: totalSpendings },
           }));
 
           // Update bookings per day trend
@@ -521,6 +639,15 @@ export function useAdminAnalytics(): AdminAnalytics {
             bookingsPerDay: prev.bookingsPerDay.map((item) => ({
               ...item,
               karachi: bookingsByDay[item.date] || item.karachi,
+            })),
+            earningsPerDay: prev.earningsPerDay.map((item) => ({
+              ...item,
+              karachi: docs
+                .filter((d) => {
+                  const createdAt = toDate(d.data().createdAt);
+                  return createdAt && createdAt.toISOString().split("T")[0] === item.date && isConfirmedBookingStatus(d.data().status);
+                })
+                .reduce((sum, d) => sum + resolveBookingFare(d.data()), 0),
             })),
           }));
 
@@ -606,6 +733,7 @@ export function useAdminAnalytics(): AdminAnalytics {
     users: {
       total: fast.users.total + ned.users.total + karachi.users.total,
       verified: fast.users.verified + ned.users.verified + karachi.users.verified,
+      universityVerified: fast.users.universityVerified + ned.users.universityVerified + karachi.users.universityVerified,
       unverified: fast.users.unverified + ned.users.unverified + karachi.users.unverified,
       active: fast.users.active + ned.users.active + karachi.users.active,
     },
@@ -632,6 +760,12 @@ export function useAdminAnalytics(): AdminAnalytics {
       daily: fast.earnings.daily + ned.earnings.daily + karachi.earnings.daily,
       weekly: fast.earnings.weekly + ned.earnings.weekly + karachi.earnings.weekly,
       monthly: fast.earnings.monthly + ned.earnings.monthly + karachi.earnings.monthly,
+    },
+    spendings: {
+      total: fast.spendings.total + ned.spendings.total + karachi.spendings.total,
+      daily: fast.spendings.daily + ned.spendings.daily + karachi.spendings.daily,
+      weekly: fast.spendings.weekly + ned.spendings.weekly + karachi.spendings.weekly,
+      monthly: fast.spendings.monthly + ned.spendings.monthly + karachi.spendings.monthly,
     },
   };
 

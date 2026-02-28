@@ -14,51 +14,52 @@ export async function GET(req: Request) {
 
     const db = admin.firestore();
 
-    let query: any = db.collection('bookings');
-    
-    if (universityId) {
-      const primaryQuery = query.where('university', '==', universityId);
-      const testSnap = await primaryQuery.limit(1).get().catch(() => null);
-      query = testSnap && testSnap.size > 0
-        ? primaryQuery
-        : query.where('universityId', '==', universityId);
+    const normalizedUniversity = String(universityId || '').toLowerCase();
+
+    let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      const snap = await db.collectionGroup('bookings').get();
+      docs = snap.docs;
+      console.log(`[admin/bookings] Found ${docs.length} bookings via collectionGroup`);
+    } catch (err) {
+      console.warn('[admin/bookings] collectionGroup failed, trying top-level', err);
+      const snap = await db.collection('bookings').get();
+      docs = snap.docs;
+      console.log(`[admin/bookings] Found ${docs.length} bookings via top-level`);
     }
 
-    // Get total count
-    const countSnap = await query.get().catch(err => {
-      console.error('[admin/bookings] count fetch failed', err);
-      return null;
+    const withMeta = docs.map((doc) => {
+      const data = doc.data();
+      const pathMatch = doc.ref.path.match(/universities\/([^/]+)\/bookings\//i);
+      const derivedUniversityId = pathMatch?.[1]?.toLowerCase() || '';
+      const fieldUniversity = String(data.universityId || data.university || '').toLowerCase();
+      return {
+        doc,
+        data,
+        universityId: fieldUniversity || derivedUniversityId,
+      };
     });
 
-    const total = countSnap?.size || 0;
+    const filtered = normalizedUniversity
+      ? withMeta.filter((item) => item.universityId === normalizedUniversity)
+      : withMeta;
 
-    // Fetch with pagination
-    let docsSnap = null;
-    try {
-      docsSnap = await query
-        .orderBy('createdAt', 'desc')
-        .limit(limit)
-        .offset(offset)
-        .get();
-    } catch (err) {
-      console.warn('[admin/bookings] ordered query failed, trying unordered', err);
-      try {
-        docsSnap = await query
-          .limit(limit)
-          .offset(offset)
-          .get();
-      } catch (err2) {
-        console.error('[admin/bookings] fetch failed', err2);
-        docsSnap = null;
-      }
-    }
+    const sorted = filtered.sort((a, b) => {
+      const aMs = a.data.createdAt?.toDate?.()?.getTime?.() || new Date(a.data.createdAt || 0).getTime() || 0;
+      const bMs = b.data.createdAt?.toDate?.()?.getTime?.() || new Date(b.data.createdAt || 0).getTime() || 0;
+      return bMs - aMs;
+    });
 
-    const bookings = docsSnap?.docs.map(doc => ({
+    const total = sorted.length;
+    const page = sorted.slice(offset, offset + limit);
+
+    const bookings = page.map(({ doc, data, universityId }) => ({
       id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt,
-      updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString() || doc.data().updatedAt,
-    })) || [];
+      ...data,
+      universityId,
+      createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+      updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+    }));
 
     console.log(`[admin/bookings] Fetched ${bookings.length} bookings (total: ${total})`);
 
@@ -72,5 +73,81 @@ export async function GET(req: Request) {
   } catch (e: any) {
     console.error('[admin/bookings] error', e);
     return NextResponse.json({ error: e?.message || 'Failed to fetch bookings' }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const auth = await requireAdmin(req);
+    if (!auth.ok) return auth.response;
+
+    const { bookingId, universityId, updates } = await req.json();
+    if (!bookingId || !updates || typeof updates !== 'object') {
+      return NextResponse.json({ error: 'bookingId and updates are required' }, { status: 400 });
+    }
+
+    const db = admin.firestore();
+    const writePayload = { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    const paths = [
+      universityId ? `universities/${String(universityId).toLowerCase()}/bookings/${bookingId}` : null,
+      `bookings/${bookingId}`,
+    ].filter(Boolean) as string[];
+
+    let updated = false;
+    for (const path of paths) {
+      const ref = db.doc(path);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      await ref.set(writePayload, { merge: true });
+      updated = true;
+    }
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('[admin/bookings:PATCH] error', e);
+    return NextResponse.json({ error: e?.message || 'Failed to update booking' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const auth = await requireAdmin(req);
+    if (!auth.ok) return auth.response;
+
+    const { searchParams } = new URL(req.url);
+    const bookingId = searchParams.get('bookingId');
+    const universityId = searchParams.get('universityId');
+
+    if (!bookingId) {
+      return NextResponse.json({ error: 'bookingId is required' }, { status: 400 });
+    }
+
+    const db = admin.firestore();
+    const paths = [
+      universityId ? `universities/${String(universityId).toLowerCase()}/bookings/${bookingId}` : null,
+      `bookings/${bookingId}`,
+    ].filter(Boolean) as string[];
+
+    let deleted = false;
+    for (const path of paths) {
+      const ref = db.doc(path);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      await ref.delete();
+      deleted = true;
+    }
+
+    if (!deleted) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('[admin/bookings:DELETE] error', e);
+    return NextResponse.json({ error: e?.message || 'Failed to delete booking' }, { status: 500 });
   }
 }

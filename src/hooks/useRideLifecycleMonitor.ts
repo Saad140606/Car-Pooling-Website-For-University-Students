@@ -95,9 +95,17 @@ export function useRideLifecycleMonitor({
       currentLifecycleStatus === 'IN_PROGRESS' || 
       currentLifecycleStatus === 'COMPLETION_WINDOW';
 
-    // For passengers, also check booking status
-    const isConfirmedParticipant = booking 
-      ? booking.status === 'CONFIRMED' 
+    const confirmedPassengerIds = new Set(
+      (Array.isArray(ride.confirmedPassengers) ? ride.confirmedPassengers : [])
+        .map((p: any) => (typeof p === 'string' ? p : p?.userId))
+        .filter(Boolean)
+    );
+
+    // For passengers, check booking status case-insensitively and fallback to
+    // ride.confirmedPassengers membership for backward-compatibility.
+    const isConfirmedParticipant = booking
+      ? String(booking.status || '').toUpperCase() === 'CONFIRMED' ||
+        (!!user?.uid && confirmedPassengerIds.has(user.uid))
       : true; // For drivers, always true if it's their ride
 
     // CRITICAL FIX: Show completion UI if time threshold passed AND user is confirmed participant
@@ -117,7 +125,7 @@ export function useRideLifecycleMonitor({
       minutesUntilCompletion,
       shouldShowCompletionUI,
     };
-  }, [ride, booking, completionDelayMinutes]);
+  }, [ride, booking, completionDelayMinutes, user?.uid]);
 
   /**
    * Trigger backend to update lifecycle status if needed
@@ -167,11 +175,15 @@ export function useRideLifecycleMonitor({
     const newState = calculateLifecycleState();
     setState(newState);
 
-    // CRITICAL FIX: Trigger backend check if past completion threshold
-    // This ensures the backend updates the lifecycle status from IN_PROGRESS to COMPLETION_WINDOW
-    // Even if the status hasn't been updated yet, we need to trigger the backend
-    if (newState.shouldShowCompletionUI) {
-      console.log('[LifecycleMonitor] Triggering backend check - completion threshold reached');
+    const departureMs = ride?.departureTime?.seconds
+      ? ride.departureTime.seconds * 1000
+      : (ride?.departureTime ? new Date(ride.departureTime).getTime() : NaN);
+    const isPastDeparture = !isNaN(departureMs) && now >= departureMs;
+
+    // Trigger backend lifecycle sync for any post-departure ride so
+    // IN_PROGRESS/COMPLETION_WINDOW transitions happen deterministically.
+    if (isPastDeparture && newState.lifecycleStatus !== 'COMPLETED' && newState.lifecycleStatus !== 'CANCELLED' && newState.lifecycleStatus !== 'FAILED') {
+      console.log('[LifecycleMonitor] Triggering backend check - post departure');
       triggerBackendCheck();
     }
 

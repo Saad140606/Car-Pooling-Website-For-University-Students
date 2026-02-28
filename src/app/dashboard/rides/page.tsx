@@ -15,33 +15,18 @@ import { useToast } from '@/hooks/use-toast';
 import { Loader2, Route, Calendar, Users, Search as SearchIcon } from 'lucide-react';
 import FullRideCard from '@/components/FullRideCard';
 import { useCollection as useBookingsCollection } from '@/firebase/firestore/use-collection';
-import L, { LatLng, LatLngExpression } from 'leaflet';
+import type { LatLng, LatLngBoundsExpression, LatLngExpression, LeafletMouseEvent } from 'leaflet';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { MapContainer, TileLayer, Marker, Polyline, useMapEvents, CircleMarker, Tooltip } from '@/components/map';
+import { MapContainer, TileLayer, Marker, Polyline, useMapEvents, Tooltip } from '@/components/map';
 import { Ride as RideType } from '@/lib/types';
 import { getUniversityShortLabel } from '@/lib/universities';
+import { getSelectedUniversity, isValidUniversity } from '@/lib/university';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { notifyNewRideRequest } from '@/lib/rideNotificationService';
 import { parseTimestamp, parseTimestampToMs, isRideExpired } from '@/lib/timestampUtils';
-
-
-// Fix for default icon not showing in Leaflet
-if (typeof window !== 'undefined') {
-  try {
-    const pinSvg = `
-      <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-        <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
-        <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
-      </svg>
-    `;
-    const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
-    L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
-  } catch (e) {
-    // silent fallback if mergeOptions isn't available in some environments
-  }
-}
+import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
 
 // Small helper available to components in this file: truncate by characters (alphabets)
 const truncateWords = (s?: string, limit = 30) => {
@@ -50,12 +35,39 @@ const truncateWords = (s?: string, limit = 30) => {
   return s.slice(0, limit) + '...';
 };
 
+const toLatLngLike = (point: LatLngExpression | { lat: number; lng: number }): { lat: number; lng: number } => {
+  if (Array.isArray(point)) {
+    return { lat: Number(point[0]), lng: Number(point[1]) };
+  }
+  return { lat: Number((point as any).lat), lng: Number((point as any).lng) };
+};
+
+const getRouteBounds = (route: LatLngExpression[] | undefined) => {
+  if (!route || route.length === 0) return null;
+
+  const points = route.map((p) => toLatLngLike(p)).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  if (points.length === 0) return null;
+
+  const lats = points.map((p) => p.lat);
+  const lngs = points.map((p) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+
+  return {
+    southWest: { lat: minLat, lng: minLng },
+    northEast: { lat: maxLat, lng: maxLng },
+    center: { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 },
+  };
+};
+
 // Active booking statuses used for queries and duplicate checks
 // Only these statuses are considered "active" - completed/expired/rejected/cancelled are excluded
 const ACTIVE_BOOKING_STATUSES = ['pending', 'PENDING', 'accepted', 'ACCEPTED', 'confirmed', 'CONFIRMED', 'ongoing', 'ONGOING'];
 
-function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ride: RideType, onBook: (pickupPoint: LatLng) => Promise<boolean>, children: React.ReactNode, userData?: any, alreadyBooked?: boolean }) {
-  const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
+function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ride: RideType, onBook: (pickupPoint: { lat: number; lng: number }) => Promise<boolean>, children: React.ReactNode, userData?: any, alreadyBooked?: boolean }) {
+  const [pickupPoint, setPickupPoint] = useState<{ lat: number; lng: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
@@ -80,7 +92,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
     return { x, y };
   };
 
-  const pointToSegmentDistanceMeters = (p: LatLng, a: LatLng, b: LatLng) => {
+  const pointToSegmentDistanceMeters = (p: { lat: number; lng: number }, a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
     const P = toMeters({ lat: p.lat, lng: p.lng });
     const A = toMeters({ lat: a.lat, lng: a.lng });
     const B = toMeters({ lat: b.lat, lng: b.lng });
@@ -95,12 +107,12 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
     return Math.hypot(P.x - projx, P.y - projy);
   };
 
-  const isPointNearRoute = (point: LatLng, route: LatLngExpression[], tolerance = 0.003) => {
+  const isPointNearRoute = (point: { lat: number; lng: number }, route: LatLngExpression[], tolerance = 0.003) => {
     // tolerance is in degrees-ish; convert to meters (approx)
     const tolMeters = tolerance * 111320;
     for (let i = 0; i < route.length - 1; i++) {
-      const start = L.latLng(route[i] as LatLng);
-      const end = L.latLng(route[i + 1] as LatLng);
+      const start = toLatLngLike(route[i] as LatLngExpression);
+      const end = toLatLngLike(route[i + 1] as LatLngExpression);
       const d = pointToSegmentDistanceMeters(point, start, end);
       if (d < tolMeters) return true;
     }
@@ -110,7 +122,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
   const MapEvents = () => {
     // typed event param
     useMapEvents({
-      click(e: L.LeafletMouseEvent) {
+      click(e: LeafletMouseEvent) {
         if (isPointNearRoute(e.latlng, ride.route as LatLngExpression[])) {
           setPickupPoint(e.latlng);
         } else {
@@ -131,9 +143,13 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
     setSearching(true);
     try {
       // Use the bounding box of the route to reduce irrelevant results
-      const bounds = L.latLngBounds(ride.route as LatLngExpression[]);
-      const sw = bounds.getSouthWest();
-      const ne = bounds.getNorthEast();
+      const bounds = getRouteBounds(ride.route as LatLngExpression[]);
+      if (!bounds) {
+        setSearchResults([]);
+        return;
+      }
+      const sw = bounds.southWest;
+      const ne = bounds.northEast;
       const viewbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
       const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(q)}&viewbox=${encodeURIComponent(viewbox)}&limit=6`);
       if (!res.ok) {
@@ -305,7 +321,7 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
                       toast({ variant: 'destructive', title: 'Invalid result', description: 'Selected place does not have a location.' });
                       return;
                     }
-                    const pt = L.latLng(lat, lon);
+                    const pt = { lat, lng: lon };
                     if (!isPointNearRoute(pt, ride.route as LatLngExpression[], 0.005)) {
                       toast({ variant: 'destructive', title: 'Not on route', description: 'Selected place is not sufficiently close to the route. Please choose a point on the route.' });
                       return;
@@ -324,9 +340,16 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
           {showMap && (
             <MapErrorBoundary key={`map-error-${ride.id}-${resetKey}`} onMapError={handleMapError}>
               <div key={mapHostKey} className="h-full w-full">
+                {(() => {
+                  const bounds = getRouteBounds(ride.route as LatLngExpression[]);
+                  const mapBounds = bounds
+                    ? ([[bounds.southWest.lat, bounds.southWest.lng], [bounds.northEast.lat, bounds.northEast.lng]] as LatLngBoundsExpression)
+                    : undefined;
+
+                  return (
                 <MapContainer
                   key={`route-map-${ride.id}-${mountId}-${mapHostKey}`}
-                  bounds={L.latLngBounds(ride.route as LatLngExpression[])}
+                  bounds={mapBounds}
                   style={{ height: '100%', width: '100%' }}
                 >
                 <TileLayer
@@ -334,21 +357,23 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 />
                 {startPos && (
-                  <CircleMarker center={startPos as any} pathOptions={{ color: '#10B981', fillColor: '#10B981', weight: 1 }} radius={6}>
+                  <Marker position={startPos as any}>
                     <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent={false}>Start</Tooltip>
-                  </CircleMarker>
+                  </Marker>
                 )}
                 {endPos && (
-                  <CircleMarker center={endPos as any} pathOptions={{ color: '#EF4444', fillColor: '#EF4444', weight: 1 }} radius={6}>
+                  <Marker position={endPos as any}>
                     <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent={false}>End</Tooltip>
-                  </CircleMarker>
+                  </Marker>
                 )}
                 <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
                 {pickupPoint && (
-                  <CircleMarker center={pickupPoint as any} pathOptions={{ color: '#3F51B5', fillColor: '#3F51B5' }} radius={6} />
+                  <Marker position={pickupPoint as any} />
                 )}
                 <MapEvents />
               </MapContainer>
+                  );
+                })()}
               </div>
             </MapErrorBoundary>
           )}
@@ -445,6 +470,7 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
   const hasBlockingRequest = existingBooking ? ACTIVE_BOOKING_STATUSES.includes(existingRequestStatus) : false;
 
   const handleRequestSeat = async (pickupPoint: LatLng) => {
+    const requestStartMs = performance.now();
     // CRITICAL: Logged-out users are redirected to university selection
     if (!user) {
       toast({ variant: 'destructive', title: 'Select Your University', description: 'Please select your university to book a ride.' });
@@ -454,6 +480,16 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
     if (!firestore) return false;
     if (!userData || !userData.university) {
       toast({ variant: 'destructive', title: 'Profile incomplete', description: 'Please complete your profile and select your university before booking.' });
+      return false;
+    }
+
+    const activeLock = getActiveRideLock(userData);
+    if (activeLock) {
+      toast({
+        variant: 'destructive',
+        title: 'Account Locked',
+        description: formatRideLockMessage(activeLock.lockUntil, activeLock.lockDays),
+      });
       return false;
     }
 
@@ -493,7 +529,12 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
     // Attempt to reverse-geocode the chosen pickupPoint to a human-readable place name.
     let pickupPlaceName: string | null = null;
     try {
-      const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(pickupPoint.lat)}&lon=${encodeURIComponent(pickupPoint.lng)}`);
+      const geocodeController = new AbortController();
+      const geocodeTimer = window.setTimeout(() => geocodeController.abort(), 1200);
+      const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(pickupPoint.lat)}&lon=${encodeURIComponent(pickupPoint.lng)}`, {
+        signal: geocodeController.signal,
+      });
+      window.clearTimeout(geocodeTimer);
       if (res.ok) {
         const data = await res.json();
         pickupPlaceName = data.display_name || null;
@@ -553,20 +594,44 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
         transaction.set(requestRef, requestPayload);
       });
 
-      // Send client-side notification to driver (redundant with Cloud Function, but ensures immediate notification)
-      try {
-        await notifyNewRideRequest(
-          firestore,
-          userData.university,
-          ride.driverId,
-          ride.id,
-          { uid: user.uid, fullName: userData?.fullName || 'A student' },
-          { from: ride.from || 'Unknown', to: ride.to || 'Unknown' }
-        );
-      } catch (notifError) {
-        // Don't fail the request if notification fails
-        console.debug('[RideRequest] Notification error (non-critical):', notifError);
-      }
+      // Non-blocking notifications: UI should not wait for notification delivery.
+      void (async () => {
+        try {
+          await notifyNewRideRequest(
+            firestore,
+            userData.university,
+            ride.driverId,
+            ride.id,
+            { uid: user.uid, fullName: userData?.fullName || 'A student' },
+            { from: ride.from || 'Unknown', to: ride.to || 'Unknown' }
+          );
+        } catch (notifError) {
+          console.debug('[RideRequest] Client notification failed, trying server fallback:', notifError);
+          try {
+            const fallbackRes = await fetch('/api/notifications/ride-request', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${idToken}`,
+              },
+              body: JSON.stringify({
+                university: userData.university,
+                rideId: ride.id,
+                driverId: ride.driverId,
+                passengerName: userData?.fullName || user.displayName || 'A student',
+                from: ride.from || 'Unknown',
+                to: ride.to || 'Unknown',
+              }),
+            });
+
+            if (!fallbackRes.ok) {
+              console.debug('[RideRequest] Server notification fallback failed with status:', fallbackRes.status);
+            }
+          } catch (fallbackError) {
+            console.debug('[RideRequest] Server notification fallback error (non-critical):', fallbackError);
+          }
+        }
+      })();
 
       toast({ title: 'Request Sent!', description: 'The ride provider has been notified of your request.' });
       return true;
@@ -580,6 +645,15 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
 
       // Only emit a permission-error when the underlying error indicates a real permission denial.
       if (code === 'permission-denied' || String(msg).toLowerCase().includes('permission')) {
+        const activeLockOnFailure = getActiveRideLock(userData);
+        if (activeLockOnFailure) {
+          toast({
+            variant: 'destructive',
+            title: 'Account Locked',
+            description: formatRideLockMessage(activeLockOnFailure.lockUntil, activeLockOnFailure.lockDays),
+          });
+          return false;
+        }
         const permissionError = new FirestorePermissionError({ path: `universities/${userData.university}/rides/${ride.id}/requests`, operation: 'create', requestResourceData: requestData });
         errorEmitter.emit('permission-error', permissionError);
         toast({
@@ -592,13 +666,13 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
       }
       return false;
     } finally {
+      console.log('[RideRequest][perf] total_ms=', Math.round(performance.now() - requestStartMs));
       setLoading(false);
     }
   };
 
   const startPos = (ride.route && ride.route[0]) as LatLngExpression | undefined;
   const endPos = (ride.route && ride.route[ride.route.length - 1]) as LatLngExpression | undefined;
-  const bounds = ride.route ? (L.latLngBounds(ride.route as LatLngExpression[])) : undefined;
 
   const truncateWords = (s?: string, limit = 30) => {
     if (!s) return '';
@@ -676,9 +750,11 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
     let centerLat = start.lat;
     let centerLng = start.lng;
     try {
-      const b = L.latLngBounds(ride.route as LatLngExpression[]);
-      const c = b.getCenter();
-      centerLat = c.lat; centerLng = c.lng;
+      const b = getRouteBounds(ride.route as LatLngExpression[]);
+      if (b) {
+        centerLat = b.center.lat;
+        centerLng = b.center.lng;
+      }
     } catch (e) {}
 
     const zoom = 12; // fixed zoom is adequate for preview
@@ -840,6 +916,9 @@ function RidesPageInner() {
   const [showFilters, setShowFilters] = useState(false);
   const [suggestions, setSuggestions] = useState<Array<any>>([]);
   const [searching, setSearching] = useState(false);
+  const [selectedPortalUniversity, setSelectedPortalUniversity] = useState<string>('');
+
+  const lockedUniversity = user ? (selectedPortalUniversity || userData?.university || '') : '';
 
   // Declare ALL effect hooks unconditionally 
   useEffect(() => {
@@ -847,14 +926,24 @@ function RidesPageInner() {
     // Avoid logging heavy objects which can cause stringify issues
   }, [user, userData, userLoading]);
 
+  useEffect(() => {
+    if (!user) {
+      setSelectedPortalUniversity('');
+      return;
+    }
+
+    const selected = getSelectedUniversity();
+    setSelectedPortalUniversity(selected && isValidUniversity(selected) ? selected : '');
+  }, [user?.uid]);
+
   // Auto-lock university filter for logged-in users
   useEffect(() => {
-    if (user && userData?.university) {
-      setFilters(f => ({ ...f, university: userData.university }));
-    } else {
+    if (user && lockedUniversity) {
+      setFilters(f => ({ ...f, university: lockedUniversity }));
+    } else if (!user) {
       setFilters(f => ({ ...f, university: '' }));
     }
-  }, [user?.uid, userData?.university]);
+  }, [user?.uid, lockedUniversity]);
 
   // Debug filter state changes (defensive)
   useEffect(() => {
@@ -976,8 +1065,8 @@ function RidesPageInner() {
       }
       
       // If user is logged in, only show rides from their university
-      if (user && userData?.university) {
-        if (ride.university !== userData.university) {
+      if (user && lockedUniversity) {
+        if (ride.university !== lockedUniversity) {
           return false;
         }
       }
@@ -991,10 +1080,10 @@ function RidesPageInner() {
       
       return true;
     }) ?? [];
-  }, [rides, user, userData?.university]);
+  }, [rides, user, lockedUniversity]);
 
   // Helper for route proximity filtering
-  const isPointNearRoute = useCallback((point: {lat:number; lng:number}, route: L.LatLngExpression[] | {lat:number; lng:number}[], tolerance = 0.003): boolean => {
+  const isPointNearRoute = useCallback((point: {lat:number; lng:number}, route: LatLngExpression[] | {lat:number; lng:number}[], tolerance = 0.003): boolean => {
     const toMetersLocal = (latlng: { lat: number; lng: number }) => {
       const latRad = (latlng.lat * Math.PI) / 180;
       const x = latlng.lng * 111320 * Math.cos(latRad);
@@ -1019,8 +1108,8 @@ function RidesPageInner() {
 
     const tolMeters = tolerance * 111320;
     for (let i = 0; i < route.length - 1; i++) {
-      const start = L.latLng(route[i] as LatLng);
-      const end = L.latLng(route[i + 1] as LatLng);
+      const start = toLatLngLike(route[i] as LatLngExpression);
+      const end = toLatLngLike(route[i + 1] as LatLngExpression);
       const d = pointToSegmentDistanceMetersLocal(point as any, { lat: start.lat, lng: start.lng } as any, { lat: end.lat, lng: end.lng } as any);
       if (d < tolMeters) return true;
     }
@@ -1035,8 +1124,8 @@ function RidesPageInner() {
       // University filter
       if (filters.university && filters.university !== 'any' && filters.university !== '') {
         if (ride.university !== filters.university) return false;
-      } else if (user && userData?.university) {
-        if (ride.university !== userData.university) return false;
+      } else if (user && lockedUniversity) {
+        if (ride.university !== lockedUniversity) return false;
       }
 
       // transport/gender/price filters
@@ -1071,11 +1160,11 @@ function RidesPageInner() {
 
       return true;
     }) ?? [];
-  }, [availableRides, user, userData?.university, filters, searchQuery, parsePointInput, isPointNearRoute]);
+  }, [availableRides, user, lockedUniversity, userData?.university, filters, searchQuery, parsePointInput, isPointNearRoute]);
 
   const clearFilters = useCallback(() => {
-    setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && userData?.university) ? userData.university : '', direction: 'any' });
-  }, [user, userData?.university]);
+    setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', direction: 'any' });
+  }, [user, lockedUniversity]);
 
   // === END OF ALL HOOK DEFINITIONS ===
   
@@ -1106,28 +1195,28 @@ function RidesPageInner() {
         maxPrice: params.maxPrice || '',
         pointInput: params.pointInput || '',
         point: params.pointInput ? parsePointInput(params.pointInput) : null,
-        university: (user && userData?.university) ? userData.university : (params.university || ''),
+        university: (user && lockedUniversity) ? lockedUniversity : (params.university || ''),
         direction: (params.direction as any) || 'any',
       };
       setFilters(f => ({ ...f, ...newFilters }));
     } catch (e) {
       // ignore malformed query params
     }
-  }, [searchParams, user, userData?.university, parsePointInput]);
+  }, [searchParams, user, lockedUniversity, parsePointInput]);
 
   // Lock university filter for logged-in users and auto-set Karachi coordinates
   useEffect(() => {
-    if (user && userData && userData.university) {
+    if (user && lockedUniversity) {
       setFilters(f => {
         const newFilters = { ...f };
         
         // Lock university to user's portal
-        if (newFilters.university !== userData.university) {
-          newFilters.university = userData.university;
+        if (newFilters.university !== lockedUniversity) {
+          newFilters.university = lockedUniversity;
         }
         
         // For Karachi University, auto-set to coordinates if direction is set
-        if (userData.university === 'karachi' && f.direction !== 'any') {
+        if (lockedUniversity === 'karachi' && f.direction !== 'any') {
           const karachiCoords = { lat: 24.9393134, lng: 67.1183975 };
           newFilters.pointInput = 'University of Karachi';
           newFilters.point = karachiCoords;
@@ -1136,9 +1225,11 @@ function RidesPageInner() {
         return newFilters;
       });
     }
-  }, [user, userData, userData?.university, filters.direction]);
+  }, [user, lockedUniversity, filters.direction]);
 
   // Early return for loading state - after all hooks
+  const activeRideLock = getActiveRideLock(userData);
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
@@ -1161,6 +1252,12 @@ function RidesPageInner() {
           {!user && <button onClick={() => router.back()} className="px-3 py-2 rounded-md bg-white/10 hover:bg-white/15 text-sm text-slate-200">← Back</button>}
           <h1 className="text-3xl font-headline font-bold text-slate-50">Available Rides</h1>
         </div>
+
+        {activeRideLock && (
+          <div className="mb-5 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+            {formatRideLockMessage(activeRideLock.lockUntil, activeRideLock.lockDays)}
+          </div>
+        )}
 
       {/* Premium profile completion banner */}
       {user && userData && !hideProfileBanner && !userLoading && !(userData.fullName && userData.gender && userData.university) && (
@@ -1227,11 +1324,11 @@ function RidesPageInner() {
 
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm mb-1 font-semibold">{(user && userData?.university) ? 'University (Locked to Portal)' : 'University'}</label>
-                  {(user && userData?.university) ? (
+                  <label className="block text-sm mb-1 font-semibold">{(user && lockedUniversity) ? 'University (Locked to Portal)' : 'University'}</label>
+                  {(user && lockedUniversity) ? (
                     <div className="flex items-center gap-2">
                       <Input 
-                        value={getUniversityShortLabel(userData.university) || userData.university} 
+                        value={getUniversityShortLabel(lockedUniversity) || lockedUniversity} 
                         disabled 
                         title="Your university is locked based on your account. Contact support to change it."
                         className="bg-slate-800/50 backdrop-blur-sm text-slate-300 disabled:opacity-70 cursor-not-allowed" 
@@ -1392,7 +1489,7 @@ function RidesPageInner() {
           </div>
         </div>
         <div>
-          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && userData?.university) ? userData.university : '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
+          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
         </div>
       </div>
 

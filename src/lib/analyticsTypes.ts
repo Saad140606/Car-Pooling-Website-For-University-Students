@@ -77,6 +77,7 @@ export interface DriverMetrics extends CommonMetrics {
 export interface PassengerMetrics extends CommonMetrics {
   role: 'passenger';
   totalRidesTaken: number;
+  rideCompletionRate: number;
   ridesRequested: number;
   ridesConfirmed: number;
   requestToConfirmRate: number;
@@ -136,11 +137,14 @@ export interface AnalyticsInsight {
 
 export interface RideHistoryEntry {
   id: string;
+  rideId?: string;
+  bookingId?: string;
   date: Date;
   from: string;
   to: string;
   role: 'driver' | 'passenger';
   status: 'completed' | 'cancelled' | 'active' | 'pending';
+  rawStatus?: string;
   ratingGiven: number | null;
   ratingReceived: number | null;
   seats?: number;
@@ -148,6 +152,10 @@ export interface RideHistoryEntry {
   fare: number;
   distanceKm?: number;
   durationMinutes?: number;
+  providerName?: string;
+  pickupLocation?: string;
+  dropoffLocation?: string;
+  cancellationReason?: string;
 }
 
 // ============================================================================

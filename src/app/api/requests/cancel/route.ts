@@ -24,16 +24,9 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
-import {
-  validateCancellationPermission,
-  isAccountLocked,
-  isLateCancellation,
-  isDuplicateCancellation,
-  shouldLockAccount,
-  getLockExpirationDate,
-} from '@/lib/rideCancellationService';
 import { notifyRideCancelled } from '@/lib/serverNotificationService';
 import { handleCancelPassenger } from '@/lib/rideLifecycle/lifecycleService';
+import { evaluateAndApplyRoleCancellationPolicy } from '@/lib/serverRoleCancellationPolicy';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -97,20 +90,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Step 2: Check if account is locked
+    // Step 2: Check for duplicate cancellation (idempotency)
     const userSnap = await db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
     let userData: any = {};
     if (userSnap.exists) {
       userData = userSnap.data() as any;
-      if (userData.accountLockUntil) {
-        const lockUntil = userData.accountLockUntil.toDate ? userData.accountLockUntil.toDate() : userData.accountLockUntil;
-        if (new Date() < lockUntil) {
-          const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
-          return errorResponse(`Account locked. Try again in ${minutesRemaining} minutes`, 403);
-        }
-      }
 
-      // Step 3: Check for duplicate cancellation (idempotency)
       const reqSnap = await db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`).get();
       const bookingSnap = !reqSnap.exists ? await db.doc(`universities/${validUniversity}/bookings/${requestId}`).get() : null;
       
@@ -164,48 +149,8 @@ export async function POST(req: NextRequest) {
           cancelledBy: authenticatedUserId,
           cancellationReason: sanitizedReason,
           isLateCancellation,
+          cancelledBeforeDeparture: true,
         });
-      }
-
-      // Track cancellation metrics for abuse prevention
-      const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
-      const cancelUserSnap = await tx.get(userRef);
-      if (cancelUserSnap.exists) {
-        const userData = cancelUserSnap.data() as any;
-        const totalCancellations = (userData.totalCancellations ?? 0) + 1;
-        // DO NOT increment totalParticipations — it tracks rides created/booked, not cancellations
-        const totalParticipations = userData.totalParticipations ?? 0;
-        const lateCancellations = isLateCancellation
-          ? (userData.lateCancellations ?? 0) + 1
-          : (userData.lateCancellations ?? 0);
-        
-        // Calculate cancellation rate
-        const cancellationRate = totalParticipations > 0 
-          ? Math.round((totalCancellations / totalParticipations) * 100)
-          : 0;
-
-        const updates: any = {
-          totalCancellations,
-          lateCancellations,
-          lastCancellationAt: now,
-        };
-
-        // Apply auto-lock if threshold exceeded (> 35% after 3+ participations)
-        if (totalParticipations >= 3 && cancellationRate > 35) {
-          updates.accountLockUntil = admin.firestore.Timestamp.fromDate(
-            new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-          );
-          console.log('[CancelRequest] Account locked:', { userId: authenticatedUserId, cancellationRate, totalParticipations });
-        }
-
-        // Apply cooldown if 3+ late cancellations (24 hours)
-        if (lateCancellations >= 3) {
-          updates.cooldownUntil = admin.firestore.Timestamp.fromDate(
-            new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
-          );
-        }
-
-        tx.update(userRef, updates);
       }
 
       // Update booking document if it exists (for analytics and user history)
@@ -217,6 +162,7 @@ export async function POST(req: NextRequest) {
           cancelledBy: authenticatedUserId,
           cancellationReason: sanitizedReason,
           isLateCancellation,
+          cancelledBeforeDeparture: true,
         });
       }
 
@@ -244,6 +190,18 @@ export async function POST(req: NextRequest) {
         driverId: effective.driverId 
       };
     });
+
+    let lockResult: Awaited<ReturnType<typeof evaluateAndApplyRoleCancellationPolicy>> | null = null;
+    try {
+      lockResult = await evaluateAndApplyRoleCancellationPolicy(
+        db,
+        validUniversity,
+        authenticatedUserId,
+        result.cancellerRole === 'driver' ? 'driver' : 'passenger'
+      );
+    } catch (policyErr) {
+      console.error('[CancelRequest] Policy evaluation error (non-critical):', policyErr);
+    }
 
     // ===== SEND NOTIFICATIONS: After successful cancellation =====
     try {
@@ -314,7 +272,16 @@ export async function POST(req: NextRequest) {
       console.warn('[CancelRequest] Lifecycle update failed (non-critical):', lifecycleErr);
     }
 
-    return successResponse({ ok: true, data: result });
+    return successResponse({
+      ok: true,
+      data: result,
+      accountLocked: Boolean(lockResult?.locked),
+      lockMessage: lockResult?.message,
+      lockUntil: lockResult?.lockUntil || null,
+      cancellationRate: lockResult?.cancellationRate ?? null,
+      totalRidesWindow: lockResult?.totalRides ?? null,
+      cancelledRidesWindow: lockResult?.cancelledRides ?? null,
+    });
   } catch (e: any) {
     // Handle authorization errors with 403
     if (e.message?.includes('FORBIDDEN')) {

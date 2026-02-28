@@ -41,6 +41,7 @@ import {
   notifyRideCancelledByDriver,
   notifyPassengerNoShow,
 } from '@/lib/rideLifecycle/notifications';
+import { evaluateAndApplyRoleCancellationPolicy } from '@/lib/serverRoleCancellationPolicy';
 
 export async function POST(req: NextRequest) {
   if (!adminDb) {
@@ -103,6 +104,17 @@ export async function POST(req: NextRequest) {
 
       case 'cancel': {
         const result = await cancelRide(db, validUniversity, rideId, authenticatedUserId, reason);
+        let lockResult: Awaited<ReturnType<typeof evaluateAndApplyRoleCancellationPolicy>> | null = null;
+        try {
+          lockResult = await evaluateAndApplyRoleCancellationPolicy(
+            db,
+            validUniversity,
+            authenticatedUserId,
+            'driver'
+          );
+        } catch (policyErr) {
+          console.error('[RideLifecycle] Policy evaluation error (non-critical):', policyErr);
+        }
 
         // Send cancellation notifications
         try {
@@ -122,7 +134,16 @@ export async function POST(req: NextRequest) {
           console.error('[RideLifecycle] Notification error (non-critical):', notifErr);
         }
 
-        return successResponse({ ok: true, ...result });
+        return successResponse({
+          ok: true,
+          ...result,
+          accountLocked: Boolean(lockResult?.locked),
+          message: lockResult?.locked ? lockResult.message : undefined,
+          lockUntil: lockResult?.lockUntil || null,
+          cancellationRate: lockResult?.cancellationRate ?? null,
+          totalRidesWindow: lockResult?.totalRides ?? null,
+          cancelledRidesWindow: lockResult?.cancelledRides ?? null,
+        });
       }
 
       case 'no_show': {

@@ -81,7 +81,8 @@ export async function POST(req: NextRequest) {
       }
 
       // ===== IDEMPOTENCY CHECK: If already CONFIRMED, return success =====
-      if (request.status === 'CONFIRMED') {
+      const normalizedStatus = String(request.status || '').toUpperCase();
+      if (normalizedStatus === 'CONFIRMED') {
         return { 
           passenger: authenticatedUserId, 
           tripKey: request.tripKey,
@@ -89,8 +90,23 @@ export async function POST(req: NextRequest) {
         };
       }
 
-      if (request.status !== 'ACCEPTED') {
+      if (normalizedStatus !== 'ACCEPTED') {
         throw new Error('Only ACCEPTED requests can be confirmed');
+      }
+
+      // Prevent confirming more than once for the same ride/passenger,
+      // even if duplicate request documents exist.
+      const sameRideConfirmedQuery = db
+        .collection(`universities/${validUniversity}/rides/${rideId}/requests`)
+        .where('passengerId', '==', authenticatedUserId)
+        .where('status', '==', 'CONFIRMED')
+        .limit(1);
+      const sameRideConfirmedSnap = await tx.get(sameRideConfirmedQuery);
+      if (!sameRideConfirmedSnap.empty) {
+        const confirmedDoc = sameRideConfirmedSnap.docs[0];
+        if (confirmedDoc.id !== requestId) {
+          throw new Error('You already confirmed this ride');
+        }
       }
       
       // Check expiry with proper timestamp handling
@@ -99,8 +115,14 @@ export async function POST(req: NextRequest) {
         const deadlineTs = request.confirmDeadline.toMillis 
           ? request.confirmDeadline 
           : admin.firestore.Timestamp.fromDate(new Date(request.confirmDeadline));
+        // Soft expiry: don't block confirmation solely on stale deadline if request is still ACCEPTED.
+        // Driver acceptance is authoritative; confirmed seats/ride departure checks below still apply.
         if (deadlineTs.toMillis() < now.toMillis()) {
-          throw new Error('Request expired - confirmation window has closed');
+          console.warn('[ConfirmRequest] Deadline passed but allowing confirmation for accepted request', {
+            rideId,
+            requestId,
+            passengerId: authenticatedUserId,
+          });
         }
       }
 

@@ -31,10 +31,8 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
-import {
-  shouldLockAccount,
-  getLockExpirationDate,
-} from '@/lib/rideCancellationService';
+import { notifyRideCancelled } from '@/lib/serverNotificationService';
+import { evaluateAndApplyRoleCancellationPolicy } from '@/lib/serverRoleCancellationPolicy';
 
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
@@ -80,6 +78,7 @@ export async function POST(req: NextRequest) {
     const db = adminDb;
     const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
     const bookingRef = db.doc(`universities/${validUniversity}/bookings/${bookingId}`);
+    const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${bookingId}`);
     const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
 
     // ===== PRE-TRANSACTION VALIDATION =====
@@ -91,12 +90,15 @@ export async function POST(req: NextRequest) {
 
     const ride = rideSnap.data() as any;
     
-    // Check booking exists first
+    // Check booking/request exists first
     const bookingSnap = await db.doc(bookingRef.path).get();
-    if (!bookingSnap.exists) {
-      return errorResponse('Booking not found', 404);
+    const requestSnap = await db.doc(requestRef.path).get();
+    if (!bookingSnap.exists && !requestSnap.exists) {
+      return errorResponse('Booking or request not found', 404);
     }
-    const booking = bookingSnap.data() as any;
+    const booking = bookingSnap.exists ? (bookingSnap.data() as any) : null;
+    const request = requestSnap.exists ? (requestSnap.data() as any) : null;
+    const effective = booking || request;
     
     // Verify authenticated user is authorized to cancel
     // - Driver can cancel if they own the ride (with isDriverCancel flag)
@@ -107,34 +109,17 @@ export async function POST(req: NextRequest) {
       }
     } else {
       // For passenger cancellation, verify they own the booking
-      if (booking.passengerId !== authenticatedUserId) {
+      if (effective?.passengerId !== authenticatedUserId) {
         return errorResponse('You can only cancel your own bookings', 403);
       }
     }
 
-    // ===== CHECK ACCOUNT LOCK STATUS =====
-    // Check if the cancelling user's account is locked (inline admin SDK check)
     const preUserSnap = await db.doc(userRef.path).get();
-    if (preUserSnap.exists) {
-      const preUserData = preUserSnap.data() as any;
-      if (preUserData.accountLockUntil) {
-        const lockUntil = preUserData.accountLockUntil.toDate
-          ? preUserData.accountLockUntil.toDate()
-          : new Date(preUserData.accountLockUntil);
-        if (new Date() < lockUntil) {
-          const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
-          return errorResponse(
-            `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
-            403
-          );
-        }
-      }
-    }
 
     // Check booking is in acceptable state for cancellation
     const cancelableStatuses = ['accepted', 'ACCEPTED', 'pending', 'PENDING', 'CONFIRMED', 'confirmed'];
-    if (!cancelableStatuses.includes(booking.status)) {
-      return errorResponse(`Cannot cancel booking with status: ${booking.status}`, 400);
+    if (!cancelableStatuses.includes(effective?.status)) {
+      return errorResponse(`Cannot cancel booking/request with status: ${effective?.status}`, 400);
     }
 
     // Check if ride has already departed
@@ -150,100 +135,140 @@ export async function POST(req: NextRequest) {
     const result = await db.runTransaction(async (tx) => {
       // Re-fetch to ensure freshness in transaction
       const freshRideSnap = await tx.get(rideRef);
-      if (!freshRideSnap.exists()) {
+      if (!freshRideSnap.exists) {
         throw new Error('Ride not found');
       }
 
       const freshBookingSnap = await tx.get(bookingRef);
-      if (!freshBookingSnap.exists()) {
-        throw new Error('Booking not found');
+      const freshRequestSnap = await tx.get(requestRef);
+      const freshUserSnap = await tx.get(userRef);
+      if (!freshBookingSnap.exists && !freshRequestSnap.exists) {
+        throw new Error('Booking or request not found');
       }
 
-      const freshBooking = freshBookingSnap.data() as any;
+      const freshBooking = freshBookingSnap.exists ? (freshBookingSnap.data() as any) : null;
+      const freshRequest = freshRequestSnap.exists ? (freshRequestSnap.data() as any) : null;
+      const freshEffective = freshBooking || freshRequest;
 
-      // Update booking status to CANCELLED
-      tx.update(bookingRef, {
+      const cancellationPayload = {
         status: 'CANCELLED',
         cancelledBy: isDriverCancel ? 'driver' : 'passenger',
         cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         cancellationReason: sanitizedReason,
-      });
+        cancelledBeforeDeparture: true,
+      };
 
-      // Increment ride available seats
+      if (freshBookingSnap.exists) {
+        tx.update(bookingRef, cancellationPayload);
+      }
+      if (freshRequestSnap.exists) {
+        tx.update(requestRef, cancellationPayload);
+      }
+
+      // Release seat reservation/confirmation based on status
       const freshRide = freshRideSnap.data() as any;
       const currentAvailable = freshRide.availableSeats ?? 0;
+      const currentReserved = freshRide.reservedSeats ?? 0;
+      const normalizedStatus = String(freshEffective?.status || '').toUpperCase();
+      const passengerId = freshEffective?.passengerId;
 
-      tx.update(rideRef, {
-        availableSeats: currentAvailable + 1,
-        confirmedPassengers: (freshRide.confirmedPassengers || []).filter(
-          (uid: string) => uid !== booking.passengerId
-        ),
+      if (normalizedStatus === 'CONFIRMED') {
+        tx.update(rideRef, {
+          availableSeats: currentAvailable + 1,
+          confirmedPassengers: (freshRide.confirmedPassengers || []).filter(
+            (uid: string) => uid !== passengerId
+          ),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else if (normalizedStatus === 'ACCEPTED') {
+        tx.update(rideRef, {
+          reservedSeats: Math.max(0, currentReserved - 1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Keep lightweight history fields for backward compatibility.
+      const wasConfirmed = normalizedStatus === 'CONFIRMED';
+      const userData = freshUserSnap.data() as any;
+      tx.update(userRef, {
+        totalCancellations: (userData?.totalCancellations ?? 0) + 1,
+        lateCancellations: wasConfirmed
+          ? (userData?.lateCancellations ?? 0) + 1
+          : (userData?.lateCancellations ?? 0),
+        lastCancellationAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-
-      // Track cancellation for abuse prevention
-      // DRIVER CANCELLATION: Always affects cancellation rate
-      // PASSENGER CANCELLATION: Only affects rate if booking was CONFIRMED
-      const wasConfirmed = freshBooking.status === 'CONFIRMED' || freshBooking.status === 'confirmed';
-      const shouldTrackCancellation = isDriverCancel || wasConfirmed;
-
-      if (shouldTrackCancellation) {
-        const freshUserSnap = await tx.get(userRef);
-        const userData = freshUserSnap.data() as any;
-
-        // Build cancellation tracking — inline for admin SDK compatibility
-        const totalCancellations = (userData?.totalCancellations ?? 0) + 1;
-        const lateCancellations = wasConfirmed
-          ? (userData?.lateCancellations ?? 0) + 1
-          : (userData?.lateCancellations ?? 0);
-        // DO NOT increment totalParticipations — it tracks rides created/booked
-        const totalParticipations = userData?.totalParticipations ?? 0;
-        const cancellationRate = totalParticipations > 0
-          ? Math.round((totalCancellations / totalParticipations) * 100)
-          : 0;
-
-        const trackingUpdate: any = {
-          totalCancellations,
-          lateCancellations,
-          lastCancellationAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-
-        // Check if account should be locked
-        // Threshold: > 35% cancellation rate after 3+ participations
-        if (shouldLockAccount(cancellationRate, totalParticipations)) {
-          const lockExpiry = getLockExpirationDate(); // 7 days from now
-          trackingUpdate.accountLockUntil = admin.firestore.Timestamp.fromDate(lockExpiry);
-          console.log('[BookingCancel] Account locked:', { userId: authenticatedUserId, cancellationRate, totalParticipations });
-        }
-
-        // Apply cooldown if 3+ late cancellations
-        if (lateCancellations >= 3) {
-          const cooldownExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-          trackingUpdate.cooldownUntil = admin.firestore.Timestamp.fromDate(cooldownExpiry);
-        }
-
-        tx.update(userRef, trackingUpdate);
-      }
 
       return {
         bookingId,
         rideId,
         status: 'CANCELLED',
         cancelledBy: isDriverCancel ? 'driver' : 'passenger',
+        passengerId: freshEffective?.passengerId || null,
+        driverId: freshRide?.driverId || null,
+        isLateCancellation: normalizedStatus === 'CONFIRMED',
       };
     });
 
-    return successResponse({ success: true, message: 'Booking cancelled successfully', ...result }, 200);
+    let lockResult: Awaited<ReturnType<typeof evaluateAndApplyRoleCancellationPolicy>> | null = null;
+    try {
+      lockResult = await evaluateAndApplyRoleCancellationPolicy(
+        db,
+        validUniversity,
+        authenticatedUserId,
+        isDriverCancel ? 'driver' : 'passenger'
+      );
+    } catch (policyErr) {
+      console.error('[BookingCancel] Policy evaluation error (non-critical):', policyErr);
+    }
+
+    try {
+      const cancellerSnap = await db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
+      const cancellerData = cancellerSnap.exists ? (cancellerSnap.data() as any) : null;
+      const cancellerName =
+        cancellerData?.fullName ||
+        cancellerData?.name ||
+        (isDriverCancel ? 'Driver' : 'Passenger');
+
+      const targetUserId = isDriverCancel ? result.passengerId : result.driverId;
+      if (targetUserId) {
+        await notifyRideCancelled(
+          db,
+          validUniversity,
+          targetUserId,
+          rideId,
+          bookingId,
+          cancellerName,
+          {
+            from: ride?.pickupLocation || ride?.from || 'Starting point',
+            to: ride?.dropoffLocation || ride?.to || 'Destination',
+          },
+          Boolean(result.isLateCancellation)
+        );
+      }
+    } catch (notifErr) {
+      console.error('[BookingCancel] Notification error (non-critical):', notifErr);
+    }
+
+    return successResponse({
+      success: true,
+      message: lockResult?.locked ? (lockResult.message || 'Booking cancelled successfully') : 'Booking cancelled successfully',
+      ...result,
+      accountLocked: Boolean(lockResult?.locked),
+      lockUntil: lockResult?.lockUntil || null,
+      cancellationRate: lockResult?.cancellationRate ?? null,
+      totalRidesWindow: lockResult?.totalRides ?? null,
+      cancelledRidesWindow: lockResult?.cancelledRides ?? null,
+    }, 200);
   } catch (err: any) {
     console.error('[Booking Cancel API] Error:', err?.message || err);
 
     if (err.message === 'Ride not found') {
       return errorResponse('Ride not found', 404);
     }
-    if (err.message === 'Booking not found') {
-      return errorResponse('Booking not found', 404);
+    if (err.message === 'Booking not found' || err.message === 'Booking or request not found') {
+      return errorResponse('Booking or request not found', 404);
     }
 
     return errorResponse(err?.message || 'Failed to cancel booking', 500);

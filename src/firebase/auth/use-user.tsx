@@ -53,9 +53,7 @@ export function useUser() {
       // ── CRITICAL PERF FIX: Mark loading=false IMMEDIATELY after auth state is known ──
       // The user profile fetch (useDoc below) and FCM registration happen in the background.
       setLoading(false);
-      if (!initialized) {
-        setInitialized(true);
-      }
+      setInitialized(true);
 
       // ── Ensure user document exists (fire-and-forget, non-blocking) ──
       if (u && firestore) {
@@ -110,54 +108,13 @@ export function useUser() {
           }
         })();
 
-        // ── FCM token registration (fire-and-forget, completely non-blocking) ──
-        (async () => {
-          try {
-            if (typeof window === 'undefined' || !process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY) return;
-            
-            // Lazy-import FCM modules to avoid loading them at startup
-            const { getMessaging, getToken } = await import('firebase/messaging');
-            const messaging = getMessaging();
-
-            if ('Notification' in window) {
-              const perm = await Notification.requestPermission();
-              if (perm !== 'granted') return;
-            }
-
-            const token = await getToken(messaging, { vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY });
-            if (token) {
-              const finalUniversity = getSelectedUniversity() || 'fast';
-              const tokenDocRef = doc(firestore, 'fcm_tokens', u.uid);
-              await setDoc(tokenDocRef, {
-                token,
-                university: finalUniversity,
-                updatedAt: serverTimestamp(),
-                lastLoginAt: serverTimestamp(),
-              }, { merge: true });
-              prevUidRef.current = u.uid;
-            }
-          } catch (_) {
-            // FCM is non-critical, silently fail
-          }
-        })();
       } else if (!u) {
-        // User signed out - cleanup FCM (fire-and-forget)
-        (async () => {
-          try {
-            if (typeof window === 'undefined' || !process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || !firestore) return;
-            const prevUid = prevUidRef.current;
-            if (prevUid) {
-              const { getMessaging, deleteToken } = await import('firebase/messaging');
-              await deleteDoc(doc(firestore, 'fcm_tokens', prevUid)).catch(() => {});
-              try { await deleteToken(getMessaging()); } catch (_) {}
-            }
-          } catch (_) {}
-        })();
+        // FCM registration/cleanup is handled centrally by NotificationContext + fcmTokenManager.
       }
     });
 
     return () => unsubscribe();
-  }, [auth, initialized]);
+  }, [auth, firestore]);
 
   // User profile subscription via useDoc (real-time)
   // CRITICAL: Use selected university if available, else pending (from auth portal), else default to fast
@@ -170,7 +127,9 @@ export function useUser() {
 
   return {
     user,
-    loading: loading || (user && dataLoading),
+    // loading = auth bootstrap only; profile data hydrates in background
+    loading,
+    profileLoading: !!(user && dataLoading),
     data,
     error: userError,
     initialized,

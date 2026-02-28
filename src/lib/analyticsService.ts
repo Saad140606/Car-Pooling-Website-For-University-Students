@@ -3,6 +3,7 @@
 
 import {
   collection,
+  collectionGroup,
   query,
   where,
   orderBy,
@@ -113,9 +114,19 @@ interface RawRideData {
   distanceKm?: number;
   createdAt?: any;
   completedAt?: any;
+  driverInfo?: { fullName?: string };
+  pickupPlaceName?: string;
+  dropoffPlaceName?: string;
+  cancellationReason?: string;
   rating?: number;
   driverRating?: number;
   passengerRating?: number;
+  confirmedPassengers?: Array<{
+    userId?: string;
+    driverReview?: 'arrived' | 'no-show';
+    passengerCompletion?: 'completed' | 'cancelled';
+    completionReason?: string;
+  }>;
 }
 
 interface RawBookingData {
@@ -128,6 +139,12 @@ interface RawBookingData {
   createdAt?: any;
   confirmedAt?: any;
   cancelledAt?: any;
+  passengerCompletion?: 'completed' | 'cancelled';
+  completionReason?: string;
+  pickupPlaceName?: string;
+  dropoffPlaceName?: string;
+  cancellationReason?: string;
+  driverDetails?: { fullName?: string };
   rating?: number;
   passengerRating?: number;
   driverRating?: number;
@@ -143,6 +160,79 @@ interface RawRequestData {
   acceptedAt?: any;
   confirmedAt?: any;
   cancelledAt?: any;
+  cancellationReason?: string;
+  pickupPlaceName?: string;
+  dropoffPlaceName?: string;
+  rideData?: RawRideData;
+}
+
+function getBookingCompletionOutcome(
+  booking: RawBookingData & { rideData?: RawRideData }
+): { completion: 'completed' | 'cancelled' | null; reason?: string } {
+  const bookingCompletion = String((booking as any).passengerCompletion || '').toLowerCase();
+  if (bookingCompletion === 'completed') {
+    return { completion: 'completed' };
+  }
+  if (bookingCompletion === 'cancelled') {
+    return {
+      completion: 'cancelled',
+      reason: (booking as any).completionReason || booking.cancellationReason,
+    };
+  }
+
+  const passengers = Array.isArray(booking.rideData?.confirmedPassengers)
+    ? booking.rideData!.confirmedPassengers!
+    : [];
+  const participant = passengers.find((p: any) => String(p?.userId || '') === String(booking.passengerId || ''));
+  const participantCompletion = String(participant?.passengerCompletion || '').toLowerCase();
+
+  if (participantCompletion === 'completed') {
+    return { completion: 'completed' };
+  }
+  if (participantCompletion === 'cancelled' || String(participant?.driverReview || '').toLowerCase() === 'no-show') {
+    return {
+      completion: 'cancelled',
+      reason: participant?.completionReason || booking.completionReason || booking.cancellationReason,
+    };
+  }
+
+  return { completion: null };
+}
+
+function getBookingFare(booking: RawBookingData & { rideData?: RawRideData }): number {
+  const direct = Number((booking as any).totalFare || booking.price || (booking as any).fare || 0);
+  if (direct > 0) return direct;
+
+  const seats = Math.max(1, Number((booking as any).seats || (booking as any).seatsBooked || 1) || 1);
+  const seatPrice = Number(booking.rideData?.price || booking.rideData?.fare || 0);
+  return seatPrice > 0 ? seatPrice * seats : 0;
+}
+
+function isDriverPreDepartureCancellation(ride: RawRideData): boolean {
+  const status = String((ride as any).status || (ride as any).lifecycleStatus || '').toLowerCase();
+  if (!status.includes('cancel')) return false;
+
+  const cancelledBy = String((ride as any).cancelledBy || '').toLowerCase();
+  const driverId = String((ride as any).driverId || '').toLowerCase();
+  if (cancelledBy && cancelledBy !== 'driver' && cancelledBy !== driverId) return false;
+
+  if ((ride as any).cancelledBeforeDeparture === true) return true;
+
+  const cancelledAt = toDate((ride as any).cancelledAt);
+  const departureTime = toDate((ride as any).departureTime);
+  return !!cancelledAt && !!departureTime && cancelledAt.getTime() < departureTime.getTime();
+}
+
+function isPassengerPreDepartureCancellation(request: RawRequestData): boolean {
+  const status = String((request as any).status || '').toLowerCase();
+  if (!status.includes('cancel')) return false;
+
+  const cancelledBy = String((request as any).cancelledBy || '').toLowerCase();
+  const passengerId = String((request as any).passengerId || '').toLowerCase();
+  if (cancelledBy && cancelledBy !== 'passenger' && cancelledBy !== passengerId) return false;
+
+  if ((request as any).cancelledBeforeDeparture === true) return true;
+  return (request as any).isLateCancellation === false;
 }
 
 export async function fetchUserAnalyticsData(
@@ -235,7 +325,7 @@ export async function fetchUserAnalyticsData(
   });
 
   // For requests, we need to check ride subcollections - OPTIMIZED: Batch fetch with max 5 concurrent
-  const passengerRequests: RawRequestData[] = [];
+  let passengerRequests: RawRequestData[] = [];
   const receivedRequests: RawRequestData[] = [];
 
   // Fetch requests from all driver rides (received requests) - limit concurrency
@@ -258,6 +348,68 @@ export async function fetchUserAnalyticsData(
     });
   }
 
+  // Fetch requests where user is passenger (includes cancellations before booking materialization)
+  try {
+    const requestsGroupRef = collectionGroup(firestore, 'requests');
+    const passengerRequestsQuery = query(
+      requestsGroupRef,
+      where('passengerId', '==', userId),
+      orderBy('createdAt', 'desc')
+    );
+    const passengerRequestsSnapshot = await getDocs(passengerRequestsQuery);
+
+    passengerRequests = passengerRequestsSnapshot.docs
+      .filter((requestDoc) => requestDoc.ref.path.includes(`/universities/${university}/`))
+      .map((requestDoc) => {
+        const data = requestDoc.data() as RawRequestData;
+        const segments = requestDoc.ref.path.split('/');
+        const rideSegmentIndex = segments.indexOf('rides');
+        const rideIdFromPath = rideSegmentIndex >= 0 ? segments[rideSegmentIndex + 1] : undefined;
+
+        return {
+          id: requestDoc.id,
+          ...data,
+          rideId: data.rideId || rideIdFromPath || data.id,
+        } as RawRequestData;
+      });
+  } catch (error) {
+    console.debug('[Analytics] Could not fetch passenger requests via collectionGroup:', error);
+  }
+
+  // Backfill ride data for passenger requests
+  for (const request of passengerRequests) {
+    if (request.rideId && !rideMap.has(request.rideId) && !missingRideIds.includes(request.rideId)) {
+      missingRideIds.push(request.rideId);
+    }
+  }
+
+  const unresolvedRideIds = missingRideIds.filter((rideId) => !rideMap.has(rideId));
+  for (let i = 0; i < unresolvedRideIds.length; i += BATCH_SIZE) {
+    const batch = unresolvedRideIds.slice(i, i + BATCH_SIZE);
+    const rideSnapshots = await Promise.all(
+      batch.map(rideId =>
+        getDoc(doc(firestore, `universities/${university}/rides`, rideId)).catch(() => null)
+      )
+    );
+
+    rideSnapshots.forEach(snapshot => {
+      if (snapshot?.exists()) {
+        const rideData = { id: snapshot.id, ...snapshot.data() } as RawRideData;
+        rideMap.set(snapshot.id, rideData);
+      }
+    });
+  }
+
+  passengerRequests = passengerRequests.map((request) => {
+    if (request.rideId && rideMap.has(request.rideId)) {
+      return {
+        ...request,
+        rideData: rideMap.get(request.rideId),
+      };
+    }
+    return request;
+  });
+
   return {
     driverRides,
     passengerBookings,
@@ -276,15 +428,24 @@ function computeCommonMetrics(
   isDriver: boolean
 ): CommonMetrics {
   const allItems = isDriver ? rides : bookings;
-  
-  const completedItems = allItems.filter(
-    item => item.status === 'completed' || item.status === 'CONFIRMED'
-  );
-  const cancelledItems = allItems.filter(
-    item => item.status === 'cancelled' || item.status === 'CANCELLED'
-  );
+
+  const completedItems = allItems.filter((item) => {
+    const status = String(item.status || '').toLowerCase();
+    const passengerCompletion = String((item as any).passengerCompletion || '').toLowerCase();
+    const lifecycleStatus = String((item as any).lifecycleStatus || '').toLowerCase();
+    return status === 'completed' || passengerCompletion === 'completed' || lifecycleStatus === 'completed';
+  });
+  const cancelledItems = allItems.filter((item) => {
+    const status = String(item.status || '').toLowerCase();
+    const passengerCompletion = String((item as any).passengerCompletion || '').toLowerCase();
+    return status.includes('cancel') || status === 'declined' || status === 'rejected' || status === 'failed' || passengerCompletion === 'cancelled';
+  });
   const pendingItems = allItems.filter(
-    item => item.status === 'pending' || item.status === 'PENDING' || item.status === 'active'
+    item => {
+      const status = String(item.status || '').toLowerCase();
+      const lifecycleStatus = String((item as any).lifecycleStatus || '').toLowerCase();
+      return status === 'pending' || status === 'active' || status === 'accepted' || lifecycleStatus === 'completion_window';
+    }
   );
 
   // Calculate ratings
@@ -358,9 +519,9 @@ function computeDriverMetrics(
 ): DriverMetrics {
   const commonMetrics = computeCommonMetrics(rides, [], true);
 
-  // CRITICAL FIX: Filter rides where departure time has passed for "completed" metrics
+  // Completed rides must be explicitly completed by lifecycle/form actions
   const completedRides = rides.filter(r => 
-    (r.status === 'completed' || r.status === 'confirmed') && isRideCompleted(r.departureTime, r.status, (r as any).lifecycleStatus)
+    String(r.status || '').toLowerCase() === 'completed' || String((r as any).lifecycleStatus || '').toLowerCase() === 'completed'
   );
   
   // Calculate passengers served
@@ -385,15 +546,20 @@ function computeDriverMetrics(
     : 100;
 
   // Completion rate based on status only (for overall stats)
-  const statusCompletedRides = rides.filter(r => r.status === 'completed');
-  const cancelledRides = rides.filter(r => r.status === 'cancelled');
-  const rideCompletionRate = (statusCompletedRides.length + cancelledRides.length) > 0
-    ? Math.round((statusCompletedRides.length / (statusCompletedRides.length + cancelledRides.length)) * 100)
+  const statusCompletedRides = rides.filter(r => {
+    const status = String(r.status || '').toLowerCase();
+    const lifecycleStatus = String((r as any).lifecycleStatus || '').toLowerCase();
+    return status === 'completed' || lifecycleStatus === 'completed';
+  });
+  const driverCancelledBeforeDeparture = rides.filter((ride) => isDriverPreDepartureCancellation(ride));
+  const rideCompletionBase = statusCompletedRides.length + driverCancelledBeforeDeparture.length;
+  const rideCompletionRate = rideCompletionBase > 0
+    ? Math.round((statusCompletedRides.length / rideCompletionBase) * 100)
     : 100;
 
-  // Cancellation rate
-  const cancellationRate = rides.length > 0
-    ? Math.round((cancelledRides.length / rides.length) * 100)
+  // Cancellation rate: role-specific and pre-departure only
+  const cancellationRate = rideCompletionBase > 0
+    ? Math.round((driverCancelledBeforeDeparture.length / rideCompletionBase) * 100)
     : 0;
 
   // Peak ride hours
@@ -425,20 +591,20 @@ function computeDriverMetrics(
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
 
-  // Earnings calculation - CRITICAL FIX
-  // Calculate earnings ONLY from rides that are actually completed (departure time has passed)
+  // Earnings from completion-form outcomes only
   const totalEarnings = completedRides.reduce((sum, ride) => {
-    // Count CONFIRMED requests ONLY (not ACCEPTED or PENDING)
-    const rideRequests = receivedRequests.filter(
-      r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'confirmed')
-    );
-    const confirmedPassengers = rideRequests.length;
-    
-    // Earnings = confirmed passengers × price per seat
-    const pricePerSeat = ride.price || ride.fare || 0;
-    const rideEarnings = confirmedPassengers > 0 ? confirmedPassengers * pricePerSeat : 0;
-    
-    return sum + rideEarnings;
+    const participants = Array.isArray((ride as any).confirmedPassengers)
+      ? (ride as any).confirmedPassengers
+      : [];
+
+    const completedPassengers = participants.filter((participant: any) => {
+      const completion = String(participant?.passengerCompletion || '').toLowerCase();
+      const review = String(participant?.driverReview || '').toLowerCase();
+      return completion === 'completed' && review !== 'no-show';
+    }).length;
+
+    const pricePerSeat = Number(ride.price || ride.fare || 0);
+    return sum + (completedPassengers > 0 && pricePerSeat > 0 ? completedPassengers * pricePerSeat : 0);
   }, 0);
   const averageEarningsPerRide = completedRides.length > 0
     ? Math.round(totalEarnings / completedRides.length)
@@ -450,13 +616,16 @@ function computeDriverMetrics(
     const date = toDate(ride.createdAt);
     if (date) {
       const day = getFullDayName(date);
-      // Count CONFIRMED passengers ONLY (same logic as totalEarnings)
-      const rideRequests = receivedRequests.filter(
-        r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'confirmed')
-      );
-      const confirmedPassengers = rideRequests.length;
-      const pricePerSeat = ride.price || ride.fare || 0;
-      const rideEarnings = confirmedPassengers > 0 ? confirmedPassengers * pricePerSeat : 0;
+      const participants = Array.isArray((ride as any).confirmedPassengers)
+        ? (ride as any).confirmedPassengers
+        : [];
+      const completedPassengers = participants.filter((participant: any) => {
+        const completion = String(participant?.passengerCompletion || '').toLowerCase();
+        const review = String(participant?.driverReview || '').toLowerCase();
+        return completion === 'completed' && review !== 'no-show';
+      }).length;
+      const pricePerSeat = Number(ride.price || ride.fare || 0);
+      const rideEarnings = completedPassengers > 0 && pricePerSeat > 0 ? completedPassengers * pricePerSeat : 0;
       dayEarnings.set(day, (dayEarnings.get(day) || 0) + rideEarnings);
     }
   });
@@ -469,12 +638,16 @@ function computeDriverMetrics(
   // Create a map of ride earnings for time series
   const rideEarningsMap = new Map<string, number>();
   completedRides.forEach(ride => {
-    const rideRequests = receivedRequests.filter(
-      r => r.rideId === ride.id && (r.status === 'CONFIRMED' || r.status === 'confirmed')
-    );
-    const confirmedPassengers = rideRequests.length;
-    const pricePerSeat = ride.price || ride.fare || 0;
-    rideEarningsMap.set(ride.id, confirmedPassengers > 0 ? confirmedPassengers * pricePerSeat : 0);
+    const participants = Array.isArray((ride as any).confirmedPassengers)
+      ? (ride as any).confirmedPassengers
+      : [];
+    const completedPassengers = participants.filter((participant: any) => {
+      const completion = String(participant?.passengerCompletion || '').toLowerCase();
+      const review = String(participant?.driverReview || '').toLowerCase();
+      return completion === 'completed' && review !== 'no-show';
+    }).length;
+    const pricePerSeat = Number(ride.price || ride.fare || 0);
+    rideEarningsMap.set(ride.id, completedPassengers > 0 && pricePerSeat > 0 ? completedPassengers * pricePerSeat : 0);
   });
   
   const earningsOverTime = computeTimeSeriesData(
@@ -513,33 +686,38 @@ function computePassengerMetrics(
 ): PassengerMetrics {
   const commonMetrics = computeCommonMetrics([], bookings, false);
 
-  // CRITICAL FIX: Only count bookings where status is CONFIRMED (not accepted/pending)
-  const confirmedBookings = bookings.filter(
-    b => (b.status === 'CONFIRMED' || b.status === 'confirmed')
-  );
-  
-  // Filter for completed rides (ride departure time has passed)
-  // ONLY these rides should count toward spending analytics
-  const completedBookings = confirmedBookings.filter(
-    b => b.rideData && isRideCompleted(b.rideData.departureTime, b.rideData.status, (b.rideData as any).lifecycleStatus)
-  );
-  
-  const totalRidesTaken = completedBookings.length;
+  // Completion outcome must come from passenger completion form submission.
+  const formCompletedBookings = bookings.filter((booking) => getBookingCompletionOutcome(booking).completion === 'completed');
+  const formCancelledBookings = bookings.filter((booking) => getBookingCompletionOutcome(booking).completion === 'cancelled');
+  const passengerCancelledBeforeDeparture = requests.filter((request) => isPassengerPreDepartureCancellation(request));
+
+  const totalRidesTaken = formCompletedBookings.length;
+
+  const totalDistanceKm = formCompletedBookings.reduce((sum, booking) => {
+    const rideDistance = Number(booking.rideData?.distanceKm || 0);
+    if (rideDistance > 0) return sum + rideDistance;
+    if (booking.rideData?.route && Array.isArray(booking.rideData.route)) {
+      return sum + calculateDistance(booking.rideData.route);
+    }
+    return sum;
+  }, 0);
+  const totalTimeMinutes = Math.round(totalDistanceKm * 2);
 
   // Request to confirm rate - use completed bookings only
-  const ridesRequested = bookings.length;
-  const ridesConfirmed = completedBookings.length;
+  const ridesRequested = Math.max(bookings.length, requests.length);
+  const ridesConfirmed = formCompletedBookings.length;
   const requestToConfirmRate = ridesRequested > 0
     ? Math.round((ridesConfirmed / ridesRequested) * 100)
     : 0;
 
-  // Cancellation rate
-  const cancelledBookings = bookings.filter(
-    b => b.status === 'cancelled' || b.status === 'CANCELLED'
-  );
-  const cancellationRate = bookings.length > 0
-    ? Math.round((cancelledBookings.length / bookings.length) * 100)
+  // Cancellation rate from completion-form outcomes only.
+  const cancellationBase = formCompletedBookings.length + passengerCancelledBeforeDeparture.length;
+  const cancellationRate = cancellationBase > 0
+    ? Math.round((passengerCancelledBeforeDeparture.length / cancellationBase) * 100)
     : 0;
+  const rideCompletionRate = cancellationBase > 0
+    ? Math.round((formCompletedBookings.length / cancellationBase) * 100)
+    : 100;
 
   // Preferred pickup times
   const hourCounts = new Array(24).fill(0);
@@ -556,28 +734,32 @@ function computePassengerMetrics(
   // Most frequent destinations (we'd need ride data for this, use empty for now)
   const mostFrequentDestinations: RouteFrequency[] = [];
 
-  // Cost calculations - CRITICAL FIX: Only count spending for completed rides
-  const totalSpent = completedBookings.reduce(
-    (sum, b) => sum + (b.price || 0),
-    0
-  );
-  const averageCostPerRide = completedBookings.length > 0
-    ? Math.round(totalSpent / completedBookings.length)
+  // Cost calculations - count completed bookings only
+  const totalSpent = formCompletedBookings.reduce((sum, booking) => sum + getBookingFare(booking), 0);
+  const averageCostPerRide = formCompletedBookings.length > 0
+    ? Math.round(totalSpent / formCompletedBookings.length)
     : 0;
 
   // Time series data - use completedBookings for accurate spending
   const spendingOverTime = computeTimeSeriesData(
-    completedBookings,
-    booking => booking.price || 0
+    formCompletedBookings,
+    booking => getBookingFare(booking)
   );
   const ridesOverTime = computeTimeSeriesData(bookings, () => 1);
   const weeklyActivity = computeWeeklyActivity(bookings);
   const rideActivityHeatmap = computeHeatmapData(bookings);
 
+  const pendingFromOutcomes = Math.max(0, bookings.length - formCompletedBookings.length - passengerCancelledBeforeDeparture.length);
+
   return {
     ...commonMetrics,
+    totalRides: bookings.length,
+    completedRides: formCompletedBookings.length,
+    cancelledRides: passengerCancelledBeforeDeparture.length,
+    pendingRides: pendingFromOutcomes,
     role: 'passenger',
     totalRidesTaken,
+    rideCompletionRate,
     ridesRequested,
     ridesConfirmed,
     requestToConfirmRate,
@@ -590,6 +772,8 @@ function computePassengerMetrics(
     ridesOverTime,
     weeklyActivity,
     rideActivityHeatmap,
+    totalDistanceKm: Math.round(totalDistanceKm * 10) / 10,
+    totalTimeMinutes,
   };
 }
 
@@ -834,7 +1018,8 @@ function generateInsights(
 
 function buildRideHistory(
   driverRides: RawRideData[],
-  passengerBookings: RawBookingData[]
+  passengerBookings: (RawBookingData & { rideData?: RawRideData })[],
+  passengerRequests: RawRequestData[]
 ): RideHistoryEntry[] {
   const history: RideHistoryEntry[] = [];
 
@@ -843,11 +1028,13 @@ function buildRideHistory(
     const date = toDate(ride.createdAt) || toDate(ride.departureTime);
     history.push({
       id: ride.id,
+      rideId: ride.id,
       date: date || new Date(),
       from: ride.from || 'Unknown',
       to: ride.to || 'Unknown',
       role: 'driver',
       status: normalizeStatus(ride.status),
+      rawStatus: ride.status,
       ratingGiven: null,
       ratingReceived: ride.driverRating || ride.rating || null,
       seats: ride.totalSeats,
@@ -855,23 +1042,99 @@ function buildRideHistory(
       fare: ride.price || ride.fare || 0,
       distanceKm: ride.distanceKm || calculateDistance(ride.route),
       durationMinutes: Math.round((ride.distanceKm || calculateDistance(ride.route)) * 2),
+      providerName: 'You',
+      pickupLocation: ride.pickupPlaceName || undefined,
+      dropoffLocation: ride.dropoffPlaceName || undefined,
+      cancellationReason: ride.cancellationReason || undefined,
     });
   });
 
   // Add passenger bookings
   passengerBookings.forEach(booking => {
-    const date = toDate(booking.createdAt);
+    const rideData = (booking as any).rideData as RawRideData | undefined;
+    const date = toDate(booking.createdAt) || toDate(booking.confirmedAt);
+    const bookingFare = Number(booking.price || rideData?.price || rideData?.fare || 0);
+    const passengerCompletion = String((booking as any).passengerCompletion || '').toLowerCase();
+    const matchedPassenger = Array.isArray((rideData as any)?.confirmedPassengers)
+      ? (rideData as any).confirmedPassengers.find((p: any) => {
+          if (typeof p === 'string') return false;
+          return p?.userId === booking.passengerId;
+        })
+      : null;
+    const completionReason =
+      booking.completionReason ||
+      (booking as any).cancellationReason ||
+      matchedPassenger?.completionReason ||
+      undefined;
     history.push({
       id: booking.id,
+      bookingId: booking.id,
+      rideId: booking.rideId,
       date: date || new Date(),
-      from: 'Booking',
-      to: 'Destination',
+      from: rideData?.from || (booking as any).from || 'Unknown',
+      to: rideData?.to || (booking as any).to || 'Unknown',
       role: 'passenger',
-      status: normalizeStatus(booking.status),
+      status: passengerCompletion === 'cancelled' ? 'cancelled' : normalizeStatus(booking.status),
+      rawStatus: booking.status,
       ratingGiven: booking.passengerRating || null,
       ratingReceived: booking.driverRating || null,
       seats: 1,
-      fare: booking.price || 0,
+      fare: bookingFare,
+      distanceKm: rideData?.distanceKm || (rideData?.route ? calculateDistance(rideData.route) : undefined),
+      durationMinutes: rideData?.distanceKm
+        ? Math.round(rideData.distanceKm * 2)
+        : (rideData?.route ? Math.round(calculateDistance(rideData.route) * 2) : undefined),
+      providerName:
+        booking.driverDetails?.fullName ||
+        rideData?.driverInfo?.fullName ||
+        (rideData?.driverId ? `Driver (${rideData.driverId.slice(0, 6)}...)` : 'Ride Provider'),
+      pickupLocation: booking.pickupPlaceName || (booking as any).pickupPointName || rideData?.pickupPlaceName || undefined,
+      dropoffLocation: booking.dropoffPlaceName || (booking as any).dropoffPointName || rideData?.dropoffPlaceName || undefined,
+      cancellationReason: completionReason,
+    });
+  });
+
+  // Add cancelled passenger requests so cancellations show in history even without booking docs
+  const existingPassengerKeys = new Set(
+    history
+      .filter((entry) => entry.role === 'passenger')
+      .map((entry) => `${entry.rideId || ''}:${entry.bookingId || entry.id}`)
+  );
+
+  passengerRequests.forEach((request) => {
+    const normalizedStatus = normalizeStatus(request.status);
+    if (normalizedStatus !== 'cancelled') return;
+
+    const dedupeKey = `${request.rideId || ''}:${request.id}`;
+    if (existingPassengerKeys.has(dedupeKey)) return;
+
+    const rideData = request.rideData;
+    const date = toDate(request.cancelledAt) || toDate(request.createdAt);
+
+    history.push({
+      id: `request-${request.id}`,
+      bookingId: request.id,
+      rideId: request.rideId,
+      date: date || new Date(),
+      from: rideData?.from || (request as any).from || 'Unknown',
+      to: rideData?.to || (request as any).to || 'Unknown',
+      role: 'passenger',
+      status: 'cancelled',
+      rawStatus: request.status,
+      ratingGiven: null,
+      ratingReceived: null,
+      seats: 1,
+      fare: Number(rideData?.price || rideData?.fare || (request as any).price || 0),
+      distanceKm: rideData?.distanceKm || (rideData?.route ? calculateDistance(rideData.route) : undefined),
+      durationMinutes: rideData?.distanceKm
+        ? Math.round(rideData.distanceKm * 2)
+        : (rideData?.route ? Math.round(calculateDistance(rideData.route) * 2) : undefined),
+      providerName:
+        rideData?.driverInfo?.fullName ||
+        (rideData?.driverId ? `Driver (${rideData.driverId.slice(0, 6)}...)` : 'Ride Provider'),
+      pickupLocation: request.pickupPlaceName || rideData?.pickupPlaceName || undefined,
+      dropoffLocation: request.dropoffPlaceName || rideData?.dropoffPlaceName || undefined,
+      cancellationReason: request.cancellationReason || (request as any).reason || undefined,
     });
   });
 
@@ -881,8 +1144,8 @@ function buildRideHistory(
 
 function normalizeStatus(status: string): 'completed' | 'cancelled' | 'active' | 'pending' {
   const s = (status || '').toLowerCase();
-  if (s === 'completed' || s === 'confirmed') return 'completed';
-  if (s === 'cancelled' || s === 'rejected' || s === 'declined') return 'cancelled';
+  if (s === 'completed') return 'completed';
+  if (s.includes('cancel') || s === 'rejected' || s === 'declined' || s === 'failed') return 'cancelled';
   if (s === 'active' || s === 'accepted') return 'active';
   return 'pending';
 }
@@ -901,7 +1164,7 @@ export async function computeUserAnalytics(
 
   // Determine user role
   const hasDriverActivity = driverRides.length > 0;
-  const hasPassengerActivity = passengerBookings.length > 0;
+  const hasPassengerActivity = passengerBookings.length > 0 || passengerRequests.length > 0;
   
   let userRole: UserRole = 'passenger';
   if (hasDriverActivity && hasPassengerActivity) {
@@ -918,6 +1181,35 @@ export async function computeUserAnalytics(
   const passengerMetrics = hasPassengerActivity
     ? computePassengerMetrics(passengerBookings, passengerRequests)
     : null;
+
+  // Prefer persisted post-ride spending records when available
+  if (passengerMetrics) {
+    try {
+      const spendingRef = collection(firestore, `universities/${university}/passengerSpending`);
+      const spendingQuery = query(spendingRef, where('passengerId', '==', userId));
+      const spendingSnap = await getDocs(spendingQuery);
+
+      if (!spendingSnap.empty) {
+        const spendingAmounts = spendingSnap.docs.map((docSnap) => {
+          const data = docSnap.data() as any;
+          return Number(data?.amount || 0);
+        });
+
+        const totalSpentFromRecords = spendingAmounts.reduce((sum, amount) => sum + amount, 0);
+        const ridesWithSpending = spendingAmounts.filter((amount) => amount > 0).length;
+
+        if (totalSpentFromRecords > 0) {
+          passengerMetrics.totalSpent = Math.round(totalSpentFromRecords);
+          const rideCountForAverage = Math.max(passengerMetrics.totalRidesTaken, ridesWithSpending);
+          passengerMetrics.averageCostPerRide = rideCountForAverage > 0
+            ? Math.round(totalSpentFromRecords / rideCountForAverage)
+            : 0;
+        }
+      }
+    } catch (error) {
+      console.debug('[Analytics] Could not load passengerSpending fallback:', error);
+    }
+  }
 
   // Generate insights
   const insights = generateInsights(driverMetrics, passengerMetrics);

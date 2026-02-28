@@ -19,12 +19,14 @@ interface ActivityIndicatorContextType {
   hasAnyActivity: boolean;
   hasBookingsActivity: boolean;
   hasRidesActivity: boolean;
+  hasAnalyticsActivity: boolean;
   hasChatActivity: boolean;
   hasNotificationsActivity: boolean;
 
   // Actions
   markBookingsAsViewed: () => void;
   markRidesAsViewed: () => void;
+  markAnalyticsAsViewed: () => void;
   markChatAsViewed: () => void;
   markNotificationsAsViewed: () => void;
   reset: () => void;
@@ -38,6 +40,7 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
   const [activityState, setActivityState] = useState<ActivityIndicatorState>({
     bookings: false,
     rides: false,
+    analytics: false,
     chat: false,
     notifications: false,
   });
@@ -75,6 +78,7 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
       setActivityState({
         bookings: false,
         rides: false,
+        analytics: false,
         chat: false,
         notifications: false,
       });
@@ -101,6 +105,12 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
     });
   }, []);
 
+  const markAnalyticsAsViewed = useCallback(() => {
+    activityIndicatorManager.markAsViewed('analytics').catch((error) => {
+      console.error('[ActivityIndicator] Failed to mark analytics viewed:', error);
+    });
+  }, []);
+
   const markChatAsViewed = useCallback(() => {
     activityIndicatorManager.markAsViewed('chat').catch((error) => {
       console.error('[ActivityIndicator] Failed to mark chat viewed:', error);
@@ -120,9 +130,10 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
   }, []);
 
   const hasAnyActivity =
-    activityState.bookings || activityState.rides || activityState.chat || activityState.notifications;
+    activityState.bookings || activityState.rides || activityState.analytics || activityState.chat || activityState.notifications;
   const hasBookingsActivity = activityState.bookings;
   const hasRidesActivity = activityState.rides;
+  const hasAnalyticsActivity = activityState.analytics;
   const hasChatActivity = activityState.chat;
   const hasNotificationsActivity = activityState.notifications;
 
@@ -131,10 +142,12 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
     hasAnyActivity,
     hasBookingsActivity,
     hasRidesActivity,
+    hasAnalyticsActivity,
     hasChatActivity,
     hasNotificationsActivity,
     markBookingsAsViewed,
     markRidesAsViewed,
+    markAnalyticsAsViewed,
     markChatAsViewed,
     markNotificationsAsViewed,
     reset,

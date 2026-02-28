@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { parseTimestamp } from '@/lib/timestampUtils';
-import { Calendar, MapPin, Phone, X, AlertCircle, ArrowDown, DollarSign, Map } from 'lucide-react';
+import { Calendar, MapPin, Phone, X, AlertCircle, DollarSign, Map } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import dynamic from 'next/dynamic';
 import L, { LatLngExpression } from 'leaflet';
@@ -192,11 +192,17 @@ export default function PassengerDetailModal({
         }),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = { error: rawText || 'Unknown server error' };
+      }
 
       if (!response.ok) {
         console.error('[PassengerCancel] API error:', { status: response.status, error: data });
-        throw new Error(data.error || 'Failed to cancel booking');
+        throw new Error(data.error || data.message || `Failed to cancel booking (${response.status})`);
       }
 
       console.log('[PassengerCancel] Success:', data);
@@ -262,7 +268,10 @@ export default function PassengerDetailModal({
 
             {/* Locations Section */}
             <div className="p-4 bg-gradient-to-br from-slate-800/80 to-slate-900/60 rounded-lg border border-slate-700/50 space-y-4">
-              <h3 className="text-xs text-slate-400 uppercase tracking-wider font-semibold">📍 Locations</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs text-slate-400 uppercase tracking-wider font-semibold">📍 Locations</h3>
+                
+              </div>
               
               {/* Passenger Pickup/Dropoff Location - Conditional Card */}
               <div className={`p-3.5 rounded-lg hover:transition-all duration-300 border ${
@@ -289,12 +298,7 @@ export default function PassengerDetailModal({
                 </div>
               </div>
 
-              {/* Arrow Separator */}
-              <div className="flex justify-center py-2">
-                <div className="flex flex-col items-center gap-1">
-                  <ArrowDown className="h-5 w-5 text-slate-500/60" />
-                </div>
-              </div>
+              <div className="h-px bg-gradient-to-r from-transparent via-slate-600/60 to-transparent" />
 
               {/* Dropoff Location - Prominent Card */}
               <div className="p-3.5 bg-red-900/20 border border-red-700/40 rounded-lg hover:border-red-600/60 transition-all duration-300">
@@ -310,49 +314,25 @@ export default function PassengerDetailModal({
               </div>
             </div>
 
-            {/* Map Section */}
-            {ride && (routeLatLngs.length > 0 || pickupLatLng) && (
-              <div className="space-y-2">
-                <button
-                  onClick={() => setShowMap(!showMap)}
-                  className="w-full p-4 bg-slate-800/50 rounded-lg border border-slate-700/50 hover:border-slate-600/50 transition-colors flex items-center gap-2 text-slate-300 hover:text-white"
-                >
-                  <Map className="h-4 w-4" />
-                  <span className="text-sm font-medium">{showMap ? 'Hide' : 'Show'} Route & {isFromUniversity ? 'Dropoff' : 'Pickup'} Location</span>
-                </button>
-                {showMap && (
-                  <div className="h-80 w-full rounded-lg border border-slate-700/50 overflow-hidden">
-                    <LazyMapLeaflet
-                      route={routeLatLngs as LatLngExpression[]}
-                      markers={mapMarkers}
-                      bounds={boundsFromRide}
-                      style={{ height: '100%', width: '100%' }}
-                      tileUrl="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      tileAttribution="&copy; OpenStreetMap contributors"
-                      routeColor="#60A5FA"
-                    />
-                  </div>
-                )}
-              </div>
-            )}
+         
 
             {/* Ride Details Section */}
             <div className="p-4 bg-gradient-to-br from-slate-800/80 to-slate-900/60 rounded-lg border border-slate-700/50">
               <h3 className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-4">📅 Ride Details</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center p-3 bg-slate-700/30 rounded-lg hover:bg-slate-700/50 transition-colors">
-                  <div className="flex items-center gap-2 text-slate-400">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 bg-gradient-to-br from-slate-700/40 to-slate-800/30 rounded-lg border border-slate-600/40">
+                  <div className="flex items-center gap-2 text-slate-400 mb-2">
                     <Calendar className="h-4 w-4 flex-shrink-0" />
-                    <span className="text-sm font-medium">Date & Time</span>
+                    <span className="text-xs uppercase tracking-wide">Date & Time</span>
                   </div>
-                  <span className="text-slate-200 font-semibold text-sm">{dateText}</span>
+                  <p className="text-slate-100 font-semibold text-sm leading-relaxed">{dateText}</p>
                 </div>
-                <div className="flex justify-between items-center p-3 bg-slate-700/30 rounded-lg hover:bg-slate-700/50 transition-colors">
-                  <div className="flex items-center gap-2 text-slate-400">
+                <div className="p-3.5 bg-gradient-to-br from-slate-700/40 to-slate-800/30 rounded-lg border border-slate-600/40">
+                  <div className="flex items-center gap-2 text-slate-400 mb-2">
                     <DollarSign className="h-4 w-4 flex-shrink-0" />
-                    <span className="text-sm font-medium">Price</span>
+                    <span className="text-xs uppercase tracking-wide">Price</span>
                   </div>
-                  <span className="font-bold text-primary text-base">PKR {price}</span>
+                  <p className="font-bold text-primary text-lg leading-none">PKR {price}</p>
                 </div>
               </div>
             </div>

@@ -6,11 +6,13 @@ import MessageInput from './MessageInput';
 import ChatHeader from './ChatHeader';
 import { useFirestore, useUser } from '@/firebase';
 import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { createNotification } from '@/firebase/firestore/notifications';
 
 export default function ChatRoom({ chatId, university }: { chatId: string, university: string }) {
-  const { messages, loading, sendMessage, setTyping, accessible } = useChat(chatId, university);
+  const { messages, loading, sendMessage, setTyping, accessible, resolvedChatId } = useChat(chatId, university);
   const { user } = useUser();
   const firestore = useFirestore();
+  const activeChatId = resolvedChatId || chatId;
   const [meta, setMeta] = useState<any>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -32,6 +34,23 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const callTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const callUnsubsRef = useRef<Array<() => void>>([]);
+  const hasConnectedRef = useRef(false);
+  const disconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const clearDisconnectTimeout = () => {
+    if (disconnectTimeoutRef.current) {
+      clearTimeout(disconnectTimeoutRef.current);
+      disconnectTimeoutRef.current = null;
+    }
+  };
+
+  const scheduleDisconnectCleanup = (reason: string) => {
+    clearDisconnectTimeout();
+    disconnectTimeoutRef.current = window.setTimeout(() => {
+      console.warn('[ChatRoom] Disconnect timeout reached, cleaning call:', reason);
+      cleanupCall().catch(() => {});
+    }, 12000) as any;
+  };
 
   const getIceServers = () => {
     const servers: any[] = [ { urls: 'stun:stun.l.google.com:19302' } ];
@@ -114,20 +133,38 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
   useEffect(() => {
     if (!firestore) return;
-    const cref = doc(firestore, `universities/${university}/chats`, chatId);
+    const cref = doc(firestore, `universities/${university}/chats`, activeChatId);
     getDoc(cref).then(s => { if (s.exists()) setMeta(s.data()); }).catch((err) => {
       // Surface meta fetch errors for debugging (do not show sensitive details in production)
       try { console.error('ChatRoom: failed to fetch chat meta', err); } catch (e) {}
       setMetaError(String(err?.message || err));
     });
-  }, [firestore, chatId]);
+  }, [firestore, activeChatId, university]);
 
   const [incomingCall, setIncomingCall] = useState<any | null>(null);
+
+  const resolvedRecipientId = user?.uid
+    ? (
+        (meta?.passengerId && meta.passengerId !== user.uid && meta.passengerId) ||
+        ((meta?.providerId || meta?.driverId) && (meta?.providerId || meta?.driverId) !== user.uid && (meta?.providerId || meta?.driverId)) ||
+        (Array.isArray(meta?.participants)
+          ? meta.participants.find((participantId: string) => participantId !== user.uid)
+          : null)
+      )
+    : null;
+
+  const resolvedSenderName =
+    user?.displayName ||
+    meta?.currentUserDetails?.fullName ||
+    meta?.currentUserDetails?.name ||
+    null;
+
+  const resolvedRideId = meta?.rideId || meta?.bookingId || chatId;
 
   // Listen for incoming call signals on `universities/{university}/calls/{chatId}`
   useEffect(() => {
     if (!firestore) return;
-    const cdoc = doc(firestore, `universities/${university}/calls`, chatId);
+    const cdoc = doc(firestore, `universities/${university}/calls`, activeChatId);
     callDocRef.current = cdoc;
     const unsub = onSnapshot(cdoc, async (snap) => {
       if (!snap.exists()) {
@@ -149,7 +186,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     });
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firestore, university, chatId, inCall]);
+  }, [firestore, university, activeChatId, inCall]);
 
   const handleMediaError = (error: any) => {
     const name = error?.name || '';
@@ -183,6 +220,9 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   // Helper: cleanup call resources
   const cleanupCall = async () => {
     try {
+      clearDisconnectTimeout();
+      hasConnectedRef.current = false;
+
       // Clear timeout
       if (callTimeoutRef.current) {
         clearTimeout(callTimeoutRef.current);
@@ -238,7 +278,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     setCallMode(mode);
     setIsConnecting(true);
     setCallError(null);
-    const cdoc = doc(firestore, `universities/${university}/calls`, chatId);
+    const cdoc = doc(firestore, `universities/${university}/calls`, activeChatId);
     callDocRef.current = cdoc;
 
     const pc = new RTCPeerConnection({ 
@@ -323,6 +363,8 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       if (event.streams && event.streams.length > 0) {
         setRemoteStream(event.streams[0]);
       }
+      hasConnectedRef.current = true;
+      clearDisconnectTimeout();
       setIsConnecting(false);
       // Clear timeout on successful connection
       if (callTimeoutRef.current) {
@@ -333,13 +375,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     pc.onconnectionstatechange = () => {
       console.debug('[ChatRoom] Connection state changed:', pc.connectionState);
+      if (pc.connectionState === 'connected') {
+        hasConnectedRef.current = true;
+        clearDisconnectTimeout();
+      }
       if (pc.connectionState === 'failed') {
         console.error('[ChatRoom] Connection failed');
         setCallError('Connection failed. Please try again.');
         cleanupCall().catch(() => {});
       } else if (pc.connectionState === 'disconnected') {
         console.warn('[ChatRoom] Connection disconnected');
-        cleanupCall().catch(() => {});
+        if (hasConnectedRef.current) {
+          scheduleDisconnectCleanup('peer disconnected after connect');
+        }
       } else if (pc.connectionState === 'closed') {
         console.warn('[ChatRoom] Connection closed');
         cleanupCall().catch(() => {});
@@ -348,13 +396,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     pc.oniceconnectionstatechange = () => {
       console.debug('[ChatRoom] ICE connection state changed:', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        hasConnectedRef.current = true;
+        clearDisconnectTimeout();
+      }
       if (pc.iceConnectionState === 'failed') {
         console.error('[ChatRoom] ICE connection failed');
         setCallError('Network connection failed. Please check your internet.');
         cleanupCall().catch(() => {});
       } else if (pc.iceConnectionState === 'disconnected') {
         console.warn('[ChatRoom] ICE disconnected');
-        cleanupCall().catch(() => {});
+        if (hasConnectedRef.current) {
+          scheduleDisconnectCleanup('ice disconnected after connect');
+        }
       } else if (pc.iceConnectionState === 'closed') {
         console.warn('[ChatRoom] ICE closed');
         cleanupCall().catch(() => {});
@@ -428,6 +482,30 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         });
         
         console.debug('[ChatRoom] Call document written successfully');
+
+        // Fallback in-app notification for incoming call (Cloud Function push still handles remote push)
+        try {
+          if (calleeId) {
+            await createNotification(
+              firestore,
+              university,
+              calleeId,
+              'call_incoming',
+              {
+                relatedRideId: resolvedRideId || activeChatId,
+                relatedChatId: activeChatId,
+                title: mode === 'video' ? 'Incoming Video Call' : 'Incoming Audio Call',
+                message: `${resolvedSenderName || 'Someone'} is calling you.`,
+                metadata: {
+                  callType: mode,
+                  callerId: user.uid,
+                }
+              }
+            );
+          }
+        } catch (notifyErr) {
+          console.warn('[ChatRoom] Failed to create fallback call notification:', notifyErr);
+        }
       } catch (e) { 
         console.error('[ChatRoom] Failed to set call doc:', e);
         setCallError('Failed to initiate call. Please try again.');
@@ -464,6 +542,8 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           console.debug('[ChatRoom] Received answer, setting remote description...');
           const answer = new RTCSessionDescription(data.answer);
           await pc.setRemoteDescription(answer);
+          hasConnectedRef.current = true;
+          clearDisconnectTimeout();
           
           // Clear timeout on answer received
           if (callTimeoutRef.current) {
@@ -526,7 +606,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
   const answerCall = async () => {
     if (!firestore || !user) return;
-    const cdoc = doc(firestore, `universities/${university}/calls`, chatId);
+    const cdoc = doc(firestore, `universities/${university}/calls`, activeChatId);
     
     try {
       const snap = await getDoc(cdoc);
@@ -619,16 +699,27 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         if (event.streams && event.streams.length > 0) {
           setRemoteStream(event.streams[0]);
         }
+        hasConnectedRef.current = true;
+        clearDisconnectTimeout();
         setIsConnecting(false);
       };
 
       pc.onconnectionstatechange = () => {
         console.debug('[ChatRoom] Connection state changed (answer):', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          hasConnectedRef.current = true;
+          clearDisconnectTimeout();
+        }
         if (pc.connectionState === 'failed') {
           console.error('[ChatRoom] Connection failed (answer)');
           setCallError('Connection failed');
           cleanupCall().catch(() => {});
-        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+        } else if (pc.connectionState === 'disconnected') {
+          console.warn('[ChatRoom] Connection disconnected (answer)');
+          if (hasConnectedRef.current) {
+            scheduleDisconnectCleanup('answer side disconnected after connect');
+          }
+        } else if (pc.connectionState === 'closed') {
           console.warn('[ChatRoom] Connection ended (answer)');
           cleanupCall().catch(() => {});
         }
@@ -636,13 +727,19 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
       pc.oniceconnectionstatechange = () => {
         console.debug('[ChatRoom] ICE connection state (answer):', pc.iceConnectionState);
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          hasConnectedRef.current = true;
+          clearDisconnectTimeout();
+        }
         if (pc.iceConnectionState === 'failed') {
           console.error('[ChatRoom] ICE connection failed (answer)');
           setCallError('Network connection failed');
           cleanupCall().catch(() => {});
         } else if (pc.iceConnectionState === 'disconnected') {
           console.warn('[ChatRoom] ICE disconnected (answer)');
-          cleanupCall().catch(() => {});
+          if (hasConnectedRef.current) {
+            scheduleDisconnectCleanup('answer side ice disconnected after connect');
+          }
         }
       };
 
@@ -753,13 +850,13 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   if (accessible === false) {
     return (
       <div className="flex flex-col h-[40vh] items-center justify-center text-center p-6">
-        <ChatHeader meta={meta} />
+        <ChatHeader meta={meta} university={university} />
         <div className="text-sm text-muted-foreground">Chat unavailable. Ensure you are a participant and the chat exists.</div>
         <div className="text-xs text-slate-400 mt-4">
           <div>Debug info:</div>
           <div>Current UID: {user?.uid ?? 'not-signed-in'}</div>
           <div>Chat meta fetch error: {metaError ?? 'none'}</div>
-          <div className="truncate">Chat id: {chatId}</div>
+          <div className="truncate">Chat id: {activeChatId}</div>
         </div>
       </div>
     );
@@ -767,7 +864,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
   return (
     <div className="flex flex-col h-[70vh] sm:h-[75vh] md:h-[70vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-700/50">
-      <ChatHeader meta={meta} onStartCall={(mode) => startCall(mode)} onHangup={() => hangup()} calling={inCall} />
+      <ChatHeader meta={meta} university={university} onStartCall={(mode) => startCall(mode)} onHangup={() => hangup()} calling={inCall} />
 
       {callError && (
         <div className="px-3 sm:px-4 py-2 bg-red-500/10 text-red-200 border-b border-red-500/30 text-xs sm:text-sm">
@@ -965,10 +1062,28 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
       {/* Input area */}
       <div className="p-3 sm:p-4 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-md border-t border-slate-700/50">
         <MessageInput 
-          onSend={async (text) => await sendMessage({ type: 'text', content: text })} 
+          onSend={async (text) => await sendMessage({
+            type: 'text',
+            content: text,
+            recipientId: resolvedRecipientId || undefined,
+            rideId: resolvedRideId,
+            senderName: resolvedSenderName || undefined,
+          })} 
           onTyping={(v) => setTyping(Boolean(v))} 
-          onSendMedia={async (mediaUrl, type) => await sendMessage({ type, mediaUrl })}
-          onSendVoice={async (mediaUrl) => await sendMessage({ type: 'voice', mediaUrl })}
+          onSendMedia={async (mediaUrl, type) => await sendMessage({
+            type,
+            mediaUrl,
+            recipientId: resolvedRecipientId || undefined,
+            rideId: resolvedRideId,
+            senderName: resolvedSenderName || undefined,
+          })}
+          onSendVoice={async (mediaUrl) => await sendMessage({
+            type: 'voice',
+            mediaUrl,
+            recipientId: resolvedRecipientId || undefined,
+            rideId: resolvedRideId,
+            senderName: resolvedSenderName || undefined,
+          })}
           disabled={meta?.status !== 'active' || accessible !== true} 
         />
       </div>

@@ -81,12 +81,19 @@ export async function GET(req: Request) {
       }
     }
 
-    const rides = paginatedSnap?.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      departureTime: doc.data().departureTime?.toDate?.()?.toISOString() || doc.data().departureTime,
-      createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt,
-    })) || [];
+    const rides = paginatedSnap?.docs.map(doc => {
+      const data = doc.data();
+      const pathMatch = doc.ref.path.match(/universities\/([^/]+)\/rides\//i);
+      const derivedUniversityId = pathMatch?.[1]?.toLowerCase() || '';
+      const fieldUniversityId = String(data.universityId || data.university || '').toLowerCase();
+      return {
+        id: doc.id,
+        ...data,
+        universityId: fieldUniversityId || derivedUniversityId,
+        departureTime: data.departureTime?.toDate?.()?.toISOString() || data.departureTime,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+      };
+    }) || [];
 
     console.log(`[admin/rides] Fetched ${rides.length} rides (total: ${total})`);
 
@@ -100,5 +107,82 @@ export async function GET(req: Request) {
   } catch (e: any) {
     console.error('[admin/rides] error', e);
     return NextResponse.json({ error: e?.message || 'Failed to fetch rides' }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const auth = await requireAdmin(req);
+    if (!auth.ok) return auth.response;
+
+    const { rideId, universityId, updates } = await req.json();
+    if (!rideId || !updates || typeof updates !== 'object') {
+      return NextResponse.json({ error: 'rideId and updates are required' }, { status: 400 });
+    }
+
+    const db = admin.firestore();
+    const writePayload = { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+
+    const paths = [
+      universityId ? `universities/${String(universityId).toLowerCase()}/rides/${rideId}` : null,
+      `rides/${rideId}`,
+    ].filter(Boolean) as string[];
+
+    let updated = false;
+    for (const path of paths) {
+      const ref = db.doc(path);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      await ref.set(writePayload, { merge: true });
+      updated = true;
+    }
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Ride not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('[admin/rides:PATCH] error', e);
+    return NextResponse.json({ error: e?.message || 'Failed to update ride' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const auth = await requireAdmin(req);
+    if (!auth.ok) return auth.response;
+
+    const { searchParams } = new URL(req.url);
+    const rideId = searchParams.get('rideId');
+    const universityId = searchParams.get('universityId');
+
+    if (!rideId) {
+      return NextResponse.json({ error: 'rideId is required' }, { status: 400 });
+    }
+
+    const db = admin.firestore();
+    const paths = [
+      universityId ? `universities/${String(universityId).toLowerCase()}/rides/${rideId}` : null,
+      `rides/${rideId}`,
+    ].filter(Boolean) as string[];
+
+    let deleted = false;
+    for (const path of paths) {
+      const ref = db.doc(path);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      await ref.delete();
+      deleted = true;
+    }
+
+    if (!deleted) {
+      return NextResponse.json({ error: 'Ride not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('[admin/rides:DELETE] error', e);
+    return NextResponse.json({ error: e?.message || 'Failed to delete ride' }, { status: 500 });
   }
 }

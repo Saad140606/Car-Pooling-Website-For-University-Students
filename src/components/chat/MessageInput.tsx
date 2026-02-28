@@ -6,7 +6,7 @@ import { Send, Smile } from 'lucide-react';
 export default function MessageInput({ onSend, onTyping, onSendMedia, onSendVoice, disabled }: { 
   onSend: (text: string) => Promise<any>, 
   onTyping: (v: boolean) => void, 
-  onSendMedia: (url: string, type: string) => Promise<any>,
+  onSendMedia: (url: string, type: 'image' | 'video' | 'audio' | 'file') => Promise<any>,
   onSendVoice: (url: string) => Promise<any>,
   disabled?: boolean 
 }) {

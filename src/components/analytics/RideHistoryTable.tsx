@@ -26,6 +26,7 @@ import { RideHistoryEntry, RideHistoryFilters, PaginationState } from '@/lib/ana
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 // ============================================================================
 // FILTER BADGE
@@ -83,11 +84,11 @@ const FilterDropdown = memo(function FilterDropdown({
   };
 
   return (
-    <div className="relative">
+    <div className="relative w-full sm:w-auto">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'flex items-center gap-2 px-3 py-2 rounded-lg border transition-all w-full sm:w-auto justify-between',
+          'flex items-center gap-2 px-3 py-2 rounded-lg border transition-all w-full sm:w-auto justify-between min-w-0',
           'bg-slate-900/50 border-slate-700/50 hover:border-slate-600',
           selected.length > 0 && 'border-primary/50 bg-primary/10'
         )}
@@ -110,7 +111,7 @@ const FilterDropdown = memo(function FilterDropdown({
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="absolute top-full left-0 mt-2 w-48 py-2 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20"
+              className="absolute top-full left-0 mt-2 w-full sm:w-48 py-2 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20"
             >
               {options.map(option => (
                 <button
@@ -151,9 +152,10 @@ const FilterDropdown = memo(function FilterDropdown({
 interface RideHistoryRowProps {
   ride: RideHistoryEntry;
   index: number;
+  onSelect?: (ride: RideHistoryEntry) => void;
 }
 
-const RideHistoryRow = memo(function RideHistoryRow({ ride, index }: RideHistoryRowProps) {
+const RideHistoryRow = memo(function RideHistoryRow({ ride, index, onSelect }: RideHistoryRowProps) {
   const statusConfig = {
     completed: { color: 'text-emerald-500', bg: 'bg-emerald-500/10', icon: CheckCircle, label: 'Completed' },
     cancelled: { color: 'text-red-500', bg: 'bg-red-500/10', icon: XCircle, label: 'Cancelled' },
@@ -163,6 +165,8 @@ const RideHistoryRow = memo(function RideHistoryRow({ ride, index }: RideHistory
 
   const status = statusConfig[ride.status] || statusConfig.pending;
   const StatusIcon = status.icon;
+  const isNotCompleted = ride.status === 'cancelled' && !!ride.cancellationReason;
+  const statusLabel = isNotCompleted ? 'Not Completed' : status.label;
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
@@ -184,7 +188,8 @@ const RideHistoryRow = memo(function RideHistoryRow({ ride, index }: RideHistory
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05 }}
-      className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors"
+      className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors cursor-pointer"
+      onClick={() => onSelect?.(ride)}
     >
       {/* Date & Time */}
       <td className="px-4 py-4">
@@ -223,7 +228,7 @@ const RideHistoryRow = memo(function RideHistoryRow({ ride, index }: RideHistory
           status.bg, status.color
         )}>
           <StatusIcon className="w-3 h-3" />
-          {status.label}
+          {statusLabel}
         </div>
       </td>
 
@@ -260,7 +265,7 @@ const RideHistoryRow = memo(function RideHistoryRow({ ride, index }: RideHistory
 // RIDE HISTORY CARD - MOBILE
 // ============================================================================
 
-const RideHistoryCard = memo(function RideHistoryCard({ ride, index }: RideHistoryRowProps) {
+const RideHistoryCard = memo(function RideHistoryCard({ ride, index, onSelect }: RideHistoryRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const statusConfig = {
@@ -272,6 +277,8 @@ const RideHistoryCard = memo(function RideHistoryCard({ ride, index }: RideHisto
 
   const status = statusConfig[ride.status] || statusConfig.pending;
   const StatusIcon = status.icon;
+  const isNotCompleted = ride.status === 'cancelled' && !!ride.cancellationReason;
+  const statusLabel = isNotCompleted ? 'Not Completed' : status.label;
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
@@ -317,7 +324,7 @@ const RideHistoryCard = memo(function RideHistoryCard({ ride, index }: RideHisto
             'px-2 py-1 rounded-full text-xs font-medium',
             status.bg, status.color
           )}>
-            {status.label}
+            {statusLabel}
           </div>
           {expanded ? (
             <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -375,6 +382,16 @@ const RideHistoryCard = memo(function RideHistoryCard({ ride, index }: RideHisto
                   <p className="text-sm text-white">{ride.durationMinutes} min</p>
                 </div>
               )}
+              <div className="col-span-2">
+                <Button
+                  onClick={() => onSelect?.(ride)}
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-slate-700 hover:bg-slate-800"
+                >
+                  View ride details
+                </Button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -479,6 +496,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedRide, setSelectedRide] = useState<RideHistoryEntry | null>(null);
   const pageSize = 10;
 
   // Filter rides
@@ -548,7 +566,18 @@ export const RideHistoryTable = memo(function RideHistoryTable({
     );
   }
 
+  const formatDialogDate = (date: Date) => {
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
   return (
+    <>
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
@@ -564,15 +593,15 @@ export const RideHistoryTable = memo(function RideHistoryTable({
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 w-full lg:w-auto">
             {/* Search */}
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
               <Input
                 placeholder="Search routes..."
                 value={searchQuery}
                 onChange={handleSearchChange}
-                className="pl-9 w-full sm:w-[200px] bg-slate-900/50 border-slate-700/50 focus:border-primary"
+                className="pl-9 w-full sm:w-[220px] bg-slate-900/50 border-slate-700/50 focus:border-primary"
               />
             </div>
 
@@ -674,7 +703,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
           <tbody>
             {paginatedRides.length > 0 ? (
               paginatedRides.map((ride, index) => (
-                <RideHistoryRow key={ride.id} ride={ride} index={index} />
+                <RideHistoryRow key={ride.id} ride={ride} index={index} onSelect={setSelectedRide} />
               ))
             ) : (
               <tr>
@@ -704,7 +733,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
       <div className="lg:hidden p-4 space-y-3">
         {paginatedRides.length > 0 ? (
           paginatedRides.map((ride, index) => (
-            <RideHistoryCard key={ride.id} ride={ride} index={index} />
+            <RideHistoryCard key={ride.id} ride={ride} index={index} onSelect={setSelectedRide} />
           ))
         ) : (
           <div className="flex flex-col items-center gap-2 py-12">
@@ -737,6 +766,77 @@ export const RideHistoryTable = memo(function RideHistoryTable({
         </div>
       )}
     </motion.div>
+
+    <Dialog open={!!selectedRide} onOpenChange={(open) => !open && setSelectedRide(null)}>
+      <DialogContent className="max-w-2xl bg-slate-950 border-slate-800 text-slate-100 max-h-[85vh] overflow-y-auto">
+        {selectedRide && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-white">Ride Details</DialogTitle>
+            </DialogHeader>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div className="space-y-1">
+                <p className="text-slate-400 text-xs">Date & Time</p>
+                <p className="text-white">{formatDialogDate(selectedRide.date)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-slate-400 text-xs">Status</p>
+                <p className="text-white capitalize">{selectedRide.status}</p>
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <p className="text-slate-400 text-xs">From</p>
+                <p className="text-white break-words">{selectedRide.from}</p>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <p className="text-slate-400 text-xs">To</p>
+                <p className="text-white break-words">{selectedRide.to}</p>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-slate-400 text-xs">Provider</p>
+                <p className="text-white break-words">{selectedRide.providerName || 'Ride Provider'}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-slate-400 text-xs">Fare</p>
+                <p className="text-white">PKR {selectedRide.fare}</p>
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <p className="text-slate-400 text-xs">Pickup</p>
+                <p className="text-white break-words">{selectedRide.pickupLocation || 'Not available'}</p>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <p className="text-slate-400 text-xs">Dropoff</p>
+                <p className="text-white break-words">{selectedRide.dropoffLocation || 'Not available'}</p>
+              </div>
+
+              {selectedRide.cancellationReason && (
+                <div className="space-y-1 sm:col-span-2">
+                  <p className="text-slate-400 text-xs">Not Completed / Cancellation Reason</p>
+                  <p className="text-red-300 break-words">{selectedRide.cancellationReason}</p>
+                </div>
+              )}
+
+              {selectedRide.distanceKm !== undefined && (
+                <div className="space-y-1">
+                  <p className="text-slate-400 text-xs">Distance</p>
+                  <p className="text-white">{selectedRide.distanceKm.toFixed(1)} km</p>
+                </div>
+              )}
+              {selectedRide.durationMinutes !== undefined && (
+                <div className="space-y-1">
+                  <p className="text-slate-400 text-xs">Estimated Duration</p>
+                  <p className="text-white">{selectedRide.durationMinutes} min</p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 });
 

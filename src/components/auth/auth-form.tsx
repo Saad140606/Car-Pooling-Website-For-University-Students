@@ -79,6 +79,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
   });
 
   async function onSubmit(values: AuthFormValues) {
+    const submitStartMs = performance.now();
     setLoading(true);
     if (!auth || !firestore) {
       toast({
@@ -171,13 +172,11 @@ export function AuthForm({ university, action }: AuthFormProps) {
           }
 
           const otpData = await otpResponse.json();
-          
-          // Sign out before redirecting to verify page
-          try {
-            await signOut(auth);
-          } catch (err) {
+
+          // Sign out in background so redirect to verification page is instant.
+          void signOut(auth).catch((err) => {
             console.warn('Failed to sign out after registration:', err);
-          }
+          });
 
           // Show dev OTP if available
           if (otpData.otp) {
@@ -535,6 +534,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
         description: errorMessage,
       });
     } finally {
+      console.log('[AuthForm][perf] action=', action, 'university=', university, 'total_ms=', Math.round(performance.now() - submitStartMs));
       setLoading(false);
     }
   }

@@ -912,9 +912,9 @@ export async function markRideCompleted(
       throw new Error('FORBIDDEN: Only the driver can mark ride as completed');
     }
 
-    // Must be in COMPLETION_WINDOW (or IN_PROGRESS for flexibility)
-    if (currentStatus !== RideStatus.COMPLETION_WINDOW && currentStatus !== RideStatus.IN_PROGRESS) {
-      throw new Error(`Cannot complete ride in status: ${currentStatus}`);
+    // Strict timing: only allow completion during completion window
+    if (currentStatus !== RideStatus.COMPLETION_WINDOW) {
+      throw new Error('Completion form is available only after departure + completion delay');
     }
 
     const normalized = normalizeConfirmedPassengers(data.confirmedPassengers || []);
@@ -979,9 +979,9 @@ export async function markPassengerNoShow(
       throw new Error('FORBIDDEN: Only the driver can mark no-shows');
     }
 
-    // Must be in COMPLETION_WINDOW or IN_PROGRESS
-    if (currentStatus !== RideStatus.COMPLETION_WINDOW && currentStatus !== RideStatus.IN_PROGRESS) {
-      throw new Error(`Cannot mark no-show in status: ${currentStatus}`);
+    // Strict timing: no-show review only during completion window
+    if (currentStatus !== RideStatus.COMPLETION_WINDOW) {
+      throw new Error('No-show review is available only after departure + completion delay');
     }
 
     // Find passenger in confirmed list
@@ -1042,8 +1042,8 @@ export async function reviewPassengerArrival(
       throw new Error('FORBIDDEN: Only the driver can review passengers');
     }
 
-    if (currentStatus !== RideStatus.COMPLETION_WINDOW && currentStatus !== RideStatus.IN_PROGRESS) {
-      throw new Error(`Cannot review passengers in status: ${currentStatus}`);
+    if (currentStatus !== RideStatus.COMPLETION_WINDOW) {
+      throw new Error('Passenger review is available only after departure + completion delay');
     }
 
     const normalized = normalizeConfirmedPassengers(data.confirmedPassengers || []);
@@ -1099,8 +1099,8 @@ export async function submitPassengerCompletion(
     const data = snap.data()!;
     const currentStatus = getLifecycleStatus(data);
 
-    if (currentStatus !== RideStatus.COMPLETION_WINDOW && currentStatus !== RideStatus.IN_PROGRESS) {
-      throw new Error(`Cannot submit completion in status: ${currentStatus}`);
+    if (currentStatus !== RideStatus.COMPLETION_WINDOW) {
+      throw new Error('Completion form is available only after departure + completion delay');
     }
 
     const normalized = normalizeConfirmedPassengers(data.confirmedPassengers || []);
@@ -1222,6 +1222,45 @@ export async function submitRating(
 
     tx.set(ratingRef, ratingDoc);
 
+    // Backward compatibility: mirror passenger->driver rating into legacy
+    // booking/rating structures used by older analytics and UI modules.
+    if (raterRole === 'passenger') {
+      try {
+        const bookingQuery = db
+          .collection(`universities/${university}/bookings`)
+          .where('rideId', '==', rideId)
+          .where('passengerId', '==', raterId)
+          .limit(1);
+        const bookingSnap = await tx.get(bookingQuery);
+
+        if (!bookingSnap.empty) {
+          const bookingDoc = bookingSnap.docs[0];
+          tx.update(bookingDoc.ref, {
+            driverRating: rating,
+            ratedAt: now(),
+            updatedAt: now(),
+          });
+
+          const legacyRatingRef = db.doc(`universities/${university}/ratings/${bookingDoc.id}`);
+          tx.set(
+            legacyRatingRef,
+            {
+              id: bookingDoc.id,
+              rideId,
+              driverId: ratedUserId,
+              passengerId: raterId,
+              rating,
+              createdAt: now(),
+              ratedByRole: 'passenger',
+            },
+            { merge: true }
+          );
+        }
+      } catch (compatErr) {
+        console.warn('[RideLifecycle] Legacy rating sync skipped:', compatErr);
+      }
+    }
+
     // Update aggregate stats
     const currentStats = statsSnap.exists ? (statsSnap.data() as Partial<UserRatingStats>) : {};
 
@@ -1335,6 +1374,7 @@ export async function cancelRide(
       cancelledAt: now(),
       cancelledBy: driverId,
       cancellationReason: reason || 'Driver cancelled',
+      cancelledBeforeDeparture: true,
       transitionLog: transLog,
       ratingsOpen: false,
       updatedAt: now(),

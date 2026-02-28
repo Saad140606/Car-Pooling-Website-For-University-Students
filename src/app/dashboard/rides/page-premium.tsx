@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/premium-select';
 import { MapPin, Clock, Users, DollarSign, MessageSquare, Loader2, Filter, ChevronDown, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
 
 interface RideFilters {
   minPrice: number;
@@ -263,6 +264,16 @@ export default function FindARidePage() {
         return;
       }
 
+      const activeLock = getActiveRideLock(userData);
+      if (activeLock) {
+        toast({
+          variant: 'destructive',
+          title: 'Account Locked',
+          description: formatRideLockMessage(activeLock.lockUntil, activeLock.lockDays),
+        });
+        return;
+      }
+
       setBookingRide(rideId);
 
       try {
@@ -315,6 +326,18 @@ export default function FindARidePage() {
         setBookingRide(null);
       } catch (err: any) {
         console.error('Booking error:', err);
+        if (String(err?.code || '').toLowerCase() === 'permission-denied') {
+          const activeLockOnFailure = getActiveRideLock(userData);
+          if (activeLockOnFailure) {
+            toast({
+              variant: 'destructive',
+              title: 'Account Locked',
+              description: formatRideLockMessage(activeLockOnFailure.lockUntil, activeLockOnFailure.lockDays),
+            });
+            setBookingRide(null);
+            return;
+          }
+        }
         toast({
           variant: 'destructive',
           title: 'Booking failed',
@@ -327,6 +350,7 @@ export default function FindARidePage() {
   );
 
   const isLoading = userLoading || loading;
+  const activeRideLock = getActiveRideLock(userData);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 pb-20">
@@ -334,6 +358,11 @@ export default function FindARidePage() {
       <div className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 py-3 sm:py-4 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-2xl sm:text-3xl font-bold text-white mb-4">Find Your Ride</h1>
+          {activeRideLock && (
+            <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+              {formatRideLockMessage(activeRideLock.lockUntil, activeRideLock.lockDays)}
+            </div>
+          )}
           <div className="flex gap-3 items-center">
             <PremiumSearchBar
               placeholder="Search by location..."

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useFirestore, useUser } from '@/firebase';
 import { subscribeMessages, sendMessage as sendMsg, chatRef } from '@/firebase/firestore/chats';
-import { getDoc, getDocs, query, collection, where, writeBatch, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { getDoc, getDocs, query, collection, where, writeBatch, doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useNotifications } from '@/contexts/NotificationContext';
 
 // Helper function to mark messages as seen
@@ -39,6 +39,9 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [accessible, setAccessible] = useState<boolean | null>(null);
+  const [resolvedChatId, setResolvedChatId] = useState<string | null>(null);
+  const [resolvedRecipientId, setResolvedRecipientId] = useState<string | null>(null);
+  const [resolvedRideId, setResolvedRideId] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -46,16 +49,115 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
     // Reset accessible when re-initializing subscription so stale values
     // from previous mounts/opens don't cause incorrect "access denied" UI.
     setAccessible(null);
+    setResolvedChatId(chatId || null);
+    setResolvedRecipientId(null);
+    setResolvedRideId(null);
     let mounted = true;
     setLoading(true);
 
     (async () => {
       try {
         if (!universityId) throw new Error('universityId required for chat subscription');
-        const cref = chatRef(firestore, universityId, chatId as string);
-        const snap = await getDoc(cref);
-        if (!snap.exists()) {
-          // Chat document missing — mark as inaccessible and avoid subscribing.
+        const normalizeParticipants = (chatData: any): string[] => {
+          const participants = new Set<string>();
+          if (chatData?.passengerId && typeof chatData.passengerId === 'string') participants.add(chatData.passengerId);
+          if (chatData?.providerId && typeof chatData.providerId === 'string') participants.add(chatData.providerId);
+          if (chatData?.driverId && typeof chatData.driverId === 'string') participants.add(chatData.driverId);
+          if (Array.isArray(chatData?.participants)) {
+            for (const participantId of chatData.participants) {
+              if (typeof participantId === 'string') participants.add(participantId);
+            }
+          }
+          if (chatData?.passenger?.uid && typeof chatData.passenger.uid === 'string') participants.add(chatData.passenger.uid);
+          if (chatData?.provider?.uid && typeof chatData.provider.uid === 'string') participants.add(chatData.provider.uid);
+          if (chatData?.passengerDetails?.uid && typeof chatData.passengerDetails.uid === 'string') participants.add(chatData.passengerDetails.uid);
+          if (chatData?.providerDetails?.uid && typeof chatData.providerDetails.uid === 'string') participants.add(chatData.providerDetails.uid);
+          return Array.from(participants);
+        };
+
+        const tryResolveChatByBooking = async (): Promise<{ id: string; data: any } | null> => {
+          if (!chatId) return null;
+          try {
+            const byBookingQuery = query(
+              collection(firestore, `universities/${universityId}/chats`),
+              where('bookingId', '==', chatId)
+            );
+            const byBookingSnap = await getDocs(byBookingQuery);
+            for (const candidate of byBookingSnap.docs) {
+              const candidateData = candidate.data() as any;
+              const candidateParticipants = normalizeParticipants(candidateData);
+              if (!user?.uid || candidateParticipants.includes(user.uid)) {
+                return { id: candidate.id, data: candidateData };
+              }
+            }
+          } catch (resolveErr) {
+            console.debug('useChat: booking chat resolve failed', resolveErr);
+          }
+          return null;
+        };
+
+        const bootstrapChatFromBooking = async (): Promise<{ id: string; data: any } | null> => {
+          if (!chatId || !user?.uid) return null;
+          try {
+            const bookingRef = doc(firestore, `universities/${universityId}/bookings`, chatId);
+            const bookingSnap = await getDoc(bookingRef);
+            if (!bookingSnap.exists()) return null;
+            const bookingData = bookingSnap.data() as any;
+            const passengerId = bookingData?.passengerId;
+            const providerId = bookingData?.driverId || bookingData?.providerId;
+            if (!passengerId || !providerId) return null;
+            if (user.uid !== passengerId && user.uid !== providerId) return null;
+
+            const payload = {
+              bookingId: chatId,
+              rideId: bookingData?.rideId || null,
+              passengerId,
+              providerId,
+              participants: [passengerId, providerId],
+              status: 'active',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            };
+
+            const newChatRef = chatRef(firestore, universityId, chatId);
+            await setDoc(newChatRef, payload, { merge: true });
+            return { id: chatId, data: payload };
+          } catch (bootstrapErr) {
+            console.debug('useChat: bootstrap chat from booking failed', bootstrapErr);
+            return null;
+          }
+        };
+
+        let targetChatId = chatId as string;
+        let data: any = null;
+
+        try {
+          const cref = chatRef(firestore, universityId, targetChatId);
+          const snap = await getDoc(cref);
+          if (snap.exists()) {
+            data = snap.data() as any;
+          }
+        } catch (primaryErr) {
+          console.debug('useChat: primary chat fetch failed', primaryErr);
+        }
+
+        if (!data) {
+          const resolved = await tryResolveChatByBooking();
+          if (resolved) {
+            targetChatId = resolved.id;
+            data = resolved.data;
+          }
+        }
+
+        if (!data) {
+          const bootstrapped = await bootstrapChatFromBooking();
+          if (bootstrapped) {
+            targetChatId = bootstrapped.id;
+            data = bootstrapped.data;
+          }
+        }
+
+        if (!data) {
           if (mounted) {
             setAccessible(false);
             setLoading(false);
@@ -63,7 +165,19 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           return;
         }
 
-        const data = snap.data() as any;
+        if (mounted) {
+          setResolvedChatId(targetChatId);
+        }
+
+        const derivedRideId =
+          (typeof data?.rideId === 'string' && data.rideId) ||
+          (typeof data?.bookingId === 'string' && data.bookingId) ||
+          chatId ||
+          null;
+        if (mounted) {
+          setResolvedRideId(derivedRideId);
+        }
+
         // Build a normalized participant id list to handle a few common shapes
         const participants = new Set<string>();
         try {
@@ -85,6 +199,13 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
         if (data?.provider && typeof data.provider === 'object' && data.provider.uid) participants.add(data.provider.uid);
         if (data?.passengerDetails && typeof data.passengerDetails === 'object' && data.passengerDetails.uid) participants.add(data.passengerDetails.uid);
         if (data?.providerDetails && typeof data.providerDetails === 'object' && data.providerDetails.uid) participants.add(data.providerDetails.uid);
+
+        if (user?.uid) {
+          const otherParticipant = Array.from(participants).find((participantId) => participantId !== user.uid) || null;
+          if (mounted) {
+            setResolvedRecipientId(otherParticipant);
+          }
+        }
 
         // Debug resolved participants
         try {
@@ -129,14 +250,14 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
 
         // Safe to subscribe
         if (mounted) setAccessible(true);
-        unsubRef.current = subscribeMessages(firestore, universityId as string, chatId as string, (items) => {
+        unsubRef.current = subscribeMessages(firestore, universityId as string, targetChatId, (items) => {
           if (!mounted) return;
           setMessages(items as any[]);
           setLoading(false);
           
           // Mark messages as seen by current user
           if (user?.uid) {
-            markMessagesAsSeen(firestore, universityId as string, chatId as string, user.uid, items);
+            markMessagesAsSeen(firestore, universityId as string, targetChatId, user.uid, items);
           }
         });
       } catch (err: any) {
@@ -152,25 +273,32 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
   }, [firestore, chatId, universityId, user?.uid]);
 
   const sendMessage = useCallback(async (payload: { type?: string; content?: string; mediaUrl?: string; recipientId?: string; rideId?: string; senderName?: string }) => {
-    if (!firestore || !chatId || !user || accessible === false || !universityId) return null;
-    return sendMsg(firestore, universityId, chatId, {
+    const activeChatId = resolvedChatId || chatId;
+    if (!firestore || !activeChatId || !user || accessible === false || !universityId) return null;
+
+    const recipientId = payload.recipientId || resolvedRecipientId || undefined;
+    const rideId = payload.rideId || resolvedRideId || undefined;
+    const senderName = payload.senderName || user.displayName || undefined;
+
+    return sendMsg(firestore, universityId, activeChatId, {
       senderId: user.uid,
       type: payload.type || 'text',
       content: payload.content || '',
       mediaUrl: payload.mediaUrl || null,
-      recipientId: payload.recipientId,
-      rideId: payload.rideId,
-      senderName: payload.senderName
+      recipientId,
+      rideId,
+      senderName
     });
-  }, [firestore, chatId, user, accessible, universityId]);
+  }, [firestore, chatId, resolvedChatId, user, accessible, universityId, resolvedRecipientId, resolvedRideId]);
 
   const setTyping = useCallback(async (isTyping: boolean) => {
-    if (!firestore || !chatId || !user || !universityId) return;
+    const activeChatId = resolvedChatId || chatId;
+    if (!firestore || !activeChatId || !user || !universityId) return;
     try {
-      const cref = doc(firestore, `universities/${universityId}/chats`, chatId);
+      const cref = doc(firestore, `universities/${universityId}/chats`, activeChatId);
       await updateDoc(cref, { typing: { userId: user.uid, isTyping, at: serverTimestamp() } });
     } catch (_) {}
-  }, [firestore, chatId, user, universityId]);
+  }, [firestore, chatId, resolvedChatId, user, universityId]);
 
-  return { messages, loading, sendMessage, setTyping, accessible };
+  return { messages, loading, sendMessage, setTyping, accessible, resolvedChatId };
 }

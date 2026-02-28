@@ -12,6 +12,12 @@
 
 import { Firestore, Timestamp, doc, getDoc, updateDoc, query, where, collection, getDocs, writeBatch, serverTimestamp } from 'firebase/firestore';
 
+function snapshotExists(snapshot: any): boolean {
+  if (!snapshot) return false;
+  if (typeof snapshot.exists === 'function') return snapshot.exists();
+  return !!snapshot.exists;
+}
+
 export interface CancellationValidationResult {
   allowed: boolean;
   reason?: string;
@@ -43,7 +49,7 @@ export async function validateCancellationPermission(
       ? await (firestoreOrDb as any).doc(rideRef.path).get() 
       : await getDoc(rideRef);
 
-    if (!rideSnap.exists()) {
+    if (!snapshotExists(rideSnap)) {
       return {
         allowed: false,
         reason: 'Ride not found'
@@ -107,7 +113,7 @@ export async function isAccountLocked(
       ? await (firestoreOrDb as any).doc(userRef.path).get()
       : await getDoc(userRef);
 
-    if (!userSnap.exists()) {
+    if (!snapshotExists(userSnap)) {
       return { locked: false };
     }
 
@@ -158,7 +164,7 @@ export async function calculateCancellationRate(
       ? await (firestoreOrDb as any).doc(userRef.path).get()
       : await getDoc(userRef);
 
-    if (!userSnap.exists()) {
+    if (!snapshotExists(userSnap)) {
       return { rate: 0, cancellations: 0, participations: 0 };
     }
 
@@ -223,7 +229,7 @@ export async function isDuplicateCancellation(
         ? await (firestoreOrDb as any).doc(requestRef.path).get()
         : await getDoc(requestRef);
 
-      if (requestSnap.exists()) {
+      if (snapshotExists(requestSnap)) {
         const request = requestSnap.data() as any;
         const status = request.status?.toUpperCase();
         // Already cancelled if status is CANCELLED, AUTO_CANCELLED, etc.
@@ -240,7 +246,7 @@ export async function isDuplicateCancellation(
         ? await (firestoreOrDb as any).doc(bookingRef.path).get()
         : await getDoc(bookingRef);
 
-      if (bookingSnap.exists()) {
+      if (snapshotExists(bookingSnap)) {
         const booking = bookingSnap.data() as any;
         return booking.status?.toUpperCase() === 'CANCELLED';
       }

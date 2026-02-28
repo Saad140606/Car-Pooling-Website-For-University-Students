@@ -2,7 +2,9 @@ import React, { useState, useRef } from 'react';
 import { uploadFile } from '@/firebase/storage/upload';
 import { Paperclip, Loader2, AlertCircle } from 'lucide-react';
 
-export default function MediaUploader({ onUploaded }: { onUploaded: (url: string, type: 'image'|'file') => void }) {
+type UploadMessageType = 'image' | 'video' | 'audio' | 'file';
+
+export default function MediaUploader({ onUploaded }: { onUploaded: (url: string, type: UploadMessageType) => void }) {
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +70,13 @@ export default function MediaUploader({ onUploaded }: { onUploaded: (url: string
       return;
     }
 
-    const type: 'image' | 'file' = isImage ? 'image' : 'file';
+    const type: UploadMessageType = isImage
+      ? 'image'
+      : isVideo
+        ? 'video'
+        : isAudio
+          ? 'audio'
+          : 'file';
     
     setUploading(true);
     setProgress(0);

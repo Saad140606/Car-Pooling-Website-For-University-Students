@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallba
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import dynamic from 'next/dynamic';
 import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
@@ -13,7 +14,6 @@ import L from 'leaflet';
 
 import { Button } from '@/components/ui/button';
 import RouteEditor from '@/components/RouteEditor';
-import StopsViewer from '@/components/StopsViewer';
 import { decodePolyline } from '@/lib/route';
 import type { LatLng as RouteLatLng } from '@/lib/route';
 import { calculatePricing } from '@/lib/pricing';
@@ -29,6 +29,13 @@ import { Loader2, MapPin, Lock } from 'lucide-react';
 import { LeavingTimePicker } from '@/components/ui/leaving-time-picker';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
+import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
+
+const StopsViewer = dynamic(() => import('@/components/StopsViewer'), {
+  ssr: false,
+  loading: () => <div className="text-sm text-slate-400">Loading stops...</div>,
+});
 
 
 const rideSchema = z.object({
@@ -197,6 +204,24 @@ const MapComponent = forwardRef<MapComponentRef, {
       ? [props.universityLocation.lat, props.universityLocation.lng] as [number, number]
       : [24.8569128, 67.2646384] as [number, number];
     mapInstanceRef.current = L.map(mapContainerRef.current).setView(mapCenter, 13);
+
+    // Force Leaflet to recalculate dimensions after mount/layout to avoid partial/tiny map render.
+    let invalidateRaf: number | null = null;
+    const invalidate = () => {
+      if (invalidateRaf !== null) return;
+      invalidateRaf = window.requestAnimationFrame(() => {
+        invalidateRaf = null;
+        try { mapInstanceRef.current?.invalidateSize(); } catch (_) {}
+      });
+    };
+    const invalidateT1 = window.setTimeout(invalidate, 0);
+    const invalidateT2 = window.setTimeout(invalidate, 220);
+    const onResize = () => invalidate();
+    window.addEventListener('resize', onResize);
+    const resizeObserver = new ResizeObserver(() => invalidate());
+    try {
+      if (mapContainerRef.current) resizeObserver.observe(mapContainerRef.current);
+    } catch (_) {}
     // If parent requested an initial selection (e.g., university lock), apply it immediately
     if (props.initialSelection && props.activeMapSelect) {
       try {
@@ -345,6 +370,14 @@ const MapComponent = forwardRef<MapComponentRef, {
 
     const map = mapInstanceRef.current;
     return () => {
+      window.clearTimeout(invalidateT1);
+      window.clearTimeout(invalidateT2);
+      if (invalidateRaf !== null) {
+        window.cancelAnimationFrame(invalidateRaf);
+        invalidateRaf = null;
+      }
+      window.removeEventListener('resize', onResize);
+      try { resizeObserver.disconnect(); } catch (_) {}
         map.remove();
         mapInstanceRef.current = null;
     };
@@ -357,12 +390,20 @@ const MapComponent = forwardRef<MapComponentRef, {
     // Create or update a permanent locked marker if requested
     const lockedPos = props.lockedPosition;
     if (lockedPos) {
+      const popupText = lockedPos.name || 'University';
       if (lockedMarkerRef.current) {
         try { lockedMarkerRef.current.setLatLng([lockedPos.lat, lockedPos.lng]); } catch (_) {}
+        try {
+          if (lockedMarkerRef.current.getPopup()) {
+            lockedMarkerRef.current.setPopupContent(popupText);
+          } else {
+            lockedMarkerRef.current.bindPopup(popupText);
+          }
+        } catch (_) {}
       } else {
         try {
-          lockedMarkerRef.current = L.marker([lockedPos.lat, lockedPos.lng], { icon: (getImageIcon() as any) || undefined }).addTo(mapInstanceRef.current!);
-          try { lockedMarkerRef.current.bindPopup(lockedPos.name || 'University'); } catch (_) {}
+          lockedMarkerRef.current = L.marker([lockedPos.lat, lockedPos.lng], { icon: makePinIcon('#22c55e') }).addTo(mapInstanceRef.current!);
+          try { lockedMarkerRef.current.bindPopup(popupText); } catch (_) {}
         } catch (_) {}
       }
     } else if (lockedMarkerRef.current) {
@@ -410,6 +451,7 @@ const MapComponent = forwardRef<MapComponentRef, {
   useEffect(() => {
     if (!mapInstanceRef.current || !props.universityLocation) return;
     // Center the map on the university location when the page loads
+    try { mapInstanceRef.current.invalidateSize(); } catch (_) {}
     mapInstanceRef.current.setView([props.universityLocation.lat, props.universityLocation.lng], 13, { animate: false });
   }, [props.universityLocation?.lat, props.universityLocation?.lng]);
 
@@ -820,17 +862,21 @@ export default function CreateRidePage() {
 
   // University selection is mandatory: 'toUni' (going to uni) | 'fromUni' (leaving from uni)
   const [uniAuto, setUniAuto] = useState<'toUni' | 'fromUni'>('toUni');
+  const [selectedPortalUniversity] = useState<University | null>(() => {
+    const selected = getSelectedUniversity();
+    return selected && isValidUniversity(selected) ? selected : null;
+  });
 
   // Predefined university locations (approximate centers)
   const FAST_UNI: LatLngLiteral = {
     lat: 24.8569128,
     lng: 67.2646384,
-    name: 'FAST National University of Computer and Emerging Sciences, Bin Qasim Town, Malir District, Karachi Division, Sindh, 75030, Pakistan',
+    name: 'FAST National University Karachi Campus',
   };
   const NED_UNI: LatLngLiteral = {
     lat: 24.9302091,
     lng: 67.1148119,
-    name: 'NED UET, University Road, Gulshan-e-Iqbal Town, Gulshan District, Karachi Division, Sindh, 75300, Pakistan',
+    name: 'NED University of Engineering and Technology',
   };
   const KARACHI_UNI: LatLngLiteral = {
     lat: 24.9393134,
@@ -840,15 +886,25 @@ export default function CreateRidePage() {
 
   const UNI_MAX_RADIUS_METERS = 4000; // allow ~4km radius from campus center
 
+  const getEffectiveUniversity = () => {
+    const portalUni = (selectedPortalUniversity || '').toString().toLowerCase();
+    if (portalUni === 'ned' || portalUni === 'fast' || portalUni === 'karachi') return portalUni;
+
+    const profileUni = (userData?.university || '').toString().toLowerCase();
+    if (profileUni === 'ned' || profileUni === 'fast' || profileUni === 'karachi') return profileUni;
+
+    return 'fast';
+  };
+
   const getUniversityShortName = () => {
-    const uni = (userData?.university || '').toString().toLowerCase();
+    const uni = getEffectiveUniversity();
     if (uni === 'ned') return 'NED University';
     if (uni === 'karachi') return 'University of Karachi';
     return 'FAST University';
   };
 
   const getCurrentUniversity = () => {
-    const uni = (userData?.university || '').toString().toLowerCase();
+    const uni = getEffectiveUniversity();
     if (uni === 'ned') return NED_UNI;
     if (uni === 'karachi') return KARACHI_UNI;
     return FAST_UNI;
@@ -910,11 +966,34 @@ export default function CreateRidePage() {
   useEffect(() => {
     // Only apply when fields are empty and the user's university is available to avoid
     // overwriting input with a wrong default (e.g. FAST) while auth/profile are still loading.
-    if ((form.getValues('from') === '' && form.getValues('to') === '') && userData?.university) {
+    if ((form.getValues('from') === '' && form.getValues('to') === '') && getEffectiveUniversity()) {
       applyUniversitySelection(uniAuto);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userData?.university, initialized]);
+  }, [userData?.university, selectedPortalUniversity, initialized]);
+
+  // Keep locked field coordinates synchronized with the currently resolved university.
+  // This prevents stale coordinates (e.g., FAST) from persisting when the UI label shows another portal (e.g., Karachi).
+  useEffect(() => {
+    const uni = getCurrentUniversity();
+    const uniShortName = getUniversityShortName();
+    const tolerance = 1e-7;
+    const samePoint = (p: LatLngLiteral | null) =>
+      !!p && Math.abs(p.lat - uni.lat) <= tolerance && Math.abs(p.lng - uni.lng) <= tolerance;
+
+    if (uniAuto === 'toUni') {
+      if (!samePoint(toCoords) || form.getValues('to') !== uniShortName) {
+        form.setValue('to', uniShortName, { shouldValidate: true, shouldDirty: true });
+        setToCoords({ lat: uni.lat, lng: uni.lng, name: uni.name || uniShortName });
+      }
+    } else if (uniAuto === 'fromUni') {
+      if (!samePoint(fromCoords) || form.getValues('from') !== uniShortName) {
+        form.setValue('from', uniShortName, { shouldValidate: true, shouldDirty: true });
+        setFromCoords({ lat: uni.lat, lng: uni.lng, name: uni.name || uniShortName });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uniAuto, userData?.university, selectedPortalUniversity, initialized]);
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [durationMin, setDurationMin] = useState<number | null>(null);
   
@@ -1748,6 +1827,17 @@ export default function CreateRidePage() {
       router.push('/dashboard/complete-profile');
       return;
     }
+
+    const activeLock = getActiveRideLock(ud);
+    if (activeLock) {
+      toast({
+        variant: 'destructive',
+        title: 'Account Locked',
+        description: formatRideLockMessage(activeLock.lockUntil, activeLock.lockDays),
+      });
+      return;
+    }
+
     if (!mapRef.current) {
       toast({ variant: "destructive", title: "Map Error", description: "Map component is not ready. Please wait a moment." });
       return;
@@ -2066,8 +2156,11 @@ export default function CreateRidePage() {
         }
 
         // Show detailed error in toast
-        const errorMsg = e?.code === 'permission-denied' 
-          ? `Permission denied. Check console for details. User: ${user?.uid?.substring(0,8)}...`
+        const activeLockOnFailure = getActiveRideLock(userData);
+        const errorMsg = e?.code === 'permission-denied'
+          ? (activeLockOnFailure
+              ? formatRideLockMessage(activeLockOnFailure.lockUntil, activeLockOnFailure.lockDays)
+              : `Permission denied. Check console for details. User: ${user?.uid?.substring(0,8)}...`)
           : (e?.message || 'An error occurred while creating the ride.');
         
         toast({ variant: 'destructive', title: 'Could not create ride', description: errorMsg });
@@ -2102,7 +2195,7 @@ export default function CreateRidePage() {
     }
     console.log('[RENDER] Rendering suggestions dropdown for:', field);
     return (
-      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-card border-2 border-primary/30 rounded-lg mt-2 z-[10050] max-h-72 overflow-auto shadow-xl" style={{ position: 'absolute' }}>
+      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-card border-2 border-primary/30 rounded-lg mt-2 z-[5000] max-h-72 overflow-auto shadow-xl" style={{ position: 'absolute' }}>
         <div className="px-3 py-2 text-xs font-semibold text-primary bg-primary/5 border-b border-primary/10">
           📍 {suggestions.length} Location{suggestions.length !== 1 ? 's' : ''} Found
         </div>
@@ -2169,7 +2262,8 @@ export default function CreateRidePage() {
     );
   };
   
-  const isButtonDisabled = userLoading || isSubmitting || !routePolyline || !generatedStops || generatedStops.length === 0;
+  const activeRideLock = getActiveRideLock(userData);
+  const isButtonDisabled = userLoading || isSubmitting || !!activeRideLock || !routePolyline || !generatedStops || generatedStops.length === 0;
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -2178,6 +2272,11 @@ export default function CreateRidePage() {
           <CardTitle className="font-headline text-3xl text-slate-50">Offer a New Ride</CardTitle>
         </CardHeader>
         <CardContent>
+          {activeRideLock && (
+            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+              {formatRideLockMessage(activeRideLock.lockUntil, activeRideLock.lockDays)}
+            </div>
+          )}
           <div className="mb-4">
             <label className="text-sm font-medium text-slate-200 mb-2 block">Trip Type (required)</label>
             <div className="grid grid-cols-2 gap-2">
@@ -2200,9 +2299,9 @@ export default function CreateRidePage() {
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 relative">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 relative z-[4000]">
                 <FormField control={form.control} name="from" render={({ field }: any) => (
-                    <FormItem className="relative z-[100]" style={{ overflow: 'visible' }}>
+                  <FormItem className="relative z-[4500]" style={{ overflow: 'visible' }}>
                         <FormLabel>From</FormLabel>
                         <FormControl>
                             <div className='relative'>
@@ -2220,7 +2319,7 @@ export default function CreateRidePage() {
                 )}/>
 
                 <FormField control={form.control} name="to" render={({ field }: any) => (
-                    <FormItem className="relative z-[100]" style={{ overflow: 'visible' }}>
+                  <FormItem className="relative z-[4500]" style={{ overflow: 'visible' }}>
                         <FormLabel>To</FormLabel>
                         <FormControl>
                             <div className='relative'>
@@ -2238,7 +2337,7 @@ export default function CreateRidePage() {
                 )}/>
               </div>
             
-              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden shadow-sm relative">
+              <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden shadow-sm relative z-0">
                   <MapComponent 
                     ref={mapRef} 
                     onMapClick={handleMapClick}
@@ -2440,7 +2539,7 @@ export default function CreateRidePage() {
                   
               <div className="flex flex-col gap-2 pt-4">
                   <Button type="submit" className="w-full" size="lg" disabled={isButtonDisabled}>
-                      {isSubmitting ? <Loader2 className="animate-spin" /> : 'Create Ride'}
+                    {isSubmitting ? <Loader2 className="animate-spin" /> : activeRideLock ? 'Account Locked' : 'Create Ride'}
                   </Button>
                   <Button variant="outline" type="button" onClick={() => { 
                       form.reset();

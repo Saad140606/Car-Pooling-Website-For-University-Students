@@ -217,7 +217,7 @@ export default function ForgotPasswordPage() {
                 <label className="block text-sm font-semibold text-slate-200 mb-2">Email Address</label>
                 <Input
                   type="email"
-                  placeholder={selectedUniversity === 'fast' ? 'you@nu.edu.pk' : selectedUniversity === 'ned' ? 'you@cloud.neduet.edu.pk' : 'you@uok.edu.pk'}
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);

@@ -224,18 +224,18 @@ export const InsightsSection = memo(function InsightsSection({
       transition={{ duration: 0.5, delay: 0.3 }}
     >
       {/* Section Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6">
+        <div className="flex items-center gap-3 min-w-0">
           <div className="p-2 rounded-lg bg-purple-500/15">
             <Sparkles className="w-5 h-5 text-purple-500" />
           </div>
-          <div>
-            <h2 className="text-xl font-semibold text-white">Smart Insights</h2>
-            <p className="text-sm text-slate-500">Personalized analysis based on your activity</p>
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-semibold text-white">Smart Insights</h2>
+            <p className="text-xs sm:text-sm text-slate-500">Personalized analysis based on your activity</p>
           </div>
         </div>
         {insights.length > 0 && (
-          <span className="text-sm text-slate-500">
+          <span className="text-xs sm:text-sm text-slate-500">
             {insights.length} insight{insights.length !== 1 ? 's' : ''}
           </span>
         )}
@@ -343,18 +343,18 @@ export const QuickStatsBar = memo(function QuickStatsBar({ stats }: QuickStatsBa
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-wrap items-center gap-4 p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl backdrop-blur-md [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3"
+      className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 p-3 sm:p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl backdrop-blur-md [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3"
     >
       {stats.map((stat, index) => {
         const IconComponent = iconMap[stat.icon] || Zap;
         return (
           <div
             key={index}
-            className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 rounded-lg [@media(max-height:700px)]:px-2 [@media(max-height:700px)]:py-1"
+            className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 bg-slate-800/50 rounded-lg min-w-0 [@media(max-height:700px)]:px-2 [@media(max-height:700px)]:py-1"
           >
             <IconComponent className="w-4 h-4 text-primary [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
-            <span className="text-sm text-slate-400 [@media(max-height:700px)]:text-xs">{stat.label}:</span>
-            <span className="text-sm font-semibold text-white [@media(max-height:700px)]:text-xs">{stat.value}</span>
+            <span className="text-xs sm:text-sm text-slate-400 truncate [@media(max-height:700px)]:text-xs">{stat.label}:</span>
+            <span className="text-xs sm:text-sm font-semibold text-white truncate [@media(max-height:700px)]:text-xs">{stat.value}</span>
           </div>
         );
       })}

@@ -125,7 +125,7 @@ export default function AdminAnalyticsPage() {
           <div className="space-y-4">
             <div>
               <div className="flex justify-between mb-2">
-                <span className="text-sm text-slate-400">Total Earnings</span>
+                <span className="text-sm text-slate-400">Driver Earnings</span>
                 <span className="text-lg font-bold text-green-400">
                   Rs. {analytics.combined.earnings.total.toLocaleString()}
                 </span>
@@ -133,6 +133,19 @@ export default function AdminAnalyticsPage() {
               <div className="flex h-2 gap-1 bg-slate-800 rounded-full overflow-hidden">
                 <div className="flex-1 bg-green-500" />
                 <div className="flex-1 bg-green-400" />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between mb-2">
+                <span className="text-sm text-slate-400">Passenger Spendings</span>
+                <span className="text-lg font-bold text-blue-400">
+                  Rs. {analytics.combined.spendings.total.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex h-2 gap-1 bg-slate-800 rounded-full overflow-hidden">
+                <div className="flex-1 bg-blue-500" />
+                <div className="flex-1 bg-blue-400" />
               </div>
             </div>
 

@@ -29,9 +29,9 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   // Register service worker (fire-and-forget, non-blocking)
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js').then((reg) => {
+    navigator.serviceWorker.getRegistration('/').then((reg) => {
       if (!reg) {
-        navigator.serviceWorker.register('/firebase-messaging-sw.js').catch(() => {});
+        navigator.serviceWorker.register('/service-worker.js', { scope: '/' }).catch(() => {});
       }
     }).catch(() => {});
   }, []);

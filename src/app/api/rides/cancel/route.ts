@@ -23,11 +23,8 @@ import {
   successResponse,
   RATE_LIMITS,
 } from '@/lib/api-security';
-import {
-  shouldLockAccount,
-  getLockExpirationDate,
-} from '@/lib/rideCancellationService';
 import { notifyRideCancelled } from '@/lib/serverNotificationService';
+import { evaluateAndApplyRoleCancellationPolicy } from '@/lib/serverRoleCancellationPolicy';
 
 export async function POST(req: NextRequest) {
   console.log('[API:CancelRide] Request received');
@@ -99,27 +96,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ===== VALIDATION: Check if user account is locked =====
-    console.log('[API:CancelRide] Checking user account lock status');
+    // ===== VALIDATION: Fetch user document for metrics/history updates =====
+    console.log('[API:CancelRide] Fetching user document');
     const userRef = db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`);
     const preUserSnap = await userRef.get();
-    if (preUserSnap.exists) {
-      const preUserData = preUserSnap.data() as any;
-      if (preUserData.accountLockUntil) {
-        const lockUntil = preUserData.accountLockUntil.toDate 
-          ? preUserData.accountLockUntil.toDate() 
-          : new Date(preUserData.accountLockUntil);
-        if (new Date() < lockUntil) {
-          const minutesRemaining = Math.ceil((lockUntil.getTime() - Date.now()) / (60 * 1000));
-          console.warn('[API:CancelRide] Account is locked until:', lockUntil);
-          return errorResponse(
-            `Your account is temporarily locked due to high cancellation rate. Please try again in ${minutesRemaining} minutes.`,
-            403
-          );
-        }
-      }
-    }
-    console.log('[API:CancelRide] Account lock check passed');
+    console.log('[API:CancelRide] User document fetched');
 
     console.log('[API:CancelRide] Fetching all related documents before transaction');
     
@@ -179,6 +160,7 @@ export async function POST(req: NextRequest) {
         cancelledAt: now,
         cancelledBy: authenticatedUserId,
         cancellationReason: sanitizedReason,
+        cancelledBeforeDeparture: true,
         updatedAt: now,
       });
 
@@ -226,29 +208,13 @@ export async function POST(req: NextRequest) {
         }
       });
 
-      // ===== TRACKING: Update driver's cancellation metrics =====
-      if (userSnap.exists()) {
+      // ===== TRACKING: Update driver's cancellation history =====
+      if (userSnap.exists) {
         const userData = userSnap.data() as any;
-        const totalCancellations = (userData.totalCancellations ?? 0) + 1;
-        const totalParticipations = userData.totalParticipations ?? 0;
-        const cancellationRate = totalParticipations > 0
-          ? Math.round((totalCancellations / totalParticipations) * 100)
-          : 0;
-
-        const update: any = {
-          totalCancellations,
+        tx.update(userRef, {
+          totalCancellations: (userData.totalCancellations ?? 0) + 1,
           lastCancellationAt: now,
-        };
-
-        // ===== ABUSE PREVENTION: Lock account if threshold exceeded =====
-        // Threshold: > 35% cancellation rate after 3+ participations
-        if (totalParticipations >= 3 && cancellationRate > 35) {
-          const lockExpiration = getLockExpirationDate();
-          update.accountLockUntil = admin.firestore.Timestamp.fromDate(lockExpiration);
-          console.log('[DriverRideCancel] Account locked:', { userId: authenticatedUserId, cancellationRate, totalParticipations });
-        }
-
-        tx.update(userRef, update);
+        });
       }
 
       // Return result using rideData
@@ -261,6 +227,18 @@ export async function POST(req: NextRequest) {
         rideTo: rideData?.to,
       };
     });
+
+    let lockResult: Awaited<ReturnType<typeof evaluateAndApplyRoleCancellationPolicy>> | null = null;
+    try {
+      lockResult = await evaluateAndApplyRoleCancellationPolicy(
+        db,
+        validUniversity,
+        authenticatedUserId,
+        'driver'
+      );
+    } catch (policyErr) {
+      console.error('[DriverRideCancel] Policy evaluation error (non-critical):', policyErr);
+    }
 
     // ===== NOTIFICATIONS: Send to all affected passengers (after transaction) =====
     try {
@@ -299,6 +277,12 @@ export async function POST(req: NextRequest) {
         passengersAffected: result.passengersAffected,
         status: 'cancelled',
       },
+      accountLocked: Boolean(lockResult?.locked),
+      message: lockResult?.locked ? lockResult.message : undefined,
+      lockUntil: lockResult?.lockUntil || null,
+      cancellationRate: lockResult?.cancellationRate ?? null,
+      totalRidesWindow: lockResult?.totalRides ?? null,
+      cancelledRidesWindow: lockResult?.cancelledRides ?? null,
     });
   } catch (e: any) {
     // Handle authorization errors with 403

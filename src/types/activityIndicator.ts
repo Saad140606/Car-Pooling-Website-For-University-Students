@@ -6,6 +6,7 @@
 export interface ActivityIndicatorState {
   bookings: boolean;
   rides: boolean;
+  analytics: boolean;
   chat: boolean;
   notifications: boolean;
 }
@@ -13,11 +14,12 @@ export interface ActivityIndicatorState {
 export interface ActivityIndicatorTimestamps {
   bookingsLastViewed?: number;
   ridesLastViewed?: number;
+  analyticsLastViewed?: number;
   chatLastViewed?: number;
   notificationsLastViewed?: number;
 }
 
-export type ActivitySection = 'bookings' | 'rides' | 'chat' | 'notifications';
+export type ActivitySection = 'bookings' | 'rides' | 'analytics' | 'chat' | 'notifications';
 
 export interface UnreadActivityEvent {
   eventId: string;

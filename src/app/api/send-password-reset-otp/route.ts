@@ -4,7 +4,6 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { adminDb, adminAuth } from '@/firebase/firebaseAdmin';
 import admin from 'firebase-admin';
-import { getUniversityEmailDomain } from '@/lib/university-verification';
 
 // Configure email transporter
 const transporter = nodemailer.createTransport({
@@ -24,6 +23,14 @@ const RESET_LOCK_MS = 14 * 24 * 60 * 60 * 1000;
 const GENERIC_SUCCESS_MESSAGE = 'If the account is eligible, a verification code will be sent to your email.';
 
 type University = 'fast' | 'ned' | 'karachi';
+
+const UNIVERSITY_NAMES: Record<University, string> = {
+  fast: 'FAST University',
+  ned: 'NED University',
+  karachi: 'Karachi University',
+};
+
+const ALL_UNIVERSITIES: University[] = ['fast', 'ned', 'karachi'];
 
 function isValidUniversity(university: unknown): university is University {
   return university === 'fast' || university === 'ned' || university === 'karachi';
@@ -76,13 +83,6 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    const requiredDomain = getUniversityEmailDomain(university);
-    if (!requiredDomain || !normalizedEmail.endsWith(requiredDomain.toLowerCase())) {
-      return NextResponse.json(
-        { error: `Use your ${requiredDomain} email on this portal.` },
-        { status: 400 }
-      );
-    }
 
     const genericSuccess = NextResponse.json({
       success: true,
@@ -98,7 +98,36 @@ export async function POST(request: NextRequest) {
         email: normalizedEmail,
         clientIp,
       });
-      return genericSuccess;
+      return NextResponse.json(
+        { error: 'This email is not registered. Please sign up first.' },
+        { status: 404 }
+      );
+    }
+
+    let registeredUniversity: University | null = null;
+    for (const portal of ALL_UNIVERSITIES) {
+      const portalDoc = await adminDb.collection('universities').doc(portal).collection('users').doc(uid).get();
+      if (portalDoc.exists) {
+        registeredUniversity = portal;
+        break;
+      }
+    }
+
+    if (registeredUniversity && registeredUniversity !== university) {
+      await logSecurityEvent(university, 'password_reset_wrong_portal_attempt', {
+        uid,
+        email: normalizedEmail,
+        selectedUniversity: university,
+        registeredUniversity,
+        clientIp,
+      });
+
+      return NextResponse.json(
+        {
+          error: `This email is registered with ${UNIVERSITY_NAMES[registeredUniversity]} portal. Please use that portal to reset your password.`,
+        },
+        { status: 403 }
+      );
     }
 
     const userRef = adminDb.collection('universities').doc(university).collection('users').doc(uid);
@@ -109,7 +138,10 @@ export async function POST(request: NextRequest) {
         email: normalizedEmail,
         clientIp,
       });
-      return genericSuccess;
+      return NextResponse.json(
+        { error: 'This email is not registered in this university portal.' },
+        { status: 404 }
+      );
     }
 
     const userData = userDoc.data() || {};
@@ -124,7 +156,10 @@ export async function POST(request: NextRequest) {
         hasVerifiedEmail,
         clientIp,
       });
-      return genericSuccess;
+      return NextResponse.json(
+        { error: 'This account is not eligible for password reset yet. Please complete email verification first.' },
+        { status: 403 }
+      );
     }
 
     try {

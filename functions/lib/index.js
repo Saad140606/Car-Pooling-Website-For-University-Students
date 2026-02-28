@@ -33,11 +33,18 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.notifyOnCall = exports.sendAcceptanceReminders = exports.cleanupChatsOnRideUpdate = exports.rideReminders = exports.notifyOnMessageCreate = exports.notifyOnChatCreate = exports.notifyOnRideUpdate = exports.onRequestConfirmAutoCancelOthers = exports.expireAcceptedRequests = exports.notifyOnBookingUpdate = exports.notifyOnBookingCreate = exports.notifyOnBookingRequest = exports.notifyOnRequestAccepted = exports.cleanupChatOnBookingDelete = exports.deleteExpiredRides = exports.expireRides = void 0;
+exports.notifyOnCall = exports.notifyOnUniversityNotificationCreate = exports.sendAcceptanceReminders = exports.cleanupChatsOnRideUpdate = exports.rideReminders = exports.notifyOnMessageCreate = exports.notifyOnChatCreate = exports.notifyOnRideUpdate = exports.onRequestConfirmAutoCancelOthers = exports.expireAcceptedRequests = exports.notifyOnBookingUpdate = exports.notifyOnBookingCreate = exports.notifyOnBookingRequest = exports.notifyOnRequestAccepted = exports.cleanupChatOnBookingDelete = exports.deleteExpiredRides = exports.expireRides = exports.onRideLifecycleChange = exports.lifecycleCompletionManager = exports.lifecycleLockRides = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 // Initialize the admin SDK
 admin.initializeApp();
+// ============================================================================
+// RIDE LIFECYCLE SCHEDULER EXPORTS
+// ============================================================================
+var rideLifecycleScheduler_1 = require("./rideLifecycleScheduler");
+Object.defineProperty(exports, "lifecycleLockRides", { enumerable: true, get: function () { return rideLifecycleScheduler_1.lifecycleLockRides; } });
+Object.defineProperty(exports, "lifecycleCompletionManager", { enumerable: true, get: function () { return rideLifecycleScheduler_1.lifecycleCompletionManager; } });
+Object.defineProperty(exports, "onRideLifecycleChange", { enumerable: true, get: function () { return rideLifecycleScheduler_1.onRideLifecycleChange; } });
 const db = admin.firestore();
 /**
  * Scheduled function that marks past rides as 'expired'.
@@ -900,6 +907,151 @@ exports.sendAcceptanceReminders = functions.pubsub
                 }
             }
         }
+    }
+    return null;
+});
+/**
+ * Push dispatcher for app notification documents.
+ *
+ * Trigger path matches the UI notification feed source:
+ * `universities/{univ}/notifications/{notificationId}`
+ *
+ * This ensures every notification document created by API routes/services
+ * is also delivered as an FCM push (background/closed app included).
+ */
+exports.notifyOnUniversityNotificationCreate = functions.firestore
+    .document('universities/{univ}/notifications/{notificationId}')
+    .onCreate(async (snap, ctx) => {
+    const markDelivery = async (update) => {
+        try {
+            await snap.ref.set({
+                lastPushAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+                ...update,
+            }, { merge: true });
+        }
+        catch (e) {
+            console.warn('[notifyOnUniversityNotificationCreate] Failed to write delivery log:', e);
+        }
+    };
+    try {
+        const notification = snap.data();
+        const userId = notification?.userId;
+        if (!userId) {
+            await markDelivery({
+                deliveryStatus: 'failed',
+                deliveryError: 'Missing userId on notification document',
+            });
+            return null;
+        }
+        const title = String(notification?.title || 'Campus Ride');
+        const body = String(notification?.message || notification?.body || 'You have a new notification');
+        const type = String(notification?.type || 'general');
+        const priority = String(notification?.priority || 'normal');
+        const actionUrl = String(notification?.actionUrl || '/dashboard/notifications');
+        const relatedRideId = notification?.relatedRideId ? String(notification.relatedRideId) : '';
+        const relatedChatId = notification?.relatedChatId ? String(notification.relatedChatId) : '';
+        const relatedBookingId = notification?.relatedBookingId ? String(notification.relatedBookingId) : '';
+        const tokenSnap = await db.doc(`fcm_tokens/${userId}`).get();
+        if (!tokenSnap.exists) {
+            console.log('[notifyOnUniversityNotificationCreate] No token doc for user:', userId);
+            await markDelivery({
+                deliveryStatus: 'failed',
+                deliveryError: 'No FCM token document found for user',
+            });
+            return null;
+        }
+        const tokenData = tokenSnap.data();
+        const tokens = [];
+        if (typeof tokenData?.token === 'string' && tokenData.token.trim()) {
+            tokens.push(tokenData.token.trim());
+        }
+        if (Array.isArray(tokenData?.tokens)) {
+            for (const t of tokenData.tokens) {
+                if (typeof t === 'string' && t.trim())
+                    tokens.push(t.trim());
+            }
+        }
+        const uniqueTokens = Array.from(new Set(tokens));
+        if (uniqueTokens.length === 0) {
+            console.log('[notifyOnUniversityNotificationCreate] No valid token values for user:', userId);
+            await markDelivery({
+                deliveryStatus: 'failed',
+                deliveryError: 'No valid FCM tokens found for user',
+            });
+            return null;
+        }
+        const message = {
+            tokens: uniqueTokens,
+            notification: {
+                title,
+                body,
+            },
+            data: {
+                type,
+                notificationId: ctx.params.notificationId,
+                userId,
+                univ: String(ctx.params.univ || ''),
+                relatedRideId,
+                relatedChatId,
+                relatedBookingId,
+                actionUrl,
+                link: actionUrl,
+                url: actionUrl,
+                click_action: actionUrl,
+                priority,
+            },
+            webpush: {
+                headers: {
+                    Urgency: priority === 'critical' ? 'high' : 'normal',
+                },
+                notification: {
+                    title,
+                    body,
+                    icon: '/icons/icon-192x192.png',
+                    badge: '/icons/icon-192x192.png',
+                    requireInteraction: priority === 'critical',
+                    tag: `notif-${ctx.params.notificationId}`,
+                },
+                fcmOptions: {
+                    link: actionUrl,
+                },
+            },
+        };
+        const response = await admin.messaging().sendMulticast(message);
+        if (response.failureCount > 0) {
+            let shouldDeleteTokenDoc = false;
+            response.responses.forEach((result) => {
+                if (!result.success) {
+                    const code = result.error?.code;
+                    if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token') {
+                        shouldDeleteTokenDoc = true;
+                    }
+                }
+            });
+            if (shouldDeleteTokenDoc) {
+                await db.doc(`fcm_tokens/${userId}`).delete().catch(() => { });
+            }
+        }
+        await markDelivery({
+            deliveryStatus: response.failureCount === 0 ? 'sent' : (response.successCount > 0 ? 'partial_failure' : 'failed'),
+            sentAt: response.successCount > 0 ? admin.firestore.FieldValue.serverTimestamp() : null,
+            deliverySuccessCount: response.successCount,
+            deliveryFailureCount: response.failureCount,
+            deliveryError: response.failureCount > 0 ? 'One or more token deliveries failed' : null,
+        });
+        console.log('[notifyOnUniversityNotificationCreate] Sent push', {
+            userId,
+            notificationId: ctx.params.notificationId,
+            successCount: response.successCount,
+            failureCount: response.failureCount,
+        });
+    }
+    catch (error) {
+        console.error('[notifyOnUniversityNotificationCreate] Error:', error);
+        await markDelivery({
+            deliveryStatus: 'failed',
+            deliveryError: error instanceof Error ? error.message : String(error),
+        });
     }
     return null;
 });

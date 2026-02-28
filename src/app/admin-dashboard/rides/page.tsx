@@ -1,16 +1,14 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Car,
   Search,
   MapPin,
-  Clock,
   Users,
   DollarSign,
   CheckCircle,
   XCircle,
-  AlertCircle,
   Eye,
   Edit3,
   Trash2,
@@ -19,63 +17,138 @@ import {
   TrendingUp,
   Download,
 } from "lucide-react";
+import { getAuth } from "firebase/auth";
 import { useAdminAnalytics } from "@/hooks/useAdminAnalytics";
 
 type RideStatus = "all" | "active" | "completed" | "cancelled";
 type SortKey = "date" | "driver" | "status" | "passengers" | "earnings";
 
+type RideRow = {
+  id: string;
+  driver: string;
+  from: string;
+  to: string;
+  date: Date;
+  status: "active" | "completed" | "cancelled";
+  passengers: number;
+  maxPassengers: number;
+  earnings: number;
+  university: "FAST" | "NED" | "KARACHI" | "OTHER";
+  universityId: string;
+};
+
+const PAGE_SIZE = 10;
+
+function toDate(input: any): Date | null {
+  if (!input) return null;
+  if (input instanceof Date) return input;
+  if (typeof input?.toDate === "function") return input.toDate();
+  const parsed = new Date(input);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeUniversity(value: any): RideRow["university"] {
+  const uni = String(value || "").trim().toLowerCase();
+  if (uni.includes("fast")) return "FAST";
+  if (uni.includes("ned")) return "NED";
+  if (uni.includes("karachi") || uni.includes("ku")) return "KARACHI";
+  return "OTHER";
+}
+
+function normalizeRideStatus(value: any): RideRow["status"] {
+  const status = String(value || "").toLowerCase();
+  if (["completed", "finished"].includes(status)) return "completed";
+  if (["cancelled", "canceled", "rejected", "declined", "expired"].includes(status)) return "cancelled";
+  return "active";
+}
+
+function toRideRow(raw: any): RideRow {
+  const passengers =
+    Number(raw?.seatsBooked) ||
+    Number(raw?.bookedSeats) ||
+    Number(raw?.acceptedCount) ||
+    (Array.isArray(raw?.confirmedPassengers) ? raw.confirmedPassengers.length : 0) ||
+    0;
+
+  const availableSeats = Number(raw?.availableSeats) || 0;
+  const seats = Number(raw?.seats) || Number(raw?.totalSeats) || 0;
+  const maxPassengers = seats > 0 ? seats : Math.max(passengers + availableSeats, passengers);
+
+  const pricePerSeat = Number(raw?.pricePerSeat || raw?.price || 0);
+  const earnings = Number(raw?.totalEarnings || 0) || (pricePerSeat > 0 ? pricePerSeat * passengers : 0);
+
+  const university = normalizeUniversity(raw?.university || raw?.universityId);
+  const universityId = String((raw?.universityId || raw?.university || "").toLowerCase());
+
+  return {
+    id: String(raw?.id || ""),
+    driver:
+      raw?.driverName ||
+      raw?.rideProviderName ||
+      raw?.driver?.fullName ||
+      raw?.driver?.name ||
+      "Unknown Driver",
+    from: String(raw?.from || raw?.origin || "Unknown"),
+    to: String(raw?.to || raw?.destination || "Unknown"),
+    date: toDate(raw?.departureTime || raw?.createdAt) || new Date(0),
+    status: normalizeRideStatus(raw?.status),
+    passengers,
+    maxPassengers,
+    earnings,
+    university,
+    universityId,
+  };
+}
+
 export default function AdminRidesPage() {
   const analytics = useAdminAnalytics();
+  const [rows, setRows] = useState<RideRow[]>([]);
+  const [loadingRows, setLoadingRows] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<RideStatus>("all");
   const [filterUniversity, setFilterUniversity] = useState<"all" | "fast" | "ned" | "karachi">("all");
   const [sortBy, setSortBy] = useState<SortKey>("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
-  const mockRides = useMemo(() => {
-    const rides = [
-      {
-        id: "ride1",
-        driver: "Ahmed Hassan",
-        from: "FAST Main Gate",
-        to: "Karachi Airport",
-        date: new Date(2026, 1, 4, 14, 30),
-        status: "active" as const,
-        passengers: 3,
-        maxPassengers: 4,
-        earnings: 2500,
-        university: "FAST",
-        requests: 5,
-      },
-      {
-        id: "ride2",
-        driver: "Fatima Khan",
-        from: "NED University",
-        to: "Clifton",
-        date: new Date(2026, 1, 3, 10, 15),
-        status: "completed" as const,
-        passengers: 2,
-        maxPassengers: 3,
-        earnings: 1800,
-        university: "NED",
-        requests: 2,
-      },
-      {
-        id: "ride3",
-        driver: "Ali Raza",
-        from: "FAST Library",
-        to: "Gulshan",
-        date: new Date(2026, 1, 2, 16, 45),
-        status: "cancelled" as const,
-        passengers: 0,
-        maxPassengers: 4,
-        earnings: 0,
-        university: "FAST",
-        requests: 3,
-      },
-    ];
+  const fetchRows = useCallback(async () => {
+    try {
+      setLoadingRows(true);
+      setError(null);
+      const user = getAuth().currentUser;
+      if (!user) throw new Error("Admin authentication required");
+      const token = await user.getIdToken();
 
-    return rides.filter((r) => {
+      const params = new URLSearchParams({ limit: "1000", offset: "0" });
+      if (filterUniversity !== "all") params.set("universityId", filterUniversity);
+
+      const response = await fetch(`/api/admin/rides?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Failed to load rides");
+
+      const mapped = (Array.isArray(payload?.rides) ? payload.rides : []).map(toRideRow);
+      setRows(mapped);
+      setCurrentPage(1);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load rides");
+      setRows([]);
+    } finally {
+      setLoadingRows(false);
+    }
+  }, [filterUniversity]);
+
+  useEffect(() => {
+    void fetchRows();
+  }, [fetchRows]);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((r) => {
       const matchesSearch =
         r.driver.toLowerCase().includes(searchTerm.toLowerCase()) ||
         r.from.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -85,30 +158,86 @@ export default function AdminRidesPage() {
       const matchesUniversity =
         filterUniversity === "all" ||
         (filterUniversity === "fast" && r.university === "FAST") ||
-        (filterUniversity === "ned" && r.university === "NED");
+        (filterUniversity === "ned" && r.university === "NED") ||
+        (filterUniversity === "karachi" && r.university === "KARACHI");
 
       return matchesSearch && matchesStatus && matchesUniversity;
     });
-  }, [searchTerm, filterStatus, filterUniversity]);
+  }, [rows, searchTerm, filterStatus, filterUniversity]);
 
   const sortedRides = useMemo(() => {
-    return [...mockRides].sort((a, b) => {
-      let aVal = a[sortBy];
-      let bVal = b[sortBy];
+    return [...filteredRows].sort((a, b) => {
+      let aVal: any = a[sortBy];
+      let bVal: any = b[sortBy];
 
       if (sortBy === "date") {
-        aVal = (a.date as any).getTime();
-        bVal = (b.date as any).getTime();
+        aVal = a.date.getTime();
+        bVal = b.date.getTime();
       } else if (typeof aVal === "string") {
-        aVal = (aVal as string).toLowerCase();
-        bVal = (bVal as string).toLowerCase();
+        aVal = aVal.toLowerCase();
+        bVal = String(bVal).toLowerCase();
       }
 
       if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
       if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
       return 0;
     });
-  }, [mockRides, sortBy, sortOrder]);
+  }, [filteredRows, sortBy, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRides.length / PAGE_SIZE));
+  const paginatedRides = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return sortedRides.slice(start, start + PAGE_SIZE);
+  }, [sortedRides, currentPage]);
+
+  const updateRide = useCallback(async (ride: RideRow, updates: Record<string, any>) => {
+    try {
+      setActionLoadingId(ride.id);
+      const authUser = getAuth().currentUser;
+      if (!authUser) throw new Error("Admin authentication required");
+      const token = await authUser.getIdToken();
+
+      const response = await fetch("/api/admin/rides", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ rideId: ride.id, universityId: ride.universityId, updates }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || "Action failed");
+      await fetchRows();
+    } catch (e: any) {
+      setError(e?.message || "Action failed");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }, [fetchRows]);
+
+  const deleteRide = useCallback(async (ride: RideRow) => {
+    try {
+      setActionLoadingId(ride.id);
+      const authUser = getAuth().currentUser;
+      if (!authUser) throw new Error("Admin authentication required");
+      const token = await authUser.getIdToken();
+
+      const params = new URLSearchParams({ rideId: ride.id, universityId: ride.universityId });
+      const response = await fetch(`/api/admin/rides?${params.toString()}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || "Delete failed");
+      await fetchRows();
+    } catch (e: any) {
+      setError(e?.message || "Delete failed");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }, [fetchRows]);
 
   const stats = {
     total: analytics.combined.rides.total,
@@ -117,7 +246,7 @@ export default function AdminRidesPage() {
     cancelled: analytics.combined.rides.cancelled,
   };
 
-  if (analytics.loading) {
+  if (analytics.loading || loadingRows) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-950">
         <div className="text-center">
@@ -130,7 +259,6 @@ export default function AdminRidesPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-6 lg:p-8">
-      {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -138,16 +266,15 @@ export default function AdminRidesPage() {
               <Car className="w-10 h-10 text-primary" />
               Rides Management
             </h1>
-            <p className="text-slate-400">Monitor and manage all platform rides</p>
+            <p className="text-slate-400">Real rides from Firebase</p>
           </div>
-          <button className="px-6 py-3 bg-primary hover:bg-primary/80 text-white rounded-xl font-medium transition-all flex items-center gap-2">
+          <button onClick={() => void fetchRows()} className="px-6 py-3 bg-primary hover:bg-primary/80 text-white rounded-xl font-medium transition-all flex items-center gap-2">
             <Download className="w-4 h-4" />
-            Export Data
+            Refresh Data
           </button>
         </div>
       </div>
 
-      {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <StatBox label="Total Rides" value={stats.total} color="blue" icon={Car} />
         <StatBox label="Active" value={stats.active} color="green" icon={TrendingUp} />
@@ -155,10 +282,8 @@ export default function AdminRidesPage() {
         <StatBox label="Cancelled" value={stats.cancelled} color="red" icon={XCircle} />
       </div>
 
-      {/* Filters & Search */}
       <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-800 rounded-2xl p-6 mb-8">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Search */}
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-slate-300 mb-2">Search Rides</label>
             <div className="relative">
@@ -167,18 +292,23 @@ export default function AdminRidesPage() {
                 type="text"
                 placeholder="Driver, from, to..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-primary transition-all"
               />
             </div>
           </div>
 
-          {/* Status Filter */}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Status</label>
             <select
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as RideStatus)}
+              onChange={(e) => {
+                setFilterStatus(e.target.value as RideStatus);
+                setCurrentPage(1);
+              }}
               className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-primary transition-all"
             >
               <option value="all">All Rides</option>
@@ -188,7 +318,6 @@ export default function AdminRidesPage() {
             </select>
           </div>
 
-          {/* University Filter */}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">University</label>
             <select
@@ -205,7 +334,8 @@ export default function AdminRidesPage() {
         </div>
       </div>
 
-      {/* Rides Table */}
+      {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+
       <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-800 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -221,16 +351,14 @@ export default function AdminRidesPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedRides.map((ride) => (
+              {paginatedRides.map((ride) => (
                 <tr
                   key={ride.id}
-                  className="border-b border-slate-800 hover:bg-slate-800/30 transition-all"
+                  className={`border-b border-slate-800 hover:bg-slate-800/30 transition-all ${selectedRideId === ride.id ? "bg-slate-800/40" : ""}`}
                 >
                   <td className="px-6 py-4">
                     <p className="font-medium text-white">{ride.driver}</p>
-                    <p className="text-sm text-slate-400">
-                      {ride.university === "FAST" ? "🔵 FAST" : "🟢 NED"}
-                    </p>
+                    <p className="text-sm text-slate-400">{ride.university}</p>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
@@ -273,33 +401,61 @@ export default function AdminRidesPage() {
                   </td>
                   <td className="px-6 py-4 text-slate-400 text-sm flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
-                    {ride.date.toLocaleDateString()} {ride.date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {ride.date.getTime() > 0
+                      ? `${ride.date.toLocaleDateString()} ${ride.date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : "—"}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex justify-center gap-2">
-                      <ActionButton icon={Eye} title="View" />
-                      <ActionButton icon={Edit3} title="Edit" />
-                      <ActionButton icon={Trash2} title="Delete" className="hover:text-red-400" />
-                      <ActionButton icon={MoreVertical} title="More" />
+                      <ActionButton icon={Eye} title="View" onClick={() => setSelectedRideId(ride.id)} />
+                      <ActionButton
+                        icon={Edit3}
+                        title={ride.status === "completed" ? "Set Active" : "Mark Completed"}
+                        disabled={actionLoadingId === ride.id}
+                        onClick={() => void updateRide(ride, { status: ride.status === "completed" ? "active" : "completed" })}
+                      />
+                      <ActionButton
+                        icon={Trash2}
+                        title="Delete"
+                        className="hover:text-red-400"
+                        disabled={actionLoadingId === ride.id}
+                        onClick={() => void deleteRide(ride)}
+                      />
+                      <ActionButton
+                        icon={MoreVertical}
+                        title={ride.status === "cancelled" ? "Set Active" : "Cancel Ride"}
+                        disabled={actionLoadingId === ride.id}
+                        onClick={() => void updateRide(ride, { status: ride.status === "cancelled" ? "active" : "cancelled" })}
+                      />
                     </div>
                   </td>
                 </tr>
               ))}
+              {paginatedRides.length === 0 && (
+                <tr>
+                  <td className="px-6 py-6 text-sm text-slate-400" colSpan={7}>No rides found for the selected filters.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-slate-800">
-          <p className="text-sm text-slate-400">Showing {sortedRides.length} rides</p>
+          <p className="text-sm text-slate-400">Showing {paginatedRides.length} of {sortedRides.length} rides</p>
           <div className="flex gap-2">
-            <button className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-all text-sm">
+            <button
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-lg transition-all text-sm"
+            >
               Previous
             </button>
-            <button className="px-3 py-2 bg-primary text-white rounded-lg transition-all text-sm">
-              1
-            </button>
-            <button className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-all text-sm">
+            <button className="px-3 py-2 bg-primary text-white rounded-lg transition-all text-sm">{currentPage}</button>
+            <button
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-lg transition-all text-sm"
+            >
               Next
             </button>
           </div>
@@ -344,15 +500,21 @@ function ActionButton({
   icon: Icon,
   title,
   className = "",
+  onClick,
+  disabled,
 }: {
   icon: React.ElementType;
   title: string;
   className?: string;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       title={title}
-      className={`p-2 hover:bg-slate-700 rounded-lg transition-all text-slate-400 hover:text-white ${className}`}
+      onClick={onClick}
+      disabled={disabled}
+      className={`p-2 hover:bg-slate-700 rounded-lg transition-all text-slate-400 hover:text-white disabled:opacity-40 ${className}`}
     >
       <Icon className="w-4 h-4" />
     </button>

@@ -104,6 +104,22 @@ export async function GET(request: NextRequest) {
 
     for (const bookingDoc of bookingsSnap.docs) {
       const booking = bookingDoc.data();
+      const bookingId = bookingDoc.id;
+
+      // Legacy compatibility: if booking already has a saved driver rating,
+      // treat it as already rated and skip popup.
+      if (booking.driverRating || booking.ratedAt) {
+        continue;
+      }
+
+      // Legacy compatibility: old workflows store ratings under
+      // universities/{university}/ratings/{bookingId}.
+      const legacyRatingRef = adminDb.doc(`universities/${university}/ratings/${bookingId}`);
+      const legacyRatingSnap = await legacyRatingRef.get();
+      if (legacyRatingSnap.exists) {
+        continue;
+      }
+
       if (booking.passengerCompletion !== 'completed') continue;
 
       const rideId = booking.rideId;

@@ -22,12 +22,10 @@ export function MobileBottomNav() {
   const {
     hasRidesActivity,
     hasBookingsActivity,
-    hasChatActivity,
-    hasNotificationsActivity,
+    hasAnalyticsActivity,
     markRidesAsViewed,
     markBookingsAsViewed,
-    markChatAsViewed,
-    markNotificationsAsViewed,
+    markAnalyticsAsViewed,
   } = useActivityIndicator();
 
   // Mark sections as viewed when navigating to them
@@ -36,17 +34,14 @@ export function MobileBottomNav() {
       markRidesAsViewed();
     } else if (pathname === '/dashboard/my-bookings') {
       markBookingsAsViewed();
-    } else if (pathname === '/dashboard/notifications') {
-      markNotificationsAsViewed();
-    } else if (pathname?.startsWith('/dashboard/chats')) {
-      markChatAsViewed();
+    } else if (pathname === '/dashboard/analytics') {
+      markAnalyticsAsViewed();
     }
   }, [
     pathname,
     markRidesAsViewed,
     markBookingsAsViewed,
-    markNotificationsAsViewed,
-    markChatAsViewed,
+    markAnalyticsAsViewed,
   ]);
 
   return (
@@ -57,7 +52,8 @@ export function MobileBottomNav() {
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
           const hasActivity = (item.label === 'My Rides' && hasRidesActivity) ||
-            (item.label === 'Alerts' && (hasBookingsActivity || hasChatActivity));
+            (item.label === 'Bookings' && hasBookingsActivity) ||
+            (item.label === 'Analytics' && hasAnalyticsActivity);
 
           if (item.isCenter) {
             return (
@@ -97,7 +93,7 @@ export function MobileBottomNav() {
                 )} />
                 {/* Activity Indicator Dot */}
                 {hasActivity && (
-                  <ActivityDot show={true} size={6} color="bg-red-500" position="top-right" pulse={false} />
+                  <ActivityDot show={true} size={6} color="bg-primary" position="top-right" pulse={false} />
                 )}
               </div>
               <span className={cn(

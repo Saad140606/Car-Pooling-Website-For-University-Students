@@ -325,7 +325,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         {/* Total Spent */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -333,12 +333,12 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
           transition={{ delay: 0.1 }}
         >
           <Card className="bg-gradient-to-br from-blue-900/40 to-gray-800/50 border-blue-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Wallet className="w-5 h-5 text-blue-400" />
-                <span className="text-sm text-gray-400">Total Spent</span>
+                <span className="text-xs sm:text-sm text-gray-400">Total Spent</span>
               </div>
-              <p className="text-2xl font-bold text-blue-400">
+              <p className="text-xl sm:text-2xl font-bold text-blue-400 break-words">
                 {formatCurrency(analytics.totalSpent)}
               </p>
             </CardContent>
@@ -352,12 +352,12 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
           transition={{ delay: 0.2 }}
         >
           <Card className="bg-gradient-to-br from-purple-900/40 to-gray-800/50 border-purple-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Car className="w-5 h-5 text-purple-400" />
-                <span className="text-sm text-gray-400">Rides Taken</span>
+                <span className="text-xs sm:text-sm text-gray-400">Rides Taken</span>
               </div>
-              <p className="text-2xl font-bold text-purple-400">
+              <p className="text-xl sm:text-2xl font-bold text-purple-400">
                 {totalRidesTaken}
               </p>
             </CardContent>
@@ -371,12 +371,12 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
           transition={{ delay: 0.3 }}
         >
           <Card className="bg-gradient-to-br from-cyan-900/40 to-gray-800/50 border-cyan-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <TrendingDown className="w-5 h-5 text-cyan-400" />
-                <span className="text-sm text-gray-400">Avg per Ride</span>
+                <span className="text-xs sm:text-sm text-gray-400">Avg per Ride</span>
               </div>
-              <p className="text-2xl font-bold text-cyan-400">
+              <p className="text-xl sm:text-2xl font-bold text-cyan-400 break-words">
                 {formatCurrency(Math.round(averageSpentPerRide))}
               </p>
             </CardContent>
@@ -390,13 +390,13 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
           transition={{ delay: 0.4 }}
         >
           <Card className="bg-gradient-to-br from-yellow-900/40 to-gray-800/50 border-yellow-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Star className="w-5 h-5 text-yellow-400" />
-                <span className="text-sm text-gray-400">Average Rating</span>
+                <span className="text-xs sm:text-sm text-gray-400">Average Rating</span>
               </div>
               <div className="flex items-center gap-2">
-                <p className="text-2xl font-bold text-yellow-400">
+                <p className="text-xl sm:text-2xl font-bold text-yellow-400">
                   {averageRating.toFixed(1)}
                 </p>
                 {renderStars(Math.round(averageRating))}
@@ -522,7 +522,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       
       {/* Recent Rides */}
       <Card className="bg-gray-800/50 border-gray-700">
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
               <Calendar className="w-5 h-5 text-blue-400" />
@@ -541,7 +541,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
               processCompletedRides();
             }}
             disabled={isProcessing}
-            className="text-gray-400 hover:text-white"
+            className="text-gray-400 hover:text-white self-start sm:self-auto"
           >
             {isProcessing ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -568,7 +568,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: index * 0.05 }}
-                    className="flex items-center justify-between p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 transition-colors"
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-white truncate">
@@ -578,7 +578,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                         {formatDate(ride.date)}
                       </p>
                     </div>
-                    <p className="text-blue-400 font-semibold">
+                    <p className="text-blue-400 font-semibold text-left sm:text-right">
                       {formatCurrency(ride.amount)}
                     </p>
                   </motion.div>

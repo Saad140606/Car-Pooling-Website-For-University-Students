@@ -40,6 +40,7 @@ export default function MapLeaflet({
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
   const startMarkerRef = useRef<L.Marker | null>(null);
   const endMarkerRef = useRef<L.Marker | null>(null);
+  const invalidateRafRef = useRef<number | null>(null);
 
   // Fix default icon paths (idempotent) and align marker visuals with create-ride map
   if (typeof window !== 'undefined') {
@@ -110,15 +111,23 @@ export default function MapLeaflet({
 
     // Ensure the map invalidates its size after tiles load and when the container resizes
     try {
-      // When the base tiles finish loading, sometimes Leaflet needs an explicit invalidateSize to render correctly
-      baseLayer.on('load', () => { try { setTimeout(() => map.invalidateSize(), 50); } catch (_) {} });
+      const scheduleInvalidate = () => {
+        if (invalidateRafRef.current !== null) return;
+        invalidateRafRef.current = window.requestAnimationFrame(() => {
+          invalidateRafRef.current = null;
+          try { map.invalidateSize(); } catch (_) {}
+        });
+      };
+
+      // When the base tiles finish loading, trigger a deferred single invalidate.
+      baseLayer.on('load', () => { try { setTimeout(() => scheduleInvalidate(), 50); } catch (_) {} });
 
       // Resize observer to handle container transforms (e.g., dialogs opening, layout changes)
-      const ro = new ResizeObserver(() => { try { map.invalidateSize(); } catch (_) {} });
+      const ro = new ResizeObserver(() => { scheduleInvalidate(); });
       if (el) ro.observe(el);
 
       // Also handle window resize events as a fallback
-      const onWindowResize = () => { try { map.invalidateSize(); } catch (_) {} };
+      const onWindowResize = () => { scheduleInvalidate(); };
       window.addEventListener('resize', onWindowResize);
 
       // Cleanup observer & listener on unmount
@@ -265,6 +274,10 @@ export default function MapLeaflet({
           const onWindowResize = (map as any).__onWindowResize as ((e: Event) => void) | undefined;
           if (onWindowResize) window.removeEventListener('resize', onWindowResize);
         } catch (_) {}
+        if (invalidateRafRef.current !== null) {
+          window.cancelAnimationFrame(invalidateRafRef.current);
+          invalidateRafRef.current = null;
+        }
 
         map.off();
         map.remove();
@@ -284,25 +297,18 @@ export default function MapLeaflet({
   // Update polyline when `route` changes (mutate existing layers)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) {
-      console.log('[MAP] Route update skipped - map not ready');
-      return;
-    }
+    if (!map) return;
 
     if (route && route.length) {
-      console.log('[MAP] Updating route with', route.length, 'points');
       if (polyOutlineRef.current && polyRef.current) {
         polyOutlineRef.current.setLatLngs(route);
         polyRef.current.setLatLngs(route);
-        console.log('[MAP] ✓ Existing route polylines updated');
       } else {
-        console.log('[MAP] Creating new route polylines');
         try {
           const mainColor = routeColor || '#FFD166'; // Default: Yellow, or custom color if provided
           const outlineColor = routeColor ? '#ffffff' : '#0b1220'; // White outline when custom color, else dark for depth
           polyOutlineRef.current = L.polyline(route, { color: outlineColor, weight: 11, opacity: 0.95, renderer: L.svg() }).addTo(map);
           polyRef.current = L.polyline(route, { color: mainColor, weight: 5, renderer: L.svg() }).addTo(map);
-          console.log('[MAP] ✓ New route polylines created');
         } catch (e) {
           console.warn('[MAP] SVG renderer failed, using fallback:', e);
           const mainColor = routeColor || '#FFD166';
@@ -313,7 +319,6 @@ export default function MapLeaflet({
       }
       // Intentionally do NOT auto-fit or center the map here — keep user-controlled view
     } else {
-      console.log('[MAP] Removing route polylines (no route data)');
       if (polyRef.current) { try { map.removeLayer(polyRef.current); } catch (_) {} polyRef.current = null; }
       if (polyOutlineRef.current) { try { map.removeLayer(polyOutlineRef.current); } catch (_) {} polyOutlineRef.current = null; }
     }
@@ -327,6 +332,15 @@ export default function MapLeaflet({
     try {
       if (!markerLayerRef.current) markerLayerRef.current = L.layerGroup().addTo(map);
       else markerLayerRef.current.clearLayers();
+
+      if (startMarkerRef.current) {
+        try { map.removeLayer(startMarkerRef.current); } catch (_) {}
+        startMarkerRef.current = null;
+      }
+      if (endMarkerRef.current) {
+        try { map.removeLayer(endMarkerRef.current); } catch (_) {}
+        endMarkerRef.current = null;
+      }
 
       // Recreate pickup markers
       if (markers && markers.length) {

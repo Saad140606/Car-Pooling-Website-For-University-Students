@@ -405,6 +405,7 @@ class WebRTCCallingService {
           receiverId: this.currentUserId || '',
           callType,
           status: 'connected',
+          candidates: [],
           createdAt: callData.createdAt?.toDate?.() || new Date(),
         };
       }

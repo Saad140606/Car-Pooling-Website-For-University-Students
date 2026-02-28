@@ -1,12 +1,12 @@
 'use client';
 
 import React from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { parseTimestamp } from '@/lib/timestampUtils';
-import { Calendar, Users, MapPin, Car, ArrowRight, X, Banknote } from 'lucide-react';
+import { Calendar, Users, MapPin, Car } from 'lucide-react';
 
 interface RideDetailModalProps {
   open: boolean;
@@ -81,170 +81,81 @@ export default function RideDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-700">
-        {/* Header with close button */}
-        <DialogHeader className="sticky top-0 bg-gradient-to-b from-slate-900 to-slate-900/95 z-10 pb-4 border-b border-slate-700/50">
-          <div className="flex items-center justify-between w-full gap-4">
-            <DialogTitle className="text-xl font-bold text-white">Ride Details</DialogTitle>
-            <DialogClose className="opacity-70 hover:opacity-100 transition-opacity">
-              <X className="h-4 w-4" />
-            </DialogClose>
-          </div>
+      <DialogContent className="max-w-xl w-[95vw] bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-700">
+        <DialogHeader className="pb-2 border-b border-slate-700/50">
+          <DialogTitle className="text-lg font-bold text-white">Ride Details</DialogTitle>
         </DialogHeader>
 
-        {/* Main Content */}
-        <div className="space-y-6 px-1">
-          {/* Price + quick stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="md:col-span-2 rounded-lg border border-slate-700 bg-slate-900/50 p-4">
-              <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">Fare</div>
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                  <Banknote className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <div className="text-2xl font-bold text-white">PKR {price}</div>
-                  <p className="text-xs text-slate-400">per seat</p>
-                </div>
-              </div>
+        <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+              <div className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider mb-1">Fare</div>
+              <div className="text-lg font-bold text-white">PKR {price}</div>
+              <p className="text-xs text-slate-400">per seat</p>
             </div>
-            <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
-              <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">Seats Left</div>
-              <div className="text-2xl font-bold text-white">
-                {seatsLeft}
-              </div>
+            <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+              <div className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider mb-1">Seats Left</div>
+              <div className="text-lg font-bold text-white">{seatsLeft}</div>
               <p className="text-xs text-slate-400">available</p>
             </div>
           </div>
 
-          {/* Provider Section */}
-          <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
-            <h3 className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-3">Provider</h3>
+          <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-3">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary/40 to-accent/30 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-primary/30">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/40 to-accent/30 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-primary/30">
                 {initials}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <UserNameWithBadge
-                    name={driverName}
-                    verified={driverVerified}
-                    size="lg"
-                    truncate={false}
-                  />
-                </div>
-                {statusLabel && (
-                  <p className="text-sm text-amber-300 font-medium mt-1">{statusLabel}</p>
-                )}
+                <UserNameWithBadge
+                  name={driverName}
+                  verified={driverVerified}
+                  size="md"
+                  truncate={false}
+                />
+                {statusLabel && <p className="text-xs text-amber-300 font-medium mt-1">{statusLabel}</p>}
               </div>
             </div>
           </div>
 
-          {/* Route Section */}
-          <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
-            <h3 className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-3">Route</h3>
-            <div className="space-y-3">
-              {/* From Location */}
-              <div>
-                <div className="flex items-start gap-3 mb-1">
-                  <div className="h-3 w-3 rounded-full bg-green-500 flex-shrink-0 mt-1" />
-                  <div className="min-w-0">
-                    <p className="text-xs text-slate-400 font-medium">FROM</p>
-                    <p className="text-sm text-white break-words">{start}</p>
-                  </div>
-                </div>
+          <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-3">
+            <div className="flex items-start gap-2">
+              <div className="h-2.5 w-2.5 rounded-full bg-green-500 mt-1.5" />
+              <div className="min-w-0">
+                <p className="text-[11px] text-slate-400 font-medium">FROM</p>
+                <p className="text-sm text-white break-words">{start}</p>
               </div>
-
-              {/* Arrow */}
-              <div className="flex justify-center py-2">
-                <ArrowRight className="h-4 w-4 text-slate-500 rotate-90" />
-              </div>
-
-              {/* To Location */}
-              <div>
-                <div className="flex items-start gap-3">
-                  <div className="h-3 w-3 rounded-full bg-red-500 flex-shrink-0 mt-1" />
-                  <div className="min-w-0">
-                    <p className="text-xs text-slate-400 font-medium">TO</p>
-                    <p className="text-sm text-white break-words">{end}</p>
-                  </div>
-                </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <div className="h-2.5 w-2.5 rounded-full bg-red-500 mt-1.5" />
+              <div className="min-w-0">
+                <p className="text-[11px] text-slate-400 font-medium">TO</p>
+                <p className="text-sm text-white break-words">{end}</p>
               </div>
             </div>
           </div>
 
-          {/* Ride Details */}
-          <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
-            <h3 className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-4">Ride Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Departure */}
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Calendar className="h-4 w-4 text-slate-400" />
-                  <span className="text-xs text-slate-400 font-medium">Departure</span>
-                </div>
-                <p className="text-sm text-white ml-6">{dateText}</p>
-              </div>
-
-              {/* Price */}
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs text-slate-400 font-medium">Price</span>
-                </div>
-                <Badge className="bg-primary text-primary-foreground ml-0">
-                  PKR {price}
-                </Badge>
-              </div>
-
-              {/* Seats Available */}
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Users className="h-4 w-4 text-slate-400" />
-                  <span className="text-xs text-slate-400 font-medium">Available Seats</span>
-                </div>
-                <p className="text-sm text-white ml-6">
-                  <span className="font-semibold">{seatsLeft}</span>
-                  {seatsLeft === 1 ? ' seat' : ' seats'}
-                </p>
-              </div>
-
-              {/* Gender Preference */}
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Users className="h-4 w-4 text-slate-400" />
-                  <span className="text-xs text-slate-400 font-medium">Gender Preference</span>
-                </div>
-                <Badge variant="outline" className="border-slate-600 text-slate-200">
-                  {genderPreference}
-                </Badge>
-              </div>
-
-              {/* Transport */}
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Car className="h-4 w-4 text-slate-400" />
-                  <span className="text-xs text-slate-400 font-medium">Transport</span>
-                </div>
-                <p className="text-sm text-white ml-6">{transport}</p>
-              </div>
-
-              {/* University */}
-              {university && !hideUniversity && (
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <MapPin className="h-4 w-4 text-slate-400" />
-                    <span className="text-xs text-slate-400 font-medium">University</span>
-                  </div>
-                  <Badge variant="outline" className="border-slate-600 text-slate-200">
-                    {university.toUpperCase()}
-                  </Badge>
-                </div>
-              )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            <div className="rounded-md border border-slate-700 bg-slate-900/40 p-2 text-slate-200">
+              <span className="text-slate-400 text-xs block">Departure</span>
+              {dateText}
             </div>
+            <div className="rounded-md border border-slate-700 bg-slate-900/40 p-2 text-slate-200">
+              <span className="text-slate-400 text-xs block">Gender Preference</span>
+              {genderPreference}
+            </div>
+            <div className="rounded-md border border-slate-700 bg-slate-900/40 p-2 text-slate-200">
+              <span className="text-slate-400 text-xs block">Transport</span>
+              {transport}
+            </div>
+            {university && !hideUniversity && (
+              <div className="rounded-md border border-slate-700 bg-slate-900/40 p-2 text-slate-200">
+                <span className="text-slate-400 text-xs block">University</span>
+                {university.toUpperCase()}
+              </div>
+            )}
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex gap-3 sticky bottom-0 bg-gradient-to-t from-slate-950 to-slate-950/80 pt-4 -mx-6 px-6 pb-4">
+          <div className="flex gap-3 pt-1">
             {onViewStops && (
               <Button
                 variant="outline"

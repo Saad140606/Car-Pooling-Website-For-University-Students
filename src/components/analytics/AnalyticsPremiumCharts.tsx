@@ -554,7 +554,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
   return (
     <ChartWrapper title={title} subtitle="Activity by day and hour">
       <div className="overflow-x-auto">
-        <div className="min-w-[600px] [@media(max-height:700px)]:min-w-[520px]">
+        <div className="min-w-[360px] sm:min-w-[600px] [@media(max-height:700px)]:min-w-[520px]">
           {/* Hour labels */}
           <div className="flex gap-1 mb-1 pl-12 [@media(max-height:700px)]:pl-10">
             {[0, 6, 12, 18, 23].map(hour => (
@@ -625,7 +625,28 @@ export const ProgressCircle = memo(function ProgressCircle({
   strokeWidth = 8,
   color = CHART_COLORS.primary,
 }: ProgressCircleProps) {
-  const radius = (size - strokeWidth) / 2;
+  const [resolvedSize, setResolvedSize] = useState(size);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const compute = () => {
+      if (window.innerWidth <= 360) {
+        setResolvedSize(Math.min(size, 92));
+        return;
+      }
+      if (window.innerWidth <= 420) {
+        setResolvedSize(Math.min(size, 104));
+        return;
+      }
+      setResolvedSize(size);
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, [size]);
+
+  const resolvedStroke = resolvedSize <= 104 ? Math.max(6, strokeWidth - 1) : strokeWidth;
+  const radius = (resolvedSize - resolvedStroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (percentage / 100) * circumference;
 
@@ -635,25 +656,25 @@ export const ProgressCircle = memo(function ProgressCircle({
       animate={{ opacity: 1, scale: 1 }}
       className="flex flex-col items-center"
     >
-      <div className="relative" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="transform -rotate-90">
+      <div className="relative" style={{ width: resolvedSize, height: resolvedSize }}>
+        <svg width={resolvedSize} height={resolvedSize} className="transform -rotate-90">
           {/* Background circle */}
           <circle
-            cx={size / 2}
-            cy={size / 2}
+            cx={resolvedSize / 2}
+            cy={resolvedSize / 2}
             r={radius}
             fill="none"
             stroke="rgba(255,255,255,0.05)"
-            strokeWidth={strokeWidth}
+            strokeWidth={resolvedStroke}
           />
           {/* Progress circle */}
           <motion.circle
-            cx={size / 2}
-            cy={size / 2}
+            cx={resolvedSize / 2}
+            cy={resolvedSize / 2}
             r={radius}
             fill="none"
             stroke={color}
-            strokeWidth={strokeWidth}
+            strokeWidth={resolvedStroke}
             strokeDasharray={circumference}
             initial={{ strokeDashoffset: circumference }}
             animate={{ strokeDashoffset: offset }}
@@ -663,11 +684,13 @@ export const ProgressCircle = memo(function ProgressCircle({
         </svg>
         {/* Center text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-bold text-white">{Math.round(percentage)}%</span>
+          <span className={cn('font-bold text-white', resolvedSize <= 104 ? 'text-lg' : 'text-2xl')}>
+            {Math.round(percentage)}%
+          </span>
         </div>
       </div>
-      <p className="text-sm font-medium text-white mt-2">{label}</p>
-      {sublabel && <p className="text-xs text-slate-500">{sublabel}</p>}
+      <p className="text-xs sm:text-sm font-medium text-white mt-2 text-center">{label}</p>
+      {sublabel && <p className="text-[11px] sm:text-xs text-slate-500 text-center">{sublabel}</p>}
     </motion.div>
   );
 });

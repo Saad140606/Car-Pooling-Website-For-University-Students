@@ -41,8 +41,31 @@ type ActivityCallback = (state: ActivityIndicatorState) => void;
 const UNREAD_EVENTS_COLLECTION = 'unreadEvents';
 
 const SECTION_NOTIFICATION_TYPE_MAP: Record<ActivitySection, string[] | null> = {
-  rides: ['ride_request', 'ride_status', 'ride_cancelled', 'booking', 'request_cancelled'],
-  bookings: ['ride_accepted', 'request_accepted', 'ride_started', 'ride_confirmed', 'request_confirmed'],
+  rides: [
+    'ride_request',
+    'booking',
+    'ride_confirmed',
+    'request_confirmed',
+    'request_cancelled',
+    'passenger_cancelled',
+    'passenger_cancelled_booking',
+    'request_auto_cancelled',
+    'ride_status',
+    'lifecycle_passenger_cancelled',
+  ],
+  bookings: [
+    'ride_accepted',
+    'request_accepted',
+    'ride_rejected',
+    'request_rejected',
+    'ride_started',
+    'ride_cancelled',
+    'confirm_reminder',
+    'confirm_urgent_reminder',
+    'ride_expired',
+    'request_expired',
+  ],
+  analytics: ['ride_completed', 'completion_window'],
   chat: ['chat'],
   notifications: null,
 };
@@ -54,14 +77,21 @@ function sanitizeForDocId(value: string): string {
 function mapNotificationToSection(notification: any): ActivitySection | null {
   const type = String(notification?.type || '').toLowerCase();
 
-  if (type === 'chat' || type === 'chat_message') return 'chat';
+  if (type === 'chat') {
+    return 'chat';
+  }
 
   if ([
     'ride_accepted',
     'request_accepted',
+    'ride_rejected',
+    'request_rejected',
     'ride_started',
-    'ride_confirmed',
-    'request_confirmed',
+    'ride_cancelled',
+    'confirm_reminder',
+    'confirm_urgent_reminder',
+    'ride_expired',
+    'request_expired',
   ].includes(type)) {
     return 'bookings';
   }
@@ -70,15 +100,22 @@ function mapNotificationToSection(notification: any): ActivitySection | null {
     'ride_request',
     'booking',
     'ride_status',
-    'ride_cancelled',
     'request_cancelled',
     'passenger_cancelled',
-    'completion_window',
+    'passenger_cancelled_booking',
+    'lifecycle_passenger_cancelled',
+    'ride_confirmed',
+    'request_confirmed',
+    'request_auto_cancelled',
   ].includes(type)) {
     return 'rides';
   }
 
-  return null;
+  if (['ride_completed', 'completion_window'].includes(type)) {
+    return 'analytics';
+  }
+
+  return 'notifications';
 }
 
 class ActivityIndicatorManager {
@@ -90,6 +127,7 @@ class ActivityIndicatorManager {
   private state: ActivityIndicatorState = {
     bookings: false,
     rides: false,
+    analytics: false,
     chat: false,
     notifications: false,
   };
@@ -145,6 +183,7 @@ class ActivityIndicatorManager {
         const nextState: ActivityIndicatorState = {
           bookings: false,
           rides: false,
+          analytics: false,
           chat: false,
           notifications: false,
         };
@@ -244,7 +283,13 @@ class ActivityIndicatorManager {
         createdAt: serverTimestamp(),
       } satisfies UnreadActivityEvent & Record<string, any>);
     } catch (error) {
-      console.error('[ActivityIndicator] Failed to ensure unread event:', error);
+      const code = String((error as any)?.code || '');
+      const message = String((error as any)?.message || '').toLowerCase();
+      if (code === 'permission-denied' || message.includes('permission')) {
+        console.debug('[ActivityIndicator] Skipping unread event upsert due to permissions');
+      } else {
+        console.error('[ActivityIndicator] Failed to ensure unread event:', error);
+      }
     } finally {
       this.inFlightEventWrites.delete(dedupeKey);
     }
@@ -270,6 +315,10 @@ class ActivityIndicatorManager {
       if (!snapshot.empty) {
         await batch.commit();
       }
+      return;
+    }
+
+    if (types.length === 0) {
       return;
     }
 
@@ -389,6 +438,7 @@ class ActivityIndicatorManager {
     await Promise.all([
       this.markAsViewed('rides'),
       this.markAsViewed('bookings'),
+      this.markAsViewed('analytics'),
       this.markAsViewed('chat'),
       this.markAsViewed('notifications'),
     ]);

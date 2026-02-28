@@ -16,7 +16,7 @@ import { VerificationBadge } from '@/components/VerificationBadge';
 import { ErrorState } from '@/components/StateComponents';
 import { useToast } from '@/hooks/use-toast';
 import { EnableNotificationsBanner } from '@/components/notifications/EnableNotificationsBanner';
-import RatingPopup from '@/components/post-ride/RatingPopup';
+import FeedbackPromptsManager from '@/components/feedback/FeedbackPromptsManager';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 import { ActivityDot } from '@/components/ActivityIndicatorDot';
@@ -38,11 +38,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const {
     hasRidesActivity,
     hasBookingsActivity,
-    hasChatActivity,
+    hasAnalyticsActivity,
     hasNotificationsActivity,
     markRidesAsViewed,
     markBookingsAsViewed,
-    markChatAsViewed,
+    markAnalyticsAsViewed,
     markNotificationsAsViewed,
   } = useActivityIndicator();
   const auth = useAuth();
@@ -60,17 +60,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       markRidesAsViewed();
     } else if (pathname === '/dashboard/my-bookings') {
       markBookingsAsViewed();
+    } else if (pathname === '/dashboard/analytics') {
+      markAnalyticsAsViewed();
     } else if (pathname === '/dashboard/notifications') {
       markNotificationsAsViewed();
-    } else if (pathname?.startsWith('/dashboard/chats')) {
-      markChatAsViewed();
     }
   }, [
     pathname,
     markRidesAsViewed,
     markBookingsAsViewed,
+    markAnalyticsAsViewed,
     markNotificationsAsViewed,
-    markChatAsViewed,
   ]);
   useEffect(() => {
     if (!user || !userData || !initialized || !firestore) return;
@@ -181,8 +181,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // For public rides page, allow rendering without user
   const isRidesPage = pathname === '/dashboard/rides' || pathname?.startsWith('/dashboard/rides?');
   
-  // Loading state for non-public pages OR if initializing
-  if ((userLoading && !isRidesPage) || (!initialized)) {
+  // Loading state for non-public pages (do not hard-block on initialized)
+  if (userLoading && !isRidesPage) {
     return (
       <div className="flex min-h-screen">
         <aside className="hidden md:flex w-64 flex-col p-4 space-y-4">
@@ -243,24 +243,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       {item.label === 'My Rides' && (
                         <div className="relative">
                           <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
-                          <ActivityDot show={hasRidesActivity} size={6} color="bg-red-500" position="top-right" pulse={true} />
+                          <ActivityDot show={hasRidesActivity} size={6} color="bg-primary" position="top-right" pulse={false} />
                         </div>
                       )}
                       {/* Activity Indicator Dot for My Bookings */}
                       {item.label === 'My Bookings' && (
                         <div className="relative">
                           <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
-                          <ActivityDot show={hasBookingsActivity || hasChatActivity} size={6} color="bg-red-500" position="top-right" pulse={false} />
+                          <ActivityDot show={hasBookingsActivity} size={6} color="bg-primary" position="top-right" pulse={false} />
+                        </div>
+                      )}
+                      {item.label === 'Analytics' && (
+                        <div className="relative">
+                          <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
+                          <ActivityDot show={hasAnalyticsActivity} size={6} color="bg-primary" position="top-right" pulse={false} />
                         </div>
                       )}
                       {item.label === 'Notifications' && (
                         <div className="relative">
                           <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
-                          <ActivityDot show={hasNotificationsActivity} size={6} color="bg-red-500" position="top-right" pulse={false} />
+                          <ActivityDot show={hasNotificationsActivity} size={6} color="bg-primary" position="top-right" pulse={false} />
                         </div>
                       )}
                       {/* Regular icon for other items */}
-                      {item.label !== 'My Rides' && item.label !== 'My Bookings' && item.label !== 'Notifications' && (
+                      {item.label !== 'My Rides' && item.label !== 'My Bookings' && item.label !== 'Analytics' && item.label !== 'Notifications' && (
                         <item.icon className={cn('h-5 w-5 transition-all duration-300', isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary')} />
                       )}
                       <span className={isActive ? 'font-semibold' : 'font-medium'}>{item.label}</span>
@@ -319,7 +325,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-3">
             <Link href="/dashboard/notifications" className="relative p-2 rounded hover:bg-gray-700">
               <Bell className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
-              <ActivityDot show={hasNotificationsActivity} size={6} color="bg-red-500" position="top-right" pulse={false} />
+              <ActivityDot show={hasNotificationsActivity} size={6} color="bg-primary" position="top-right" pulse={false} />
             </Link>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -376,8 +382,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ))}
         </main>
         
-        {/* Rating Popup - appears when user has completed rides to rate */}
-        <RatingPopup />
+        <FeedbackPromptsManager />
       </div>
       
       {/* Mobile Bottom Navigation */}

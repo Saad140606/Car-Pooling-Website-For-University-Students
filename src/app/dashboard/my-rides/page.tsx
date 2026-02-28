@@ -16,15 +16,8 @@ import L, { LatLngExpression } from 'leaflet';
 import { Ride as RideType, Booking as BookingType } from '@/lib/types';
 import { decodePolyline } from '@/lib/route';
 import { formatTimestamp, parseTimestampToMs } from '@/lib/timestampUtils';
-import MapLeaflet from '@/components/MapLeaflet';
-import dynamic from 'next/dynamic';
+import { MapContainer, TileLayer, Polyline, Marker, Popup } from '@/components/map';
 import ChatButton from '@/components/chat/ChatButton';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
-
-const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
-  ssr: false,
-  loading: () => <div className="h-full w-full flex items-center justify-center bg-slate-900/50"><div className="text-slate-400">Loading map...</div></div>
-});
 import NotificationBadge from '@/components/NotificationBadge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -33,7 +26,6 @@ import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { isUserVerified } from '@/lib/verificationUtils';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 import PassengerDetailModal from '@/components/PassengerDetailModal';
-import { notifyRequestAccepted } from '@/lib/rideNotificationService';
 import { RideDetailDialog } from './RideDetailDialog';
 import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
 import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
@@ -44,8 +36,8 @@ if (typeof window !== 'undefined') {
   try {
     const pinSvg = `
       <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-        <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
-        <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+        <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='#FFD166' stroke='#ffffff' stroke-width='1.2' />
+        <circle cx='12' cy='9' r='2.5' fill='#0b1220' />
       </svg>
     `;
     const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
@@ -98,45 +90,45 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
 
   const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId', listen: true });
   
-  // Query accepted bookings to filter out duplicate requests from same passenger
-  const acceptedBookingsQuery = (firestore && ride?.id) ? query(
-    collection(firestore, `universities/${university}/bookings`),
-    where('rideId', '==', ride.id),
-    where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED'])
-  ) : null;
-  const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery, { listen: true });
-  
   const [processingIds, setProcessingIds] = React.useState<string[]>([]);
   const [shownBookings, setShownBookings] = React.useState<BookingType[]>([]);
   const [placeNames, setPlaceNames] = React.useState<Record<string, string>>({});
+  const fetchingPlaceNameIdsRef = React.useRef<Set<string>>(new Set());
 
   // Keep local shown list in sync with upstream bookings, but allow optimistic
   // removal immediately after an accept/reject so the UI does not permit
   // duplicate accepts while waiting for Firestore listeners to update.
-  // CRITICAL FIX: Filter out requests from passengers who already have accepted bookings
+  // Keep one pending card per passenger for faster, simpler request queues.
   React.useEffect(() => {
     if (!bookings) return setShownBookings([]);
-    
-    // Create a Set of passenger IDs who already have accepted bookings
-    const acceptedPassengerIds = new Set(
-      acceptedBookings?.map(b => b.passengerId).filter(Boolean) || []
-    );
-    
-    // Filter out any pending requests from passengers who are already accepted
-    const filteredBookings = bookings.filter(
-      booking => !acceptedPassengerIds.has(booking.passengerId)
-    );
-    
+    const seenPassengerIds = new Set<string>();
+    const filteredBookings = bookings.filter((booking) => {
+      const passengerId = booking.passengerId;
+      if (!passengerId) return true;
+      if (seenPassengerIds.has(passengerId)) return false;
+      seenPassengerIds.add(passengerId);
+      return true;
+    });
     setShownBookings(filteredBookings);
-  }, [bookings, acceptedBookings]);
+  }, [bookings]);
   
   // Fetch place names for bookings that have coordinates but no place name
   React.useEffect(() => {
     if (!bookings) return;
-    bookings.forEach(async (booking) => {
-      if (!booking.pickupPlaceName && booking.pickupPoint && !placeNames[booking.id]) {
+
+    bookings.forEach((booking) => {
+      if (!booking.id || booking.pickupPlaceName || !booking.pickupPoint || placeNames[booking.id]) {
+        return;
+      }
+
+      if (fetchingPlaceNameIdsRef.current.has(booking.id)) {
+        return;
+      }
+      fetchingPlaceNameIdsRef.current.add(booking.id);
+
+      void (async () => {
         try {
-          const res = await fetch(`/api/nominatim/reverse?lat=${booking.pickupPoint.lat}&lon=${booking.pickupPoint.lng}`);
+          const res = await fetch(`/api/nominatim/reverse?lat=${booking.pickupPoint!.lat}&lon=${booking.pickupPoint!.lng}`);
           if (res.ok) {
             const data = await res.json();
             if (data.display_name) {
@@ -145,12 +137,15 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
           }
         } catch (e) {
           console.debug('Failed to fetch place name:', e);
+        } finally {
+          fetchingPlaceNameIdsRef.current.delete(booking.id);
         }
-      }
+      })();
     });
   }, [bookings, placeNames]);
 
   const handleBooking = async (booking: BookingType, newStatus: 'accepted' | 'rejected') => {
+    const actionStartMs = performance.now();
     console.log('[handleBooking] Starting with:', { 
       bookingId: booking?.id, 
       status: newStatus, 
@@ -175,35 +170,6 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       return;
     }
     
-    // Fetch fresh booking data from Firestore to ensure status is current
-    try {
-      const freshRequestRef = doc(firestore, `universities/${university}/rides/${ride.id}/requests/${booking.id}`);
-      const freshRequestSnap = await getDoc(freshRequestRef);
-      
-      if (freshRequestSnap.exists()) {
-        const freshBooking = freshRequestSnap.data() as BookingType;
-        const normalizedStatus = freshBooking.status?.toLowerCase();
-        
-        console.log('[handleBooking] Fresh booking status from Firestore:', normalizedStatus);
-        
-        if (normalizedStatus && normalizedStatus !== 'pending') {
-          console.log('[handleBooking] Booking already processed with status:', freshBooking.status);
-          return;
-        }
-      } else {
-        console.error('[handleBooking] Booking not found in Firestore');
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: 'Booking request not found.'
-        });
-        return;
-      }
-    } catch (error) {
-      console.error('[handleBooking] Error fetching fresh booking data:', error);
-      // Continue anyway - the transaction/API will handle errors
-    }
-    
     setProcessingIds((s) => [...s, booking.id]);
     // Optimistically remove the booking from the shown list so the provider
     // sees immediate feedback and cannot accept/reject the same request twice.
@@ -211,144 +177,38 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     setShownBookings((s) => s.filter((b) => b.id !== booking.id));
 
     try {
-      // Use Firestore transaction for accept - simplify flow and avoid API issues
+      // Use API transaction path for strict idempotency and race-safe acceptance.
       if (newStatus === 'accepted') {
-        console.log('[handleBooking] Processing acceptance via direct Firestore transaction...');
+        console.log('[handleBooking] Processing acceptance via API...');
         
         const rideId = ride.id || booking.rideId;
         if (!rideId) {
           throw new Error('Ride ID not found');
         }
+        const idToken = await user?.getIdToken(true);
+        if (!idToken) {
+          throw new Error('Authentication token unavailable. Please sign in again.');
+        }
 
-        await runTransaction(firestore, async (transaction) => {
-          const rideRef = doc(firestore, `universities/${university}/rides`, rideId);
-          const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
-          
-          // Get ride data
-          const rideDoc = await transaction.get(rideRef);
-          if (!rideDoc.exists()) {
-            throw new Error('Ride not found in database');
-          }
-          
-          const rideData = rideDoc.data() as RideType;
-          
-          // Get request data
-          const requestDoc = await transaction.get(requestRef);
-          if (!requestDoc.exists()) {
-            throw new Error('Request not found in database');
-          }
-          
-          const requestData = requestDoc.data() as BookingType;
-          
-          // Verify request is still pending
-          const normalizedStatus = requestData.status?.toLowerCase();
-          if (normalizedStatus && normalizedStatus !== 'pending') {
-            throw new Error(`Request has already been ${normalizedStatus}`);
-          }
-          
-          // Update request to accepted
-          transaction.update(requestRef, {
-            status: 'ACCEPTED',
-            acceptedAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          });
-          
-          // Create booking document
-          const bookingRef = doc(firestore, `universities/${university}/bookings`, booking.id);
-          const chatId = booking.id;
-          const chatRef = doc(firestore, `universities/${university}/chats`, chatId);
-          
-          transaction.set(chatRef, {
-            bookingId: booking.id,
-            rideId: rideId,
-            passengerId: requestData.passengerId,
-            providerId: rideData.driverId,
-            participants: [requestData.passengerId, rideData.driverId],
-            createdAt: serverTimestamp(),
-            status: 'active'
-          });
-          
-          transaction.set(bookingRef, {
-            ...requestData,
-            status: 'accepted',
-            createdAt: serverTimestamp(),
-            rideId: rideId,
-            chatId: chatId,
-            driverId: rideData.driverId || requestData.driverId || user?.uid,
-            passengerId: requestData.passengerId,
-            // Store complete ride details so my-bookings can display them
-            ride: {
-              id: rideData.id || rideId,
-              from: rideData.from,
-              to: rideData.to,
-              departureTime: rideData.departureTime,
-              price: rideData.price,
-              route: rideData.route || [],
-              driverId: rideData.driverId,
-              driverInfo: rideData.driverInfo || { fullName: 'Driver' }
-            },
-            // Store driver details for chat display
-            driverDetails: {
-              fullName: rideData.driverInfo?.fullName || 'Driver',
-              universityEmailVerified: !!rideData.driverInfo?.universityEmailVerified,
-              idVerified: !!rideData.driverInfo?.idVerified,
-              isVerified: !!rideData.driverInfo?.isVerified
-            }
-          });
+        const res = await fetch('/api/requests/accept', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            university,
+            rideId,
+            requestId: booking.id,
+          }),
         });
 
-        console.log('[handleBooking] Acceptance processed successfully via transaction');
-        
-        // CRITICAL: Send notification to passenger about acceptance
-        try {
-          console.log('[handleBooking] Sending acceptance notification to passenger:', booking.passengerId);
-          await notifyRequestAccepted(
-            firestore,
-            university,
-            booking.passengerId,
-            rideId,
-            booking.id,
-            {
-              from: ride.from,
-              to: ride.to,
-              departureTime: ride.departureTime,
-              driverName: user?.displayName || userData?.fullName || 'Driver'
-            }
-          );
-          console.log('[handleBooking] ✅ Notification sent successfully');
-        } catch (notifError) {
-          console.error('[handleBooking] ❌ Failed to send notification:', notifError);
-          // Non-critical - don't fail the whole operation
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || 'Failed to accept request');
         }
-        
-        // CRITICAL: Reject all other pending requests from the same passenger to prevent double-booking
-        try {
-          const otherRequestsQuery = query(
-            collection(firestore, `universities/${university}/rides/${rideId}/requests`),
-            where('passengerId', '==', booking.passengerId),
-            where('status', 'in', ['PENDING', 'pending'])
-          );
-          const otherRequestsSnapshot = await getDocs(otherRequestsQuery);
-          
-          if (!otherRequestsSnapshot.empty) {
-            const batch = writeBatch(firestore);
-            otherRequestsSnapshot.docs.forEach(docSnap => {
-              if (docSnap.id !== booking.id) {
-                console.log('[handleBooking] Auto-rejecting duplicate request:', docSnap.id);
-                batch.update(docSnap.ref, { 
-                  status: 'rejected', 
-                  rejectionReason: 'Passenger already accepted for this ride',
-                  updatedAt: serverTimestamp()
-                });
-              }
-            });
-            await batch.commit();
-            console.log('[handleBooking] Auto-rejected other pending requests from same passenger');
-          }
-        } catch (cleanupError) {
-          console.warn('[handleBooking] Failed to auto-reject duplicate requests:', cleanupError);
-          // Non-critical - the UI filter will prevent showing them anyway
-        }
+
+        console.log('[handleBooking] Acceptance processed successfully via API');
       } else {
         // For rejects: use direct Firestore update
         console.log('[handleBooking] Processing rejection...');
@@ -404,25 +264,38 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       });
 
     } catch (error) {
-      console.error('[handleBooking] Error:', error);
-      console.error('[handleBooking] Error details:', { 
-        message: error instanceof Error ? error.message : String(error),
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : (typeof error === 'object' && error && 'message' in (error as any) && (error as any).message)
+            ? String((error as any).message)
+            : (() => {
+                try {
+                  return JSON.stringify(error);
+                } catch {
+                  return String(error);
+                }
+              })();
+
+      console.error('[handleBooking] Error:', errorMessage);
+      console.error('[handleBooking] Error details:', {
+        message: errorMessage,
+        code: (error as any)?.code,
         stack: error instanceof Error ? error.stack : undefined,
         bookingId: booking.id,
-        status: newStatus
+        status: newStatus,
       });
       
       // Roll back optimistic UI change so the provider can retry or see the request again
       setShownBookings(previousShown);
       
-      const errorMessage = error instanceof Error ? error.message : 'Something went wrong. Please try again.';
-      
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: errorMessage
+        description: errorMessage || 'Something went wrong. Please try again.'
       });
     } finally {
+      console.log('[handleBooking][perf] action=', newStatus, 'bookingId=', booking.id, 'total_ms=', Math.round(performance.now() - actionStartMs));
       setProcessingIds((s) => s.filter((id) => id !== booking.id));
     }
   };
@@ -616,9 +489,41 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const acceptedBookingsQuery = (firestore && ride?.id) ? query(
         collection(firestore, `universities/${university}/bookings`),
         where('rideId', '==', ride.id),
-        where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED'])
+      where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
     ) : null;
     const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery);
+
+    const acceptedRequestsQuery = (firestore && ride?.id) ? query(
+      collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
+      where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+    ) : null;
+    const { data: acceptedRequests } = useBookingCollection<any>(acceptedRequestsQuery);
+
+    const acceptedParticipants = React.useMemo(() => {
+      const merged: any[] = [];
+      const seenPassengerIds = new Set<string>();
+
+      (acceptedBookings || []).forEach((item: any) => {
+        const passengerId = String(item?.passengerId || '');
+        if (passengerId && seenPassengerIds.has(passengerId)) return;
+        if (passengerId) seenPassengerIds.add(passengerId);
+        merged.push(item);
+      });
+
+      (acceptedRequests || []).forEach((item: any) => {
+        const passengerId = String(item?.passengerId || '');
+        if (passengerId && seenPassengerIds.has(passengerId)) return;
+        if (passengerId) seenPassengerIds.add(passengerId);
+        merged.push({
+          ...item,
+          id: item?.id || `${ride.id}_${passengerId || Math.random()}`,
+          ride: item?.ride || ride,
+          passengerDetails: item?.passengerDetails || item?.passenger || null,
+        });
+      });
+
+      return merged;
+    }, [acceptedBookings, acceptedRequests, ride]);
 
     const pendingRequestsQuery = (firestore && ride?.id) ? query(
       collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
@@ -626,7 +531,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     ) : null;
     const { data: pendingRequests } = useBookingCollection<BookingType>(pendingRequestsQuery);
 
-    const acceptedPoints = acceptedBookings?.map(b => b.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
+    const acceptedPoints = acceptedParticipants?.map((b: any) => b.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
     const pendingPoints = pendingRequests?.map(r => r.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
     const pickupPoints = [...acceptedPoints, ...pendingPoints];
     const [isDeleting, setIsDeleting] = React.useState(false);
@@ -638,23 +543,137 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const [isCompleting, setIsCompleting] = React.useState(false);
     const [reviewingPassengerId, setReviewingPassengerId] = React.useState<string | null>(null);
     const [showRideDetail, setShowRideDetail] = React.useState(false);
-    const acceptedCount = acceptedBookings?.length || 0;
+    const [showCompletionFormDialog, setShowCompletionFormDialog] = React.useState(false);
+    const autoCompleteTriggeredRef = React.useRef(false);
+    const acceptedCount = acceptedParticipants?.length || 0;
+    const confirmedBookings = React.useMemo(
+      () => (acceptedParticipants || []).filter((b: any) => String(b.status || '').toUpperCase() === 'CONFIRMED'),
+      [acceptedParticipants]
+    );
+    const pendingAcceptedBookings = React.useMemo(
+      () => (acceptedParticipants || []).filter((b: any) => String(b.status || '').toUpperCase() === 'ACCEPTED'),
+      [acceptedParticipants]
+    );
+    const [resolvedPickupNames, setResolvedPickupNames] = React.useState<Record<string, string>>({});
+    const resolvingPickupIdsRef = React.useRef<Set<string>>(new Set());
+    const rideConfirmedCount = Array.isArray((ride as any)?.confirmedPassengers)
+      ? (ride as any).confirmedPassengers.length
+      : 0;
+    const completionParticipantCount = Math.max(confirmedBookings.length, rideConfirmedCount);
     const [availableSeats, setAvailableSeats] = React.useState<number>(ride.availableSeats ?? 0);
 
     React.useEffect(() => {
       setAvailableSeats(ride.availableSeats ?? 0);
     }, [ride.availableSeats]);
 
-    const { toast } = useToast();
-    const lifecycleStatus = (ride as any)?.lifecycleStatus;
-    const needsCompletion = lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW';
+    React.useEffect(() => {
+      const toPoint = (pickupPoint: any): { lat: number; lng: number } | null => {
+        if (pickupPoint && typeof pickupPoint.lat === 'number' && typeof pickupPoint.lng === 'number') {
+          return { lat: pickupPoint.lat, lng: pickupPoint.lng };
+        }
+        if (Array.isArray(pickupPoint) && pickupPoint.length >= 2) {
+          const lat = Number(pickupPoint[0]);
+          const lng = Number(pickupPoint[1]);
+          if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+            return { lat, lng };
+          }
+        }
+        return null;
+      };
 
+      const candidates = (acceptedParticipants || [])
+        .map((item: any) => ({ item, point: toPoint(item?.pickupPoint) }))
+        .filter(({ item, point }) => {
+          const hasValidId = !!item?.id;
+          const hasName = !!item?.pickupPlaceName;
+          const alreadyResolved = hasValidId ? !!resolvedPickupNames[item.id] : false;
+          const inProgress = hasValidId ? resolvingPickupIdsRef.current.has(item.id) : false;
+          return hasValidId && !!point && !hasName && !alreadyResolved && !inProgress;
+        });
+
+      if (!candidates.length) return;
+
+      candidates.forEach(async ({ item, point }) => {
+        const id = item.id as string;
+        resolvingPickupIdsRef.current.add(id);
+
+        try {
+          const res = await fetch(`/api/nominatim/reverse?lat=${encodeURIComponent(point!.lat)}&lon=${encodeURIComponent(point!.lng)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          const name = data?.display_name;
+          if (typeof name === 'string' && name.trim()) {
+            setResolvedPickupNames((prev) => ({ ...prev, [id]: name.trim() }));
+          }
+        } catch (error) {
+          console.debug('[MyRides] Failed to resolve pickup place name:', error);
+        } finally {
+          resolvingPickupIdsRef.current.delete(id);
+        }
+      });
+    }, [acceptedParticipants, resolvedPickupNames]);
+
+    const { toast } = useToast();
+    const openRideInGoogleMaps = React.useCallback(() => {
+      const routeArray = Array.isArray(ride.route) ? (ride.route as any[]) : [];
+      const firstPoint = routeArray.find((point: any) => point && typeof point.lat === 'number' && typeof point.lng === 'number');
+      const lastPoint = [...routeArray].reverse().find((point: any) => point && typeof point.lat === 'number' && typeof point.lng === 'number');
+
+      const origin = firstPoint ? `${firstPoint.lat},${firstPoint.lng}` : String(ride.from || '').trim();
+      const destination = lastPoint ? `${lastPoint.lat},${lastPoint.lng}` : String(ride.to || '').trim();
+
+      if (!origin && !destination) {
+        toast({
+          variant: 'destructive',
+          title: 'Location unavailable',
+          description: 'No route locations found for this ride.'
+        });
+        return;
+      }
+
+      const params = new URLSearchParams({ api: '1' });
+      if (origin) params.set('origin', origin);
+      if (destination) params.set('destination', destination);
+      params.set('travelmode', 'driving');
+
+      const mapsUrl = `https://www.google.com/maps/dir/?${params.toString()}`;
+      window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    }, [ride.route, ride.from, ride.to, toast]);
     // CRITICAL: Client-side lifecycle monitor for deterministic completion window
     const lifecycleState = useRideLifecycleMonitor({
       ride,
       university,
       // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
     });
+    const shouldShowCompletionForm =
+      lifecycleState.lifecycleStatus === 'COMPLETION_WINDOW' &&
+      lifecycleState.shouldShowCompletionUI &&
+      completionParticipantCount > 0 &&
+      lifecycleState.minutesUntilCompletion !== null &&
+      lifecycleState.minutesUntilCompletion <= 0;
+
+    React.useEffect(() => {
+      if (shouldShowCompletionForm) {
+        setShowCompletionFormDialog(true);
+      }
+      if (!shouldShowCompletionForm) {
+        setShowCompletionFormDialog(false);
+        autoCompleteTriggeredRef.current = false;
+      }
+    }, [shouldShowCompletionForm]);
+
+    const allPassengersReviewed = confirmedBookings.length > 0 && confirmedBookings.every((b) => !!b.driverReview);
+
+    React.useEffect(() => {
+      if (!shouldShowCompletionForm || !allPassengersReviewed || isCompleting) {
+        return;
+      }
+      if (autoCompleteTriggeredRef.current) {
+        return;
+      }
+      autoCompleteTriggeredRef.current = true;
+      void handleMarkRideComplete();
+    }, [shouldShowCompletionForm, allPassengersReviewed, isCompleting]);
 
     const handleDeleteRide = async () => {
       // ===== CRITICAL: Comprehensive validation before attempting delete =====
@@ -1225,94 +1244,34 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             </CardHeader>
             <CardContent className="p-0">
 
-              {/* ========================================
-                  COMPLETION WINDOW - DRIVER UI (PROMINENT)
-                  ======================================== */}
-              {lifecycleState.shouldShowCompletionUI && acceptedCount > 0 && (
-                <div className="mb-4 p-4 rounded-lg border-2 border-emerald-500 bg-gradient-to-br from-emerald-900/40 to-emerald-950/60 animate-pulse-slow" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <CheckCircle2 className="h-6 w-6 text-emerald-400" />
-                    <h3 className="font-bold text-lg text-white">🚀 Complete Your Ride</h3>
-                  </div>
-                  <p className="text-sm text-slate-300 mb-4">
-                    Your ride has been completed. Please review each passenger and mark the ride as complete.
-                  </p>
-                  <div className="space-y-2 mb-4">
-                    {acceptedBookings?.filter(b => b.status === 'CONFIRMED').map((b) => (
-                      <div key={`completion-${b.id}`} className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-950/40">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <UserNameWithBadge 
-                              name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
-                              verified={isUserVerified(b.passengerDetails)}
-                              size="sm"
-                              truncate
-                            />
-                            {b.driverReview && (
-                              <p className="text-xs text-emerald-400 mt-1">✓ Marked as {b.driverReview}</p>
-                            )}
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              className="h-8 bg-emerald-600 hover:bg-emerald-500"
-                              disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
-                              onClick={() => handleDriverReview(b.passengerId, 'arrived')}
-                            >
-                              {reviewingPassengerId === b.passengerId ? '...' : 'Completed'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8 border-red-600 text-red-400 hover:bg-red-900/20"
-                              disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
-                              onClick={() => handleDriverReview(b.passengerId, 'no-show')}
-                            >
-                              No-show
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+              <div className="mb-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+                <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
+                <div className="w-full">
                   <Button
-                    onClick={handleMarkRideComplete}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 h-12 text-base font-bold"
-                    disabled={isCompleting || acceptedBookings?.filter(b => b.status === 'CONFIRMED').some(b => !b.driverReview)}
+                    onClick={openRideInGoogleMaps}
+                    variant="outline"
+                    size="sm"
+                    className="w-full h-9 px-4 text-sm border-slate-600/80 bg-slate-800/70 hover:bg-slate-700/80 text-slate-200"
                   >
-                    {isCompleting ? 'Completing...' : '✓ Mark Ride Complete'}
+                    <MapPin className="mr-1.5 h-3.5 w-3.5" /> View on Maps
                   </Button>
-                  {acceptedBookings?.filter(b => b.status === 'CONFIRMED').some(b => !b.driverReview) && (
-                    <p className="text-xs text-amber-400 mt-2 text-center">
-                      Please review all passengers before completing
-                    </p>
-                  )}
                 </div>
-              )}
-
-              <div className="mb-3" onClick={(e) => e.stopPropagation()}>
-                {ride.route && ride.route.length > 0 && (
-                  <div className="mt-0">
-                    <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
-                  </div>
-                )}
               </div>
 
               <BookingRequests ride={ride} university={university} />
 
               {/* Confirmed Passengers: passengers who clicked Confirm Ride */}
-              {acceptedBookings && acceptedBookings.filter(b => b.status === 'CONFIRMED').length > 0 && (
+              {confirmedBookings.length > 0 && (
                 <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2 relative">
                     <CheckCircle2 className="h-5 w-5 text-green-400" />
                     <h4 className="font-bold text-sm text-white">Confirmed Passengers</h4>
-                    <Badge className="bg-green-500/20 text-green-300 text-xs py-0.5 px-2 border border-green-500/30">{acceptedBookings.filter(b => b.status === 'CONFIRMED').length}</Badge>
+                    <Badge className="bg-green-500/20 text-green-300 text-xs py-0.5 px-2 border border-green-500/30">{confirmedBookings.length}</Badge>
                     {getUnreadForRide(ride.id) > 0 && (
                       <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
                     )}
                   </div>
-                  {acceptedBookings.filter(b => b.status === 'CONFIRMED').map((b) => (
+                  {confirmedBookings.map((b) => (
                     <div 
                       key={b.id}
                       onClick={(e) => {
@@ -1344,7 +1303,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                             <div className="flex items-start gap-2">
                               <MapPin className="h-4 w-4 text-green-400 flex-shrink-0 mt-0.5" />
                               <span className="text-green-200/90 font-medium line-clamp-2">
-                                {formatPickupLabel(b as any)}
+                                {formatPickupLabel(b as any, resolvedPickupNames)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1373,72 +1332,18 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                 </div>
               )}
 
-              {/* Completion Required (driver reviews) */}
-              {needsCompletion && acceptedBookings && acceptedBookings.filter(b => b.status === 'CONFIRMED').length > 0 && (
-                <div className="mt-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                    <h4 className="font-bold text-sm text-white">Completion Required</h4>
-                  </div>
-                  {acceptedBookings.filter(b => b.status === 'CONFIRMED').map((b) => (
-                    <div key={`completion-${b.id}`} className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-950/20">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <UserNameWithBadge 
-                            name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'} 
-                            verified={isUserVerified(b.passengerDetails)}
-                            size="sm"
-                            truncate
-                          />
-                          <p className="text-xs text-slate-400 mt-1">
-                            {b.driverReview ? `Driver review: ${b.driverReview}` : 'Awaiting driver review'}
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="h-8"
-                            disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
-                            onClick={() => handleDriverReview(b.passengerId, 'arrived')}
-                          >
-                            Arrived
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8"
-                            disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
-                            onClick={() => handleDriverReview(b.passengerId, 'no-show')}
-                          >
-                            No-show
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <Button
-                    onClick={handleMarkRideComplete}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500"
-                    disabled={isCompleting}
-                  >
-                    {isCompleting ? 'Completing...' : 'Mark Ride Complete'}
-                  </Button>
-                </div>
-              )}
-
               {/* Pending Confirmation: accepted but not yet confirmed */}
-              {acceptedBookings && acceptedBookings.filter(b => b.status === 'accepted').length > 0 && (
+              {pendingAcceptedBookings.length > 0 && (
                 <div className="mt-4 space-y-3" onClick={(e) => { e.stopPropagation(); }}>
                   <div className="flex items-center gap-2 relative">
                     <Clock className="h-5 w-5 text-amber-400" />
                     <h4 className="font-bold text-sm text-white">Pending Confirmation</h4>
-                    <Badge className="bg-amber-500/20 text-amber-300 text-xs py-0.5 px-2 border border-amber-500/30">{acceptedBookings.filter(b => b.status === 'accepted').length}</Badge>
+                    <Badge className="bg-amber-500/20 text-amber-300 text-xs py-0.5 px-2 border border-amber-500/30">{pendingAcceptedBookings.length}</Badge>
                     {getUnreadForRide(ride.id) > 0 && (
                       <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
                     )}
                   </div>
-                  {acceptedBookings.filter(b => b.status === 'accepted').map((b) => (
+                  {pendingAcceptedBookings.map((b: any) => (
                     <div 
                       key={b.id} 
                       onClick={(e) => {
@@ -1471,7 +1376,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                             <div className="flex items-start gap-2">
                               <MapPin className="h-4 w-4 text-amber-400/80 flex-shrink-0 mt-0.5" />
                               <span className="text-sm text-slate-300 line-clamp-2">
-                                {formatPickupLabel(b as any)}
+                                {formatPickupLabel(b as any, resolvedPickupNames)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1500,7 +1405,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             <CardFooter className="p-0 mt-2">
               <div className="flex justify-end w-full gap-2" onClick={(e) => e.stopPropagation()}>
                 {/* Cancel Ride Button */}
-                {ride.status !== 'cancelled' && (
+                {ride.status !== 'cancelled' && acceptedCount > 0 && (
                   <>
                     <Button 
                       variant="outline" 
@@ -1515,7 +1420,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                     <CancellationConfirmDialog
                       open={showCancelDialog}
                       onOpenChange={setShowCancelDialog}
-                      cancellationRate={userData ? Math.round(((userData.totalCancellations ?? 0) / Math.max((userData.totalParticipations ?? 1), 1)) * 100) : 0}
+                      cancellationRate={userData
+                        ? ((userData.totalParticipations ?? 0) >= 3
+                            ? Math.round(((userData.totalCancellations ?? 0) / Math.max((userData.totalParticipations ?? 1), 1)) * 100)
+                            : 0)
+                        : 0}
                       minutesUntilDeparture={(() => {
                         try {
                           if (!ride.departureTime) return 0;
@@ -1580,7 +1489,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                 booking={selectedPassenger}
                 passengerName={selectedPassenger.passengerDetails?.fullName || selectedPassenger.passengerDetails?.displayName || 'Unknown'}
                 passengerVerified={isUserVerified(selectedPassenger.passengerDetails)}
-                pickupLocation={formatPickupLabel(selectedPassenger as any)}
+                pickupLocation={formatPickupLabel(selectedPassenger as any, resolvedPickupNames)}
                 dropoffLocation={selectedPassenger.dropoffPlaceName || selectedPassenger.ride?.to || 'Unknown'}
                 rideDateTime={selectedPassenger.ride?.departureTime ?? ride.departureTime}
                 price={selectedPassenger.price ?? selectedPassenger.ride?.price ?? ride.price}
@@ -1606,6 +1515,83 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
           acceptedCount={acceptedCount}
           availableSeats={availableSeats}
         />
+
+        <Dialog
+          open={showCompletionFormDialog}
+          onOpenChange={(open) => {
+            if (!open && shouldShowCompletionForm) return;
+            setShowCompletionFormDialog(open);
+          }}
+        >
+          <DialogContent
+            className="max-w-lg bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-emerald-700"
+            onInteractOutside={(e) => {
+              if (shouldShowCompletionForm) e.preventDefault();
+            }}
+            onEscapeKeyDown={(e) => {
+              if (shouldShowCompletionForm) e.preventDefault();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
+                <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+                Complete Ride Form
+              </DialogTitle>
+              <DialogDescription className="text-slate-300">
+                5 minutes after departure, this form is required. Review each confirmed passenger, then mark the ride complete.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              {confirmedBookings.map((b) => (
+                <div key={`completion-dialog-${b.id}`} className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-950/40">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <UserNameWithBadge
+                        name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}
+                        verified={isUserVerified(b.passengerDetails)}
+                        size="sm"
+                        truncate
+                      />
+                      {b.driverReview && (
+                        <p className="text-xs text-emerald-400 mt-1">✓ Marked as {b.driverReview}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        className="h-8 bg-emerald-600 hover:bg-emerald-500"
+                        disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
+                        onClick={() => handleDriverReview(b.passengerId, 'arrived')}
+                      >
+                        {reviewingPassengerId === b.passengerId ? '...' : 'Completed'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 border-red-600 text-red-400 hover:bg-red-900/20"
+                        disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
+                        onClick={() => handleDriverReview(b.passengerId, 'no-show')}
+                      >
+                        No-show
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2">
+              {isCompleting ? (
+                <p className="text-sm text-emerald-300 text-center font-medium">Submitting completion...</p>
+              ) : allPassengersReviewed ? (
+                <p className="text-sm text-emerald-300 text-center font-medium">All reviews done. Completing ride automatically...</p>
+              ) : (
+                <p className="text-xs text-amber-400 text-center">Please review all passengers. Ride will complete automatically.</p>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
         </>
     )
 }
@@ -1870,9 +1856,13 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
     return fromStr.includes('university') || fromStr.includes('campus') || fromStr.includes('uni');
   }, [ride.from]);
 
+  const routePath = React.useMemo(() => {
+    return routeLatLngs.map((point) => [point.lat, point.lng] as [number, number]);
+  }, [routeLatLngs]);
+
   // Calculate bounds for the map
   const mapBounds = React.useMemo(() => {
-    const allPoints: any[] = routeLatLngs;
+    const allPoints: any[] = [...routeLatLngs];
     pickupPoints.forEach((p: any) => {
       if (Array.isArray(p) && p.length >= 2) {
         allPoints.push({ lat: Number(p[0]), lng: Number(p[1]) });
@@ -1887,10 +1877,27 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
   const startLatLng = routeLatLngs.length > 0 ? routeLatLngs[0] : null;
   const endLatLng = routeLatLngs.length > 1 ? routeLatLngs[routeLatLngs.length - 1] : null;
 
+  const normalizedPickupPoints = React.useMemo(() => {
+    return pickupPoints
+      .map((point: any) => {
+        if (Array.isArray(point) && point.length >= 2) {
+          return { lat: Number(point[0]), lng: Number(point[1]) };
+        }
+        if (point && typeof point.lat === 'number' && typeof point.lng === 'number') {
+          return { lat: Number(point.lat), lng: Number(point.lng) };
+        }
+        return null;
+      })
+      .filter(Boolean) as Array<{ lat: number; lng: number }>;
+  }, [pickupPoints]);
+
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="outline" className="w-full">
+        <Button
+          variant="outline"
+          className="w-full h-10 border-slate-600/80 bg-gradient-to-r from-slate-800/80 to-slate-700/60 hover:from-slate-700 hover:to-slate-600 text-slate-100 shadow-md"
+        >
           <MapPin className="mr-2 h-4 w-4" /> View Route & {isFromUniversity ? 'Dropoffs' : 'Pickups'}
         </Button>
       </DialogTrigger>
@@ -1902,10 +1909,10 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
           </DialogDescription>
         </DialogHeader>
         <div className="h-[60vh] w-full rounded-lg overflow-hidden border border-slate-700">
-          {startLatLng && endLatLng ? (
+          {routeLatLngs.length > 0 ? (
             <MapContainer
               bounds={mapBounds || undefined}
-              center={mapBounds ? undefined : ([startLatLng.lat, startLatLng.lng] as any)}
+              center={mapBounds ? undefined : (startLatLng ? ([startLatLng.lat, startLatLng.lng] as any) : undefined)}
               zoom={mapBounds ? undefined : 13}
               style={{ height: '100%', width: '100%' }}
             >
@@ -1913,56 +1920,24 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; OpenStreetMap contributors'
               />
-              {routeLatLngs.length > 0 && (
-                <Polyline positions={routeLatLngs as any} pathOptions={{ color: '#60A5FA', weight: 5, opacity: 0.9 }} />
+              {routePath.length > 0 && (
+                <Polyline positions={routePath as any} pathOptions={{ color: '#60A5FA', weight: 5, opacity: 0.9 }} />
               )}
-              <Marker
-                position={[startLatLng.lat, startLatLng.lng] as any}
-                icon={L.divIcon({
-                  className: 'start-marker',
-                  html: `<div style="background:#10b981;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${isFromUniversity ? 'Start (University)' : 'Start'}</div>`,
-                  iconAnchor: [20, 24]
-                })}
-              >
-                <Popup>{ride.from || 'Start location'}</Popup>
-              </Marker>
-              <Marker
-                position={[endLatLng.lat, endLatLng.lng] as any}
-                icon={L.divIcon({
-                  className: 'end-marker',
-                  html: `<div style="background:#ef4444;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${isFromUniversity ? 'Destination' : 'Destination (University)'}</div>`,
-                  iconAnchor: [20, 24]
-                })}
-              >
-                <Popup>{ride.to || 'End location'}</Popup>
-              </Marker>
-              {pickupPoints.map((point: any, idx: number) => {
-                let lat: number | null = null;
-                let lng: number | null = null;
-                if (Array.isArray(point) && point.length >= 2) {
-                  lat = Number(point[0]);
-                  lng = Number(point[1]);
-                } else if (point && typeof point.lat === 'number' && typeof point.lng === 'number') {
-                  lat = point.lat;
-                  lng = point.lng;
-                }
-                if (lat !== null && lng !== null) {
-                  return (
-                    <Marker
-                      key={idx}
-                      position={[lat, lng] as any}
-                      icon={L.divIcon({
-                        className: 'pickup-marker',
-                        html: `<div style="background:#3b82f6;color:#fff;padding:4px 6px;border-radius:8px;font-size:11px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${isFromUniversity ? 'Dropoff' : 'Pickup'}</div>`,
-                        iconAnchor: [20, 24]
-                      })}
-                    >
-                      <Popup>Passenger {isFromUniversity ? 'Dropoff' : 'Pickup'} Point {idx + 1}</Popup>
-                    </Marker>
-                  );
-                }
-                return null;
-              })}
+              {startLatLng && (
+                <Marker position={[startLatLng.lat, startLatLng.lng] as any}>
+                  <Popup>Start</Popup>
+                </Marker>
+              )}
+              {endLatLng && (
+                <Marker position={[endLatLng.lat, endLatLng.lng] as any}>
+                  <Popup>Destination</Popup>
+                </Marker>
+              )}
+              {normalizedPickupPoints.map((point, idx) => (
+                <Marker key={`pickup-${idx}`} position={[point.lat, point.lng] as any}>
+                  <Popup>Passenger {isFromUniversity ? 'Dropoff' : 'Pickup'} {idx + 1}</Popup>
+                </Marker>
+              ))}
             </MapContainer>
           ) : (
             <div className="h-full flex items-center justify-center text-sm text-slate-400">No route available</div>

@@ -1,4 +1,4 @@
-import { collection, doc, addDoc, setDoc, serverTimestamp, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, doc, addDoc, setDoc, serverTimestamp, query, orderBy, onSnapshot, getDoc } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
@@ -32,18 +32,47 @@ export async function sendMessage(firestore: Firestore, universityId: string, ch
   const result = await addDoc(messages, msg);
   
   // Create chat notification for the recipient
-  if (message.recipientId && message.recipientId !== message.senderId) {
+  let recipientId = message.recipientId;
+  if (!recipientId) {
     try {
+      const chatSnap = await getDoc(chatRef(firestore, universityId, chatId));
+      if (chatSnap.exists()) {
+        const chatData = chatSnap.data() as any;
+        const participants: string[] = Array.isArray(chatData?.participants)
+          ? chatData.participants.filter((p: any) => typeof p === 'string')
+          : [chatData?.passengerId, chatData?.providerId].filter((p: any) => typeof p === 'string');
+        recipientId = participants.find((participantId) => participantId !== message.senderId);
+      }
+    } catch (resolveErr) {
+      console.debug('Failed to resolve chat recipient from chat doc:', resolveErr);
+    }
+  }
+
+  if (recipientId && recipientId !== message.senderId) {
+    try {
+      const normalizedType = String(message.type || 'text').toLowerCase();
+      const messagePreview = normalizedType === 'voice'
+        ? 'sent you a voice message'
+        : normalizedType === 'image'
+          ? 'sent you an image'
+          : normalizedType === 'video'
+            ? 'sent you a video'
+            : normalizedType === 'audio'
+              ? 'sent you an audio file'
+              : normalizedType === 'file'
+                ? 'sent you a file'
+                : 'sent you a message';
+
       await createNotification(
         firestore,
         universityId,
-        message.recipientId,
+        recipientId,
         'chat',
         {
           relatedRideId: message.rideId || chatId,
           relatedChatId: chatId,
           title: 'New Message',
-          message: message.senderName ? `${message.senderName} sent you a message` : 'You have a new message',
+          message: message.senderName ? `${message.senderName} ${messagePreview}` : 'You have a new message',
           metadata: {
             senderName: message.senderName,
             senderId: message.senderId,

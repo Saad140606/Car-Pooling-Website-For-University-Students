@@ -14,52 +14,52 @@ export async function GET(req: Request) {
 
     const db = admin.firestore();
 
-    // Build query
-    let query: any = db.collection('users');
-    
-    if (universityId) {
-      const primaryQuery = query.where('university', '==', universityId);
-      const testSnap = await primaryQuery.limit(1).get().catch(() => null);
-      query = testSnap && testSnap.size > 0
-        ? primaryQuery
-        : query.where('universityId', '==', universityId);
+    const normalizedUniversity = String(universityId || '').toLowerCase();
+
+    let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      const snap = await db.collectionGroup('users').get();
+      docs = snap.docs;
+      console.log(`[admin/users] Found ${docs.length} users via collectionGroup`);
+    } catch (err) {
+      console.warn('[admin/users] collectionGroup failed, trying top-level', err);
+      const snap = await db.collection('users').get();
+      docs = snap.docs;
+      console.log(`[admin/users] Found ${docs.length} users via top-level`);
     }
 
-    // Get total count
-    const countSnap = await query.get().catch(err => {
-      console.error('[admin/users] count fetch failed', err);
-      return null;
+    const withMeta = docs.map((doc) => {
+      const data = doc.data();
+      const pathMatch = doc.ref.path.match(/universities\/([^/]+)\/users\//i);
+      const derivedUniversityId = pathMatch?.[1]?.toLowerCase() || '';
+      const fieldUniversity = String(data.universityId || data.university || '').toLowerCase();
+      return {
+        doc,
+        data,
+        universityId: fieldUniversity || derivedUniversityId,
+      };
     });
 
-    const total = countSnap?.size || 0;
+    const filtered = normalizedUniversity
+      ? withMeta.filter((item) => item.universityId === normalizedUniversity)
+      : withMeta;
 
-    // Fetch with pagination
-    let docsSnap = null;
-    try {
-      docsSnap = await query
-        .orderBy('createdAt', 'desc')
-        .limit(limit)
-        .offset(offset)
-        .get();
-    } catch (err) {
-      console.warn('[admin/users] ordered query failed, trying unordered', err);
-      try {
-        docsSnap = await query
-          .limit(limit)
-          .offset(offset)
-          .get();
-      } catch (err2) {
-        console.error('[admin/users] fetch failed', err2);
-        docsSnap = null;
-      }
-    }
+    const sorted = filtered.sort((a, b) => {
+      const aMs = a.data.createdAt?.toDate?.()?.getTime?.() || new Date(a.data.createdAt || 0).getTime() || 0;
+      const bMs = b.data.createdAt?.toDate?.()?.getTime?.() || new Date(b.data.createdAt || 0).getTime() || 0;
+      return bMs - aMs;
+    });
 
-    const users = docsSnap?.docs.map(doc => ({
+    const total = sorted.length;
+    const page = sorted.slice(offset, offset + limit);
+
+    const users = page.map(({ doc, data, universityId }) => ({
       id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt,
-      updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString() || doc.data().updatedAt,
-    })) || [];
+      ...data,
+      universityId,
+      createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+      updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+    }));
 
     console.log(`[admin/users] Fetched ${users.length} users (total: ${total})`);
 
@@ -73,5 +73,46 @@ export async function GET(req: Request) {
   } catch (e: any) {
     console.error('[admin/users] error', e);
     return NextResponse.json({ error: e?.message || 'Failed to fetch users' }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const auth = await requireAdmin(req);
+    if (!auth.ok) return auth.response;
+
+    const { userId, updates } = await req.json();
+    if (!userId || !updates || typeof updates !== 'object') {
+      return NextResponse.json({ error: 'userId and updates are required' }, { status: 400 });
+    }
+
+    const db = admin.firestore();
+    const userIdStr = String(userId);
+    const writePayload = { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+
+    const topLevelRef = db.collection('users').doc(userIdStr);
+    const topLevelSnap = await topLevelRef.get().catch(() => null);
+
+    if (topLevelSnap?.exists) {
+      await topLevelRef.set(writePayload, { merge: true });
+      return NextResponse.json({ ok: true });
+    }
+
+    const cgSnap = await db
+      .collectionGroup('users')
+      .where(admin.firestore.FieldPath.documentId(), '==', userIdStr)
+      .limit(1)
+      .get();
+
+    if (cgSnap.empty) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    await cgSnap.docs[0].ref.set(writePayload, { merge: true });
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('[admin/users:PATCH] error', e);
+    return NextResponse.json({ error: e?.message || 'Failed to update user' }, { status: 500 });
   }
 }

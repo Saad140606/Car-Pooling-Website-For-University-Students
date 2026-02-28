@@ -112,7 +112,7 @@ const SectionHeader = memo(function SectionHeader({
   action,
 }: SectionHeaderProps) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 mb-4 sm:mb-6">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 mb-4 sm:mb-6 min-w-0">
       <div className="flex items-center gap-2 sm:gap-3">
         <div className="p-1.5 sm:p-2 rounded-lg bg-primary/15">
           {icon}
@@ -122,7 +122,7 @@ const SectionHeader = memo(function SectionHeader({
           {subtitle && <p className="text-xs sm:text-sm text-slate-500">{subtitle}</p>}
         </div>
       </div>
-      {action && <div className="mt-0">{action}</div>}
+      {action && <div className="mt-0 w-full sm:w-auto">{action}</div>}
     </div>
   );
 });
@@ -263,6 +263,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
           totalRides={metrics.totalRides}
           completedRides={metrics.completedRides}
           cancelledRides={metrics.cancelledRides}
+          cancellationRate={metrics.cancellationRate}
           averageRating={metrics.averageRating}
           trustScore={metrics.trustScore}
           activeDays={metrics.activeDaysOnPlatform}
@@ -331,10 +332,10 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
             color="#3B82F6"
           />
           <ProgressCircle
-            percentage={100 - metrics.cancellationRate}
-            label="Reliability"
-            sublabel="Non-cancelled rides"
-            color="#F59E0B"
+            percentage={Math.max(0, Math.min(100, metrics.cancellationRate))}
+            label="Cancellation Rate"
+            sublabel="Cancelled rides"
+            color="#EF4444"
           />
         </div>
       </motion.div>
@@ -423,6 +424,8 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
           totalRides={metrics.totalRides}
           completedRides={metrics.completedRides}
           cancelledRides={metrics.cancelledRides}
+          completionRate={metrics.rideCompletionRate}
+          cancellationRate={metrics.cancellationRate}
           averageRating={metrics.averageRating}
           trustScore={metrics.trustScore}
           activeDays={metrics.activeDaysOnPlatform}
@@ -473,16 +476,16 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         <h3 className="text-base sm:text-lg font-semibold text-white mb-4 sm:mb-6">Booking Performance</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           <ProgressCircle
-            percentage={metrics.requestToConfirmRate}
-            label="Booking Success"
-            sublabel="Confirmed bookings"
+            percentage={metrics.rideCompletionRate}
+            label="Completion Rate"
+            sublabel="Completed rides"
             color="#10B981"
           />
           <ProgressCircle
-            percentage={100 - metrics.cancellationRate}
-            label="Reliability"
-            sublabel="Non-cancelled rides"
-            color="#3B82F6"
+            percentage={Math.max(0, Math.min(100, metrics.cancellationRate))}
+            label="Cancellation Rate"
+            sublabel="Cancelled rides"
+            color="#EF4444"
           />
           <ProgressCircle
             percentage={metrics.trustScore}
@@ -522,21 +525,104 @@ export default function AnalyticsPage() {
     setError(null);
 
     try {
+      const buildThirtyDaySeries = (
+        entries: Array<{ date?: string; value?: number }>
+      ) => {
+        const byDate = new Map<string, number>();
+        const today = new Date();
+
+        for (let i = 29; i >= 0; i--) {
+          const day = new Date(today);
+          day.setDate(day.getDate() - i);
+          const key = day.toISOString().split('T')[0];
+          byDate.set(key, 0);
+        }
+
+        entries.forEach((entry) => {
+          if (!entry?.date) return;
+          const date = new Date(entry.date);
+          if (Number.isNaN(date.getTime())) return;
+          const key = date.toISOString().split('T')[0];
+          if (!byDate.has(key)) return;
+          byDate.set(key, (byDate.get(key) || 0) + Number(entry.value || 0));
+        });
+
+        return Array.from(byDate.entries()).map(([date, value]) => ({
+          date,
+          value,
+          label: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        }));
+      };
+
       const analyticsData = await computeUserAnalytics(
         firestore,
         user.uid,
         userData.university
       );
 
+      // Sync summary metrics with post-ride analytics APIs (same source used by Earnings/Spending cards)
+      const token = await user.getIdToken(true);
+      const authHeaders = { Authorization: `Bearer ${token}` };
+
+      let passengerApiAnalytics: any = null;
+      let driverApiAnalytics: any = null;
+
+      await Promise.all([
+        fetch(`/api/analytics/passenger?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
+          .then(async (response) => {
+            if (!response.ok) return;
+            const data = await response.json();
+            if (data?.success) passengerApiAnalytics = data.analytics;
+          })
+          .catch(() => undefined),
+        fetch(`/api/analytics/driver?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
+          .then(async (response) => {
+            if (!response.ok) return;
+            const data = await response.json();
+            if (data?.success) driverApiAnalytics = data.analytics;
+          })
+          .catch(() => undefined),
+      ]);
+
+      if (analyticsData.passengerMetrics && passengerApiAnalytics) {
+        analyticsData.passengerMetrics.totalSpent = Number(passengerApiAnalytics.totalSpent || analyticsData.passengerMetrics.totalSpent || 0);
+        analyticsData.passengerMetrics.averageCostPerRide = Math.round(Number(passengerApiAnalytics.averageSpentPerRide || analyticsData.passengerMetrics.averageCostPerRide || 0));
+        analyticsData.passengerMetrics.totalRidesTaken = Number(passengerApiAnalytics.totalRidesTaken || analyticsData.passengerMetrics.totalRidesTaken || 0);
+        analyticsData.passengerMetrics.averageRating = Number(passengerApiAnalytics.averageRating || analyticsData.passengerMetrics.averageRating || 0);
+
+        const spendingEntries = Array.isArray(passengerApiAnalytics.spendingPerRide)
+          ? passengerApiAnalytics.spendingPerRide.map((item: any) => ({ date: item?.date, value: Number(item?.amount || 0) }))
+          : [];
+        if (spendingEntries.length > 0) {
+          analyticsData.passengerMetrics.spendingOverTime = buildThirtyDaySeries(spendingEntries);
+        }
+      }
+
+      if (analyticsData.driverMetrics && driverApiAnalytics) {
+        analyticsData.driverMetrics.totalEarnings = Number(driverApiAnalytics.totalEarnings || analyticsData.driverMetrics.totalEarnings || 0);
+        analyticsData.driverMetrics.averageEarningsPerRide = analyticsData.driverMetrics.completedRides > 0
+          ? Math.round(analyticsData.driverMetrics.totalEarnings / analyticsData.driverMetrics.completedRides)
+          : analyticsData.driverMetrics.averageEarningsPerRide;
+        analyticsData.driverMetrics.totalPassengersServed = Number(driverApiAnalytics.totalPassengersServed || analyticsData.driverMetrics.totalPassengersServed || 0);
+        analyticsData.driverMetrics.averageRating = Number(driverApiAnalytics.averageRating || analyticsData.driverMetrics.averageRating || 0);
+
+        const earningEntries = Array.isArray(driverApiAnalytics.earningsPerRide)
+          ? driverApiAnalytics.earningsPerRide.map((item: any) => ({ date: item?.date, value: Number(item?.earnings || 0) }))
+          : [];
+        if (earningEntries.length > 0) {
+          analyticsData.driverMetrics.earningsOverTime = buildThirtyDaySeries(earningEntries);
+        }
+      }
+
       setAnalytics(analyticsData);
 
       // Build ride history
-      const { driverRides, passengerBookings } = await fetchUserAnalyticsData(
+      const { driverRides, passengerBookings, passengerRequests } = await fetchUserAnalyticsData(
         firestore,
         user.uid,
         userData.university
       );
-      const history = buildRideHistory(driverRides, passengerBookings);
+      const history = buildRideHistory(driverRides, passengerBookings, passengerRequests);
       setRideHistory(history);
 
       // Set default view based on role
@@ -600,15 +686,15 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] p-2 sm:p-4 md:p-6 lg:p-8 overflow-x-hidden">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-[100dvh] px-2 py-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 pb-28 sm:pb-10 overflow-x-hidden">
+      <div className="max-w-7xl mx-auto w-full">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 sm:mb-6"
+          className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 sm:mb-6 min-w-0"
         >
-          <div>
+          <div className="min-w-0">
             <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-2 sm:gap-3">
               <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-primary" />
               Analytics Dashboard
@@ -620,7 +706,7 @@ export default function AnalyticsPage() {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto min-w-0">
             {/* Role Toggle */}
             <RoleToggle
               role={analytics.userRole}
@@ -677,12 +763,12 @@ export default function AnalyticsPage() {
 
             {/* Status Pie Chart */}
             {analytics.rideStatusBreakdown.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 min-w-0">
                 <StatusPieChart
                   data={analytics.rideStatusBreakdown}
                   title="Ride Status Breakdown"
                 />
-                <div className="space-y-4">
+                <div className="space-y-4 min-w-0">
                   <InsightsSection
                     insights={analytics.insights.slice(0, 3)}
                   />

@@ -115,15 +115,24 @@ export async function POST(req: NextRequest) {
         throw new Error('Invalid request: missing passenger ID');
       }
 
-      // Check rider's active request count (PENDING + ACCEPTED)
-      const activeRequestsSnap = await db.collectionGroup('requests')
+      // Prevent accepting the same passenger more than once for the same ride
+      // (e.g., duplicate request documents for one passenger).
+      const duplicateAcceptedQuery = db
+        .collection(`universities/${validUniversity}/rides/${rideId}/requests`)
         .where('passengerId', '==', passengerId)
-        .where('status', 'in', ['PENDING', 'ACCEPTED'])
-        .get();
-      
-      if (activeRequestsSnap.size >= 3) {
-        throw new Error('Passenger has reached maximum active requests limit');
+        .where('status', 'in', ['ACCEPTED', 'CONFIRMED'])
+        .limit(1);
+      const duplicateAcceptedSnap = await tx.get(duplicateAcceptedQuery);
+      if (!duplicateAcceptedSnap.empty) {
+        const alreadyAcceptedDoc = duplicateAcceptedSnap.docs[0];
+        if (alreadyAcceptedDoc.id !== requestId) {
+          throw new Error('Passenger already has an accepted request for this ride');
+        }
       }
+
+      // NOTE: Do not run collectionGroup(passengerId + status) checks here because
+      // they require a composite index that can block acceptance in production.
+      // Seat safety and request idempotency are already enforced below transactionally.
 
       const now = admin.firestore.Timestamp.now();
       const reservedSeats = (ride.reservedSeats ?? 0) as number;
@@ -194,40 +203,37 @@ export async function POST(req: NextRequest) {
       return { passengerId, rideId, timerType };
     });
 
-    // ===== SEND NOTIFICATION: After successful transaction =====
-    try {
-      if (!result.idempotent) {  // Only send notification on first accept, not on idempotent calls
-        // Get ride and passenger info for notification
-        const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
-        const rideData = rideSnap.data() as any;
-        
-        await notifyRequestAccepted(
-          adminDb,
-          validUniversity,
-          result.passengerId,
-          rideId,
-          requestId,
-          {
-            from: rideData?.pickupLocation || rideData?.from || 'Starting point',
-            to: rideData?.dropoffLocation || rideData?.to || 'Destination',
-            departureTime: rideData?.departureTime,
-            driverName: rideData?.driverName || 'Driver'
-          }
-        );
-      }
-    } catch (notifError) {
-      // Log notification error but don't fail the request
-      console.error('[AcceptRequest] Notification error (non-critical):', notifError);
-    }
+    // ===== FIRE-AND-FORGET SIDE EFFECTS =====
+    // Keep API response fast; these do not affect correctness of seat reservation.
+    if (!result.idempotent) {
+      void (async () => {
+        try {
+          const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+          const rideData = rideSnap.data() as any;
 
-    // ===== UPDATE LIFECYCLE (ASYNC, non-blocking) =====
-    try {
-      if (!result.idempotent) {
-        // Call lifecycle service to sync state
-        await handleAcceptRequest(adminDb, validUniversity, rideId, requestId, authenticatedUserId);
-      }
-    } catch (lifecycleErr) {
-      console.warn('[AcceptRequest] Lifecycle update failed (non-critical):', lifecycleErr);
+          await notifyRequestAccepted(
+            adminDb,
+            validUniversity,
+            result.passengerId,
+            rideId,
+            requestId,
+            {
+              from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+              to: rideData?.dropoffLocation || rideData?.to || 'Destination',
+              departureTime: rideData?.departureTime,
+              driverName: rideData?.driverName || 'Driver'
+            }
+          );
+        } catch (notifError) {
+          console.error('[AcceptRequest] Notification error (non-critical):', notifError);
+        }
+
+        try {
+          await handleAcceptRequest(adminDb, validUniversity, rideId, requestId, authenticatedUserId);
+        } catch (lifecycleErr) {
+          console.warn('[AcceptRequest] Lifecycle update failed (non-critical):', lifecycleErr);
+        }
+      })();
     }
 
     return successResponse({ ok: true, data: result });

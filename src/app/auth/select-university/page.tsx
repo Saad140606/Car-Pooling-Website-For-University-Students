@@ -23,7 +23,7 @@ const universities = [
     image: PlaceHolderImages.find(img => img.id === "fast-university-campus"),
   },
   {
-    name: "Karachi University",
+    name: "University of Karachi",
     slug: "karachi",
     image: PlaceHolderImages.find(img => img.id === "karachi-university-campus"),
   },

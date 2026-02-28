@@ -2,12 +2,11 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import RideCard from './RideCard';
 import RideDetailModal from './RideDetailModal';
-import StopsViewer from './StopsViewer';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import L, { LatLng, LatLngExpression } from 'leaflet';
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMapEvents, Tooltip } from '@/components/map';
 import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { decodePolyline } from '@/lib/route';
@@ -16,8 +15,51 @@ import { parseTimestamp } from '@/lib/timestampUtils';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 import { openGoogleMapsRoute } from '@/lib/googleMapsRoute';
 
+const StopsViewer = dynamic(() => import('./StopsViewer'), {
+  ssr: false,
+  loading: () => <div className="text-sm text-slate-400">Loading stops...</div>,
+});
+
+type LatLng = { lat: number; lng: number };
+type LatLngExpression = LatLng | [number, number];
+type MapClickEvent = { latlng: LatLng };
+
+const toLatLngLike = (point: any): { lat: number; lng: number } => {
+  if (Array.isArray(point)) {
+    return { lat: Number(point[0] || 0), lng: Number(point[1] || 0) };
+  }
+  return { lat: Number(point?.lat || 0), lng: Number(point?.lng || 0) };
+};
+
+const getRouteBounds = (route: LatLngExpression[]): [[number, number], [number, number]] => {
+  const points = route.map((point) => toLatLngLike(point));
+  const latitudes = points.map((point) => point.lat);
+  const longitudes = points.map((point) => point.lng);
+
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLng = Math.min(...longitudes);
+  const maxLng = Math.max(...longitudes);
+
+  return [[minLat, minLng], [maxLat, maxLng]];
+};
+
+const toRoutePoint = (point: any): { lat: number; lng: number } | null => {
+  if (!point) return null;
+  if (Array.isArray(point) && point.length >= 2) {
+    const lat = Number(point[0]);
+    const lng = Number(point[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    return null;
+  }
+  const lat = Number(point.lat);
+  const lng = Number(point.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  return null;
+};
+
 function MapEvents({ onSelect }: { onSelect: (pt: LatLng) => void }) {
-  useMapEvents({ click(e: L.LeafletMouseEvent) { onSelect(e.latlng); } });
+  useMapEvents({ click(e: MapClickEvent) { onSelect(e.latlng); } });
   return null;
 }
 
@@ -35,10 +77,33 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const { toast } = useToast();
-  const [confirmCountdown, setConfirmCountdown] = useState<string | null>(null);
   const [showConfirmWarning, setShowConfirmWarning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const rideUniversity = String(ride?.university || selectedUniversity || userData?.university || '').toLowerCase();
+  const hasValidRideUniversity = rideUniversity === 'fast' || rideUniversity === 'ned' || rideUniversity === 'karachi';
+  const isCrossUniversityRide = Boolean(userData?.university && hasValidRideUniversity && String(userData.university).toLowerCase() !== rideUniversity);
+
+  const routeCoordinatesForStops = React.useMemo(() => {
+    if (ride?.routePolyline) {
+      try {
+        const decoded = decodePolyline(ride.routePolyline);
+        if (Array.isArray(decoded) && decoded.length > 1) {
+          return decoded
+            .map((point: any) => toRoutePoint(point))
+            .filter(Boolean) as Array<{ lat: number; lng: number }>;
+        }
+      } catch (_) {}
+    }
+
+    if (Array.isArray(ride?.route) && ride.route.length > 1) {
+      return ride.route
+        .map((point: any) => toRoutePoint(point))
+        .filter(Boolean) as Array<{ lat: number; lng: number }>;
+    }
+
+    return [] as Array<{ lat: number; lng: number }>;
+  }, [ride?.routePolyline, ride?.route]);
 
   const normalizeStopsInput = useCallback((raw: any) => {
     if (!raw) return [];
@@ -47,7 +112,81 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
     return [];
   }, []);
 
-  const [stopsForViewer, setStopsForViewer] = useState<any[]>(() => normalizeStopsInput(ride.stops));
+  const buildStopsForViewer = useCallback((rawStops: any) => {
+    const normalized = normalizeStopsInput(rawStops)
+      .map((stop: any, index: number) => {
+        const lat = Number(stop?.lat);
+        const lng = Number(stop?.lng);
+        return {
+          ...stop,
+          id: stop?.id || `stop-${index}`,
+          lat: Number.isFinite(lat) ? lat : undefined,
+          lng: Number.isFinite(lng) ? lng : undefined,
+          distanceFromStart: Number(stop?.distanceFromStart || 0),
+        };
+      })
+      .filter((stop: any) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng));
+
+    const routeStart = routeCoordinatesForStops[0];
+    const routeEnd = routeCoordinatesForStops[routeCoordinatesForStops.length - 1];
+
+    if (normalized.length === 0 && routeStart && routeEnd) {
+      return [
+        {
+          id: 'auto-start',
+          name: ride?.from || 'Start',
+          lat: routeStart.lat,
+          lng: routeStart.lng,
+          distanceFromStart: 0,
+          type: 'start',
+          isAutoGenerated: true,
+          isCustom: false,
+        },
+        {
+          id: 'auto-end',
+          name: ride?.to || 'End',
+          lat: routeEnd.lat,
+          lng: routeEnd.lng,
+          distanceFromStart: 1,
+          type: 'end',
+          isAutoGenerated: true,
+          isCustom: false,
+        },
+      ];
+    }
+
+    const hasEnd = normalized.some((stop: any) => stop.type === 'end');
+    if (!hasEnd && routeEnd) {
+      normalized.push({
+        id: 'auto-end',
+        name: ride?.to || 'End',
+        lat: routeEnd.lat,
+        lng: routeEnd.lng,
+        distanceFromStart: Math.max(...normalized.map((stop: any) => Number(stop.distanceFromStart || 0)), 0) + 1,
+        type: 'end',
+        isAutoGenerated: true,
+        isCustom: false,
+      });
+    }
+
+    const hasStart = normalized.some((stop: any) => stop.type === 'start');
+    if (!hasStart && routeStart) {
+      normalized.unshift({
+        id: 'auto-start',
+        name: ride?.from || 'Start',
+        lat: routeStart.lat,
+        lng: routeStart.lng,
+        distanceFromStart: 0,
+        type: 'start',
+        isAutoGenerated: true,
+        isCustom: false,
+      });
+    }
+
+    return normalized;
+  }, [normalizeStopsInput, routeCoordinatesForStops, ride?.from, ride?.to]);
+
+  const [stopsForViewer, setStopsForViewer] = useState<any[]>(() => buildStopsForViewer(ride.stops));
 
   const isDriver = user && ride.driverId === user.uid;
   const isFull = (ride.availableSeats ?? 0) <= 0;
@@ -55,19 +194,19 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
   const existingBooking = (myBookings || []).find((b: any) => b.rideId === ride.id);
 
   useEffect(() => {
-    setStopsForViewer(normalizeStopsInput(ride.stops));
-  }, [ride.stops, normalizeStopsInput]);
+    setStopsForViewer(buildStopsForViewer(ride.stops));
+  }, [ride.stops, buildStopsForViewer]);
 
   useEffect(() => {
     if (!openStops) return;
 
     const refreshStops = async () => {
-      const fallbackStops = normalizeStopsInput(ride.stops);
+      const fallbackStops = buildStopsForViewer(ride.stops);
       console.log('[FullRideCard] View Stops opened. Local stops:', fallbackStops.length);
       setStopsForViewer(fallbackStops);
 
       if (!firestore || !ride?.id) return;
-      const university = ride.university || selectedUniversity || userData?.university;
+      const university = hasValidRideUniversity ? rideUniversity : (ride.university || selectedUniversity || userData?.university);
       if (!university) return;
 
       try {
@@ -75,7 +214,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         const snap = await getDoc(rideRef);
         if (snap.exists()) {
           const data = snap.data();
-          const latestStops = normalizeStopsInput(data?.stops);
+          const latestStops = buildStopsForViewer(data?.stops);
           console.log('[FullRideCard] Refreshed stops from Firestore:', latestStops.length);
           setStopsForViewer(latestStops);
         }
@@ -85,7 +224,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
     };
 
     refreshStops();
-  }, [openStops, firestore, ride?.id, ride?.stops, ride?.university, selectedUniversity, userData?.university, normalizeStopsInput]);
+  }, [openStops, firestore, ride?.id, ride?.stops, ride?.university, selectedUniversity, userData?.university, buildStopsForViewer]);
 
   const [existingRequest, setExistingRequest] = useState<any | null>(null);
   const [existingChecked, setExistingChecked] = useState(false);
@@ -103,8 +242,13 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
           if (mounted) setExistingChecked(true);
           return;
         }
+        if (!hasValidRideUniversity || isCrossUniversityRide) {
+          if (mounted) setExistingRequest(null);
+          if (mounted) setExistingChecked(true);
+          return;
+        }
         const requestId = `${ride.id}_${user.uid}`;
-        const reqRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', requestId);
+        const reqRef = doc(firestore, `universities/${rideUniversity}/rides`, ride.id, 'requests', requestId);
         const snap = await getDoc(reqRef);
         if (!mounted) return;
         setExistingRequest(snap.exists() ? snap.data() : null);
@@ -116,7 +260,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
       }
     })();
     return () => { mounted = false; };
-  }, [firestore, userData, user, ride.id]);
+  }, [firestore, userData, user, ride.id, hasValidRideUniversity, isCrossUniversityRide, rideUniversity]);
 
   const genderMismatch = ride.genderAllowed && ride.genderAllowed !== 'both' && userData?.gender && userData.gender !== ride.genderAllowed;
   const existingRequestStatus = existingRequest ? existingRequest.status : null;
@@ -132,49 +276,12 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
 
   const disabledReason = isDriver ? "Can't book own ride"
     : isFull ? 'Ride is full'
+    : isCrossUniversityRide ? 'Ride belongs to another university'
     : genderMismatch ? `Reserved for ${ride.genderAllowed} riders`
     : isConfirmedBooking ? `You have already confirmed this ride`
     : isAcceptedBooking ? `You already requested this ride (accepted)`
     : isPendingRequest ? `You already requested this ride (pending)`
     : undefined;
-
-  // Smart countdown for accepted request confirmation window
-  // Respects dynamic timer based on pickup time (short/medium/none)
-  useEffect(() => {
-    if (!isAcceptedRequest || !existingRequest?.confirmDeadline) { setConfirmCountdown(null); return; }
-    const getMs = (t: any) => {
-      if (!t) return 0;
-      if (typeof t.toDate === 'function') return t.toDate().getTime();
-      return new Date(t).getTime();
-    };
-    
-    const deadlineMs = getMs(existingRequest.confirmDeadline);
-    const timerType = existingRequest.timerType || 'short';
-    const confirmLater = existingRequest.confirmLater || false;
-    
-    // If rider chose "confirm later", show different message instead of countdown
-    if (confirmLater) {
-      setConfirmCountdown('waiting'); // special value for "confirm later" state
-      return;
-    }
-    
-    // For "none" timer type (future rides), don't show countdown timer
-    if (timerType === 'none') {
-      setConfirmCountdown(null);
-      return;
-    }
-    
-    // Show countdown for short/medium timer types
-    const tick = () => {
-      const remain = Math.max(0, deadlineMs - Date.now());
-      const mm = Math.floor(remain / 60000);
-      const ss = Math.floor((remain % 60000) / 1000);
-      setConfirmCountdown(`${mm}:${ss.toString().padStart(2,'0')}`);
-    };
-    tick();
-    const iv = setInterval(tick, 1000);
-    return () => clearInterval(iv);
-  }, [isAcceptedRequest, existingRequest?.confirmDeadline, existingRequest?.timerType, existingRequest?.confirmLater]);
 
   // geometry helpers (approx meters)
   const toMeters = (latlng: { lat: number; lng: number }) => {
@@ -200,8 +307,8 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
   const isPointNearRoute = (point: LatLng, route: LatLngExpression[], tolerance = 0.003) => {
     const tolMeters = tolerance * 111320;
     for (let i = 0; i < route.length - 1; i++) {
-      const start = L.latLng(route[i] as LatLng);
-      const end = L.latLng(route[i + 1] as LatLng);
+      const start = toLatLngLike(route[i]);
+      const end = toLatLngLike(route[i + 1]);
       const d = pointToSegmentDistanceMeters(point, start as any, end as any);
       if (d < tolMeters) return true;
     }
@@ -272,6 +379,10 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
       toast({ variant: 'destructive', title: 'Profile incomplete', description: 'Please complete your profile and select your university before booking.' });
       return false;
     }
+    if (!hasValidRideUniversity || isCrossUniversityRide) {
+      toast({ variant: 'destructive', title: 'Booking Not Allowed', description: 'You can only request rides within your own university.' });
+      return false;
+    }
     if (!existingChecked) {
       toast({ variant: 'destructive', title: 'Please wait', description: 'Checking previous request status...' });
       return false;
@@ -283,7 +394,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
     // Re-check the authoritative docs to avoid stale local state causing false positives
     try {
       const requestId = `${ride.id}_${user.uid}`;
-      const reqRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', requestId);
+      const reqRef = doc(firestore, `universities/${rideUniversity}/rides`, ride.id, 'requests', requestId);
       const reqSnap = await getDoc(reqRef);
       const reqData = reqSnap.exists() ? (reqSnap.data() as any) : null;
       // CRITICAL FIX: Only block on ACTIVE statuses, not completed/rejected/cancelled
@@ -292,7 +403,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         return false;
       }
 
-      const bookingRef = doc(firestore, `universities/${userData.university}/bookings`, requestId);
+      const bookingRef = doc(firestore, `universities/${rideUniversity}/bookings`, requestId);
       const bSnap = await getDoc(bookingRef);
       const bData = bSnap.exists() ? (bSnap.data() as any) : null;
       // CRITICAL FIX: Only block on ACTIVE statuses, not completed/rejected/cancelled
@@ -352,13 +463,13 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
 
     try {
       await runTransaction(firestore, async (transaction) => {
-        const rideRef = doc(firestore, `universities/${userData.university}/rides`, ride.id);
+        const rideRef = doc(firestore, `universities/${rideUniversity}/rides`, ride.id);
         const rideDoc = await transaction.get(rideRef);
         if (!rideDoc.exists() || rideDoc.data().availableSeats <= 0) {
           throw new Error('This ride is no longer available or is full.');
         }
         const requestId = `${ride.id}_${user.uid}`;
-        const requestRef = doc(firestore, `universities/${userData.university}/rides`, ride.id, 'requests', requestId);
+        const requestRef = doc(firestore, `universities/${rideUniversity}/rides`, ride.id, 'requests', requestId);
         const existingRequest = await transaction.get(requestRef);
         if (existingRequest.exists()) {
           const data: any = existingRequest.data();
@@ -399,7 +510,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          university: userData.university,
+          university: rideUniversity,
           rideId: ride.id,
           requestId: `${ride.id}_${user.uid}`,
           passengerId: user.uid,
@@ -424,7 +535,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          university: userData.university,
+          university: rideUniversity,
           rideId: ride.id,
           requestId: `${ride.id}_${user.uid}`,
           passengerId: user.uid,
@@ -452,7 +563,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
           'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          university: userData.university,
+          university: rideUniversity,
           rideId: ride.id,
           requestId: `${ride.id}_${user.uid}`,
           cancelledBy: user.uid,
@@ -484,9 +595,9 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
       (async () => {
         setSearching(true);
         try {
-          const bounds = L.latLngBounds(ride.route as LatLngExpression[]);
-          const sw = bounds.getSouthWest();
-          const ne = bounds.getNorthEast();
+          const bounds = getRouteBounds(ride.route as LatLngExpression[]);
+          const sw = { lat: bounds[0][0], lng: bounds[0][1] };
+          const ne = { lat: bounds[1][0], lng: bounds[1][1] };
           const viewbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
           const res = await fetch(`/api/nominatim/search?q=${encodeURIComponent(searchQuery)}&viewbox=${encodeURIComponent(viewbox)}&limit=6`);
           if (!res.ok) { setSearchResults([]); setSearching(false); return; }
@@ -540,14 +651,13 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         hideUniversity={userData?.university === ride.university}
         stops={stopsForViewer}
         driverVerified={ride.driverInfo?.isVerified || ride.driverInfo?.universityEmailVerified || false}
-        statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
+        statusLabel={isAcceptedRequest ? 'Accepted' : undefined}
         onViewRoute={() => setOpenView(true)}
         onViewStops={() => setOpenStops(true)}
         onCardClick={() => setOpenDetail(true)}
         onGoogleMaps={() => {
           const opened = openGoogleMapsRoute({
             route: ride.route,
-            stops: ride.stops,
             fromName: ride.from,
             toName: ride.to,
             travelMode: ride.transportMode === 'bike' ? 'bicycling' : 'driving',
@@ -577,36 +687,16 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
             <DialogTitle>Route from {start} to {end}</DialogTitle>
           </DialogHeader>
           <div className="h-[60vh] w-full relative">
-            <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
+            <MapContainer bounds={getRouteBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
           <p className="sr-only" id="route-desc">Route preview for selected ride.</p>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
               <Polyline positions={ride.route as LatLngExpression[]} color="#60A5FA" weight={4} opacity={0.9} />
               {ride.route && ride.route.length > 0 && (
                 <>
-                  <Marker 
-                    position={ride.route[0] as any}
-                    icon={L.icon({
-                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                      iconSize: [25, 41],
-                      iconAnchor: [12, 41],
-                      popupAnchor: [1, -34],
-                      shadowSize: [41, 41]
-                    })}
-                  >
+                  <Marker position={ride.route[0] as any}>
                     <Tooltip>Start: {start}</Tooltip>
                   </Marker>
-                  <Marker 
-                    position={ride.route[ride.route.length - 1] as any}
-                    icon={L.icon({
-                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                      iconSize: [25, 41],
-                      iconAnchor: [12, 41],
-                      popupAnchor: [1, -34],
-                      shadowSize: [41, 41]
-                    })}
-                  >
+                  <Marker position={ride.route[ride.route.length - 1] as any}>
                     <Tooltip>End: {end}</Tooltip>
                   </Marker>
                 </>
@@ -633,7 +723,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
             <StopsViewer 
               stops={stopsForViewer} 
               routePolyline={ride.routePolyline}
-              routeCoordinates={ride.routePolyline ? decodePolyline(ride.routePolyline) : undefined}
+              routeCoordinates={routeCoordinatesForStops}
               isCreator={false}
               triggerText=""
               getAuthToken={user ? () => user.getIdToken() : undefined}
@@ -662,114 +752,6 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
           <DialogHeader>
             <DialogTitle>{isFromUniversity ? 'Select Drop Point' : 'Select Pickup Point'}</DialogTitle>
           </DialogHeader>
-
-          {/* Request Status Display */}
-          {isAcceptedRequest && existingRequest && (
-            <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-green-900 dark:text-green-100">Request Accepted! ✅</h3>
-                {existingRequest.timerType !== 'none' && confirmCountdown && confirmCountdown !== 'waiting' && (
-                  <span className="text-sm font-mono text-green-700 dark:text-green-300">
-                    {confirmCountdown}
-                  </span>
-                )}
-              </div>
-              
-              {/* Smart timer messages based on timerType */}
-              {existingRequest.timerType === 'short' && !existingRequest.confirmLater && (
-                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                  🚗 <strong>Ride starting soon!</strong> Please confirm within {confirmCountdown ? `${confirmCountdown}` : '2-3 minutes'} to secure your seat.
-                </p>
-              )}
-              {existingRequest.timerType === 'medium' && !existingRequest.confirmLater && (
-                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                  ⏰ <strong>Confirm within 30 minutes.</strong> Driver Ali is waiting for your confirmation.
-                </p>
-              )}
-              {existingRequest.timerType === 'none' && !existingRequest.confirmLater && (
-                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                  📅 <strong>This ride is tomorrow or later.</strong> You can confirm anytime before pickup. Take your time!
-                </p>
-              )}
-              {existingRequest.confirmLater && (
-                <p className="text-sm text-blue-800 dark:text-blue-200 mb-3 bg-blue-50 dark:bg-blue-900/20 p-2 rounded border border-blue-200 dark:border-blue-800">
-                  ⏸️ <strong>Confirm Later:</strong> You chose to confirm later. We will remind you 30 minutes before pickup.
-                </p>
-              )}
-              
-              {showConfirmWarning ? (
-                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 p-3 rounded-md mb-3">
-                  <p className="text-sm text-amber-900 dark:text-amber-100 mb-2">
-                    ⚠️ <strong>Important:</strong> Confirming this ride will automatically cancel all your other pending and accepted requests for rides around the same time.
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleConfirmRequest}
-                      disabled={loading}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
-                    >
-                      {loading ? 'Confirming...' : 'Yes, Confirm This Ride'}
-                    </button>
-                    <button
-                      onClick={() => setShowConfirmWarning(false)}
-                      className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 text-sm"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {/* Show Confirm Later option for non-urgent rides (medium/none timer types) */}
-                  {!existingRequest.confirmLater && (existingRequest.timerType === 'medium' || existingRequest.timerType === 'none') && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setShowConfirmWarning(true)}
-                        disabled={loading}
-                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
-                      >
-                        Confirm Now
-                      </button>
-                      <button
-                        onClick={handleConfirmLater}
-                        disabled={loading}
-                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
-                      >
-                        {loading ? 'Setting...' : 'Confirm Later'}
-                      </button>
-                      <button
-                        onClick={() => setShowCancelDialog(true)}
-                        disabled={cancelling}
-                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
-                      >
-                        {cancelling ? 'Cancelling...' : 'Cancel'}
-                      </button>
-                    </div>
-                  )}
-                  
-                  {/* For urgent rides or if already confirmed later, show standard buttons */}
-                  {(existingRequest.confirmLater || existingRequest.timerType === 'short') && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setShowConfirmWarning(true)}
-                        disabled={loading}
-                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
-                      >
-                        Confirm Ride
-                      </button>
-                      <button
-                        onClick={() => setShowCancelDialog(true)}
-                        disabled={cancelling}
-                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
-                      >
-                        {cancelling ? 'Cancelling...' : 'Cancel'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
 
           {isPendingRequest && existingRequest && (
             <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -812,7 +794,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
                       const lat = Number(r.lat || r.latitude || (r.center && r.center.lat));
                       const lon = Number(r.lon || r.longitude || (r.center && r.center.lng));
                       if (!lat || !lon) { toast({ variant: 'destructive', title: 'Invalid result' }); return; }
-                      const pt = L.latLng(lat, lon);
+                      const pt = { lat, lng: lon } as LatLng;
                       if (!isPointNearRoute(pt, ride.route as LatLngExpression[], 0.005)) {
                         toast({ variant: 'destructive', title: 'Not on route', description: 'Selected place is not sufficiently close to the route.' });
                         return;
@@ -829,37 +811,17 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
               )}
             </div>
 
-            <MapContainer bounds={L.latLngBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
+            <MapContainer bounds={getRouteBounds(ride.route as LatLngExpression[])} style={{ height: '60vh', width: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' />
               <Polyline positions={ride.route as LatLngExpression[]} color="#60A5FA" weight={4} opacity={0.9} />
 
               {/* Start and End Markers */}
               {ride.route && ride.route.length > 0 && (
                 <>
-                  <Marker 
-                    position={ride.route[0] as any}
-                    icon={L.icon({
-                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                      iconSize: [25, 41],
-                      iconAnchor: [12, 41],
-                      popupAnchor: [1, -34],
-                      shadowSize: [41, 41]
-                    })}
-                  >
+                  <Marker position={ride.route[0] as any}>
                     <Tooltip>Start: {start}</Tooltip>
                   </Marker>
-                  <Marker 
-                    position={ride.route[ride.route.length - 1] as any}
-                    icon={L.icon({
-                      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                      iconSize: [25, 41],
-                      iconAnchor: [12, 41],
-                      popupAnchor: [1, -34],
-                      shadowSize: [41, 41]
-                    })}
-                  >
+                  <Marker position={ride.route[ride.route.length - 1] as any}>
                     <Tooltip>End: {end}</Tooltip>
                   </Marker>
                 </>
@@ -920,7 +882,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         transport={ride.transportMode || ride.transport}
         university={ride.universe}
         hideUniversity={userData?.university === ride.university}
-        statusLabel={isAcceptedRequest && confirmCountdown ? `Accepted — confirm within ${confirmCountdown}` : undefined}
+        statusLabel={isAcceptedRequest ? 'Accepted' : undefined}
         onViewStops={() => {
           setOpenDetail(false);
           setOpenStops(true);

@@ -280,7 +280,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         {/* Total Earnings */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -288,12 +288,12 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
           transition={{ delay: 0.1 }}
         >
           <Card className="bg-gradient-to-br from-emerald-900/40 to-gray-800/50 border-emerald-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign className="w-5 h-5 text-emerald-400" />
-                <span className="text-sm text-gray-400">Total Earnings</span>
+                <span className="text-xs sm:text-sm text-gray-400">Total Earnings</span>
               </div>
-              <p className="text-2xl font-bold text-emerald-400">
+              <p className="text-xl sm:text-2xl font-bold text-emerald-400 break-words">
                 {formatCurrency(analytics.totalEarnings)}
               </p>
             </CardContent>
@@ -307,13 +307,13 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
           transition={{ delay: 0.2 }}
         >
           <Card className="bg-gradient-to-br from-yellow-900/40 to-gray-800/50 border-yellow-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Star className="w-5 h-5 text-yellow-400" />
-                <span className="text-sm text-gray-400">Average Rating</span>
+                <span className="text-xs sm:text-sm text-gray-400">Average Rating</span>
               </div>
               <div className="flex items-center gap-2">
-                <p className="text-2xl font-bold text-yellow-400">
+                <p className="text-xl sm:text-2xl font-bold text-yellow-400">
                   {analytics.averageRating.toFixed(1)}
                 </p>
                 {renderStars(Math.round(analytics.averageRating))}
@@ -332,12 +332,12 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
           transition={{ delay: 0.3 }}
         >
           <Card className="bg-gradient-to-br from-blue-900/40 to-gray-800/50 border-blue-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Car className="w-5 h-5 text-blue-400" />
-                <span className="text-sm text-gray-400">Rides Completed</span>
+                <span className="text-xs sm:text-sm text-gray-400">Rides Completed</span>
               </div>
-              <p className="text-2xl font-bold text-blue-400">
+              <p className="text-xl sm:text-2xl font-bold text-blue-400">
                 {analytics.totalRidesCompleted}
               </p>
             </CardContent>
@@ -351,12 +351,12 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
           transition={{ delay: 0.4 }}
         >
           <Card className="bg-gradient-to-br from-purple-900/40 to-gray-800/50 border-purple-700/30">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Users className="w-5 h-5 text-purple-400" />
-                <span className="text-sm text-gray-400">Passengers</span>
+                <span className="text-xs sm:text-sm text-gray-400">Passengers</span>
               </div>
-              <p className="text-2xl font-bold text-purple-400">
+              <p className="text-xl sm:text-2xl font-bold text-purple-400">
                 {analytics.totalPassengersServed}
               </p>
             </CardContent>
@@ -406,7 +406,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
       
       {/* Recent Rides */}
       <Card className="bg-gray-800/50 border-gray-700">
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
               <Calendar className="w-5 h-5 text-emerald-400" />
@@ -425,7 +425,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
               processCompletedRides();
             }}
             disabled={isProcessing}
-            className="text-gray-400 hover:text-white"
+            className="text-gray-400 hover:text-white self-start sm:self-auto"
           >
             {isProcessing ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -452,19 +452,19 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: index * 0.05 }}
-                    className="flex items-center justify-between p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 transition-colors"
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-white truncate">
                         {ride.from} → {ride.to}
                       </p>
-                      <div className="flex items-center gap-3 text-xs text-gray-400 mt-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 mt-1">
                         <span>{formatDate(ride.date)}</span>
                         <span>•</span>
                         <span>{ride.bookedSeats} passenger{ride.bookedSeats !== 1 ? 's' : ''}</span>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-left sm:text-right">
                       <p className="text-emerald-400 font-semibold">
                         {formatCurrency(ride.earnings)}
                       </p>

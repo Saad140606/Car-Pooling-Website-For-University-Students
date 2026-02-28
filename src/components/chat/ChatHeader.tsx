@@ -6,11 +6,12 @@ import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, Dialog
 import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { isUserVerified } from '@/lib/verificationUtils';
 
-export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { meta: any, onStartCall?: (mode: 'audio'|'video') => void, onHangup?: () => void, calling?: boolean }) {
+export default function ChatHeader({ meta, university, onStartCall, onHangup, calling }: { meta: any, university?: string, onStartCall?: (mode: 'audio'|'video') => void, onHangup?: () => void, calling?: boolean }) {
   const firestore = useFirestore();
   const { user } = useUser();
   const [providerContact, setProviderContact] = useState<string | null>(null);
   const [passengerContact, setPassengerContact] = useState<string | null>(null);
+  const [fallbackOtherUser, setFallbackOtherUser] = useState<any>(null);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -23,8 +24,13 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
   const otherUserDetails = isCurrentUserPassenger 
     ? (meta?.providerDetails || meta?.driverDetails) 
     : meta?.passengerDetails;
-  
-  const otherUserName = otherUserDetails?.fullName || otherUserDetails?.name || 'Chat Partner';
+
+  const effectiveOtherUser = otherUserDetails || fallbackOtherUser;
+  const otherUserName =
+    effectiveOtherUser?.fullName ||
+    effectiveOtherUser?.name ||
+    meta?.otherUserName ||
+    'User';
   
   const initials = otherUserName.split(' ').map((n: string) => n[0]).slice(0, 2).join('');
 
@@ -66,6 +72,43 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
   }, [firestore, meta]);
 
   useEffect(() => {
+    let mounted = true;
+    async function fetchFallbackOtherUser() {
+      if (!firestore || !user?.uid || !meta) return;
+      const hasResolvedName = !!(otherUserDetails?.fullName || otherUserDetails?.name);
+      if (hasResolvedName) {
+        if (mounted) setFallbackOtherUser(null);
+        return;
+      }
+
+      const candidateId =
+        (meta?.passengerId && meta.passengerId !== user.uid && meta.passengerId) ||
+        ((meta?.providerId || meta?.driverId) && (meta?.providerId || meta?.driverId) !== user.uid && (meta?.providerId || meta?.driverId)) ||
+        (Array.isArray(meta?.participants)
+          ? meta.participants.find((participantId: string) => participantId !== user.uid)
+          : null);
+
+      if (!candidateId) return;
+
+      const tryUniversities = [university, meta?.university, 'fast', 'ned', 'karachi'].filter(Boolean);
+      for (const uni of tryUniversities) {
+        try {
+          const userSnap = await getDoc(doc(firestore, 'universities', String(uni), 'users', candidateId));
+          if (userSnap.exists()) {
+            if (mounted) setFallbackOtherUser(userSnap.data());
+            return;
+          }
+        } catch (_) {
+          // ignore next university
+        }
+      }
+    }
+
+    fetchFallbackOtherUser();
+    return () => { mounted = false; };
+  }, [firestore, meta, user?.uid, otherUserDetails?.fullName, otherUserDetails?.name]);
+
+  useEffect(() => {
     let stream: MediaStream | null = null;
     if (!showVideoPreview) return () => {};
     (async () => {
@@ -105,7 +148,7 @@ export default function ChatHeader({ meta, onStartCall, onHangup, calling }: { m
           <div className="mb-1">
             <UserNameWithBadge 
               name={otherUserName} 
-              verified={isUserVerified(otherUserDetails)}
+              verified={isUserVerified(effectiveOtherUser)}
               size="md"
               truncate
             />

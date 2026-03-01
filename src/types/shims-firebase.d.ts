@@ -10,6 +10,7 @@ declare module 'firebase/auth' {
   export function onAuthStateChanged(...args: any[]): any;
   export function createUserWithEmailAndPassword(...args: any[]): any;
   export function signInWithEmailAndPassword(...args: any[]): any;
+  export function signInWithPopup(...args: any[]): any;
   export function sendEmailVerification(...args: any[]): any;
   export function signOut(...args: any[]): any;
   export function setPersistence(...args: any[]): any;
@@ -21,6 +22,7 @@ declare module 'firebase/auth' {
   export function updateProfile(...args: any[]): any;
   export function reauthenticateWithCredential(...args: any[]): any;
   export const EmailAuthProvider: any;
+  export const GoogleAuthProvider: any;
   export function updatePassword(...args: any[]): any;
 }
 

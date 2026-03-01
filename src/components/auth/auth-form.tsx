@@ -8,12 +8,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   createUserWithEmailAndPassword,
+  GoogleAuthProvider,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { setPendingUniversity, getPendingUniversity, getPendingGender, clearPendingUniversity, clearPendingGender, isValidUniversity } from "@/lib/university";
 import { getPendingBooking, clearPendingBooking } from '@/lib/bookings';
+import { getAccountLockState, toFirestoreLockTimestamp } from "@/lib/accountLock";
 
 import { ArrowRight, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 
@@ -77,6 +80,209 @@ export function AuthForm({ university, action }: AuthFormProps) {
       consent: false,
     },
   });
+
+  const detectUniversityFromEmail = (email: string): "ned" | "fast" | "karachi" | null => {
+    const lowerEmail = email.toLowerCase().trim();
+
+    if (lowerEmail.endsWith(`@${universityConfig.ned.domain}`)) return "ned";
+    if (lowerEmail.endsWith(`@${universityConfig.fast.domain}`)) return "fast";
+    if (lowerEmail.endsWith(`@${universityConfig.karachi.domain}`)) return "karachi";
+
+    return null;
+  };
+
+  async function onGoogleSignIn() {
+    const submitStartMs = performance.now();
+    setLoading(true);
+
+    if (!auth || !firestore) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Firebase not initialized. Please try again later.",
+      });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      const cred = await signInWithPopup(auth, provider);
+      const u = cred.user;
+      const selectedUni = university;
+      const normalizedEmail = (u.email || "").toLowerCase().trim();
+
+      if (!normalizedEmail) {
+        try { await signOut(auth); } catch (_) {}
+        toast({
+          variant: "destructive",
+          title: "Sign-In Failed",
+          description: "Google account email is required to continue.",
+        });
+        return;
+      }
+
+      const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (adminEmails.includes(normalizedEmail)) {
+        try { await signOut(auth); } catch (_) {}
+        toast({
+          variant: "destructive",
+          title: "Access Denied",
+          description: "Admin accounts cannot login through university pages. Please contact support.",
+        });
+        return;
+      }
+
+      const emailUniversity = detectUniversityFromEmail(normalizedEmail);
+      if (!emailUniversity) {
+        try { await signOut(auth); } catch (_) {}
+        toast({
+          variant: "destructive",
+          title: "University Email Required",
+          description: `Please sign in using your ${config.name} Google account (${config.domain}).`,
+        });
+        return;
+      }
+
+      if (emailUniversity !== selectedUni) {
+        try { await signOut(auth); } catch (_) {}
+        const uniName = universityConfig[emailUniversity].name;
+        toast({
+          variant: "destructive",
+          title: "Wrong University Portal",
+          description: `This Google account is associated with ${uniName}. Please sign in through the correct portal.`,
+        });
+        return;
+      }
+
+      let serverResult: any = null;
+      try {
+        const idToken = await u.getIdToken();
+        const res = await fetch('/api/admin/isMember', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${idToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ selectedUni }),
+        });
+        if (res.ok) {
+          serverResult = await res.json();
+        }
+      } catch (err) {
+        console.error('Error checking membership for Google sign-in:', err);
+      }
+
+      if (serverResult && serverResult.isMember && serverResult.university !== selectedUni) {
+        try { await signOut(auth); } catch (_) {}
+        const registeredUni = serverResult.registeredIn || serverResult.university;
+        const uniName = registeredUni === 'fast' ? 'FAST University' : registeredUni === 'karachi' ? 'Karachi University' : 'NED University';
+        toast({
+          variant: 'destructive',
+          title: 'Wrong University Portal',
+          description: `This Google account is registered with ${uniName} portal. Please sign in through the correct university portal.`,
+        });
+        return;
+      }
+
+      const universityUserRef = doc(firestore, 'universities', selectedUni, 'users', u.uid);
+      const universityUserSnap = await getDoc(universityUserRef);
+      const existingProfile = universityUserSnap.exists() ? (universityUserSnap.data() as any) : null;
+
+      if (existingProfile) {
+        const lockState = getAccountLockState(existingProfile);
+        if (lockState.locked) {
+          if (lockState.shouldPersistLock && lockState.lockUntil) {
+            try {
+              await updateDoc(universityUserRef, {
+                accountLockUntil: toFirestoreLockTimestamp(lockState.lockUntil),
+                accountLockDays: 7,
+                accountLockReason: 'many_cancellations',
+              });
+            } catch (e) {
+              console.error('Failed to persist derived account lock for Google sign-in:', e);
+            }
+          }
+
+          try { await signOut(auth); } catch (_) {}
+          toast({
+            variant: 'destructive',
+            title: 'Account Locked',
+            description: lockState.message || 'Your account is temporarily locked due to multiple cancellations.',
+          });
+          return;
+        }
+      }
+
+      if (!universityUserSnap.exists()) {
+        await setDoc(
+          universityUserRef,
+          {
+            uid: u.uid,
+            name: u.displayName || '',
+            fullName: u.displayName || '',
+            email: u.email || null,
+            university: selectedUni,
+            role: 'passenger',
+            createdAt: serverTimestamp(),
+            emailVerified: true,
+            universityEmailVerified: true,
+            authProvider: 'google',
+          },
+          { merge: true }
+        );
+      } else {
+        // Ensure existing Google users are treated as verified without OTP.
+        await setDoc(
+          universityUserRef,
+          {
+            emailVerified: true,
+            universityEmailVerified: true,
+            authProvider: 'google',
+          },
+          { merge: true }
+        );
+      }
+
+      toast({
+        title: 'Signed In',
+        description: 'Signed in with Google successfully.',
+      });
+
+      try {
+        const pending = getPendingBooking();
+        if (pending && pending.rideId && pending.university && pending.university === selectedUni) {
+          clearPendingBooking();
+          router.push(`/dashboard/rides?pendingBooking=${encodeURIComponent(pending.rideId)}`);
+          return;
+        }
+      } catch (_) {}
+
+      router.push('/dashboard/rides');
+      return;
+    } catch (error: any) {
+      if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
+        toast({
+          title: 'Google Sign-In Cancelled',
+          description: 'Please try again when you are ready.',
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Google Sign-In Failed',
+          description: error?.message || 'Could not sign in with Google. Please try again.',
+        });
+      }
+    } finally {
+      console.log('[AuthForm][perf][google] university=', university, 'total_ms=', Math.round(performance.now() - submitStartMs));
+      setLoading(false);
+    }
+  }
 
   async function onSubmit(values: AuthFormValues) {
     const submitStartMs = performance.now();
@@ -277,10 +483,41 @@ export function AuthForm({ university, action }: AuthFormProps) {
         try {
           let emailVerifiedFlag = false;
           let userExistsInSelectedUni = false;
-          const uniUserSnap = await getDoc(doc(firestore, 'universities', selectedUni, 'users', u.uid));
+          const uniUserRef = doc(firestore, 'universities', selectedUni, 'users', u.uid);
+          const uniUserSnap = await getDoc(uniUserRef);
           if (uniUserSnap.exists()) {
             userExistsInSelectedUni = true;
             const profile = uniUserSnap.data() as any;
+
+            if (!isAdminAccount) {
+              const lockState = getAccountLockState(profile);
+              if (lockState.locked) {
+                if (lockState.shouldPersistLock && lockState.lockUntil) {
+                  try {
+                    await updateDoc(uniUserRef, {
+                      accountLockUntil: toFirestoreLockTimestamp(lockState.lockUntil),
+                      accountLockDays: 7,
+                      accountLockReason: 'many_cancellations',
+                    });
+                  } catch (lockErr) {
+                    console.error('[AUTH] Failed to persist account lock:', lockErr);
+                  }
+                }
+
+                try {
+                  await signOut(auth);
+                } catch (_) {}
+
+                toast({
+                  variant: 'destructive',
+                  title: 'Account Locked',
+                  description: lockState.message || 'Your account is locked due to multiple cancellations.',
+                });
+                setLoading(false);
+                return;
+              }
+            }
+
             emailVerifiedFlag = Boolean(profile?.universityEmailVerified ?? profile?.emailVerified);
           }
 
@@ -643,6 +880,28 @@ export function AuthForm({ university, action }: AuthFormProps) {
                 </>
               )}
             </Button>
+
+            <>
+              <div className="relative my-1">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border/60" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase tracking-wide">
+                  <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full rounded-full"
+                size="lg"
+                onClick={onGoogleSignIn}
+                disabled={loading || (!isLogin && !form.watch('consent'))}
+              >
+                <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs font-semibold">G</span>
+                {isLogin ? 'Sign in with Google' : 'Continue with Google'}
+              </Button>
+            </>
           </form>
         </Form>
         <div className="mt-6 text-center text-sm">

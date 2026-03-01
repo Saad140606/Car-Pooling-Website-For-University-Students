@@ -2,11 +2,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, type User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { useToast } from '@/hooks/use-toast';
-import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getPendingUniversity, clearPendingUniversity, isValidUniversity, getPendingGender, clearPendingGender, getSelectedUniversity, setSelectedUniversity } from '@/lib/university';
 import { saveSession, clearSession } from '@/lib/sessionManager';
+import { getAccountLockState, toFirestoreLockTimestamp } from '@/lib/accountLock';
 
 import { useAuth, useFirestore } from '../provider';
 import { useDoc } from '../firestore/use-doc';
@@ -19,6 +20,8 @@ export function useUser() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const lockCheckInProgressRef = useRef(false);
+  const lastLockToastKeyRef = useRef<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -124,6 +127,49 @@ export function useUser() {
 
   const data = userData || null;
   const dataLoading = userLoading;
+
+  useEffect(() => {
+    if (!auth || !firestore || !user || !data) return;
+    if (lockCheckInProgressRef.current) return;
+
+    const lockState = getAccountLockState(data);
+    if (!lockState.locked || !lockState.lockUntil) return;
+
+    lockCheckInProgressRef.current = true;
+    const userUniversity = (data as any)?.university || getSelectedUniversity() || getPendingUniversity() || 'fast';
+
+    (async () => {
+      try {
+        if (lockState.shouldPersistLock) {
+          try {
+            await updateDoc(doc(firestore, 'universities', userUniversity, 'users', user.uid), {
+              accountLockUntil: toFirestoreLockTimestamp(lockState.lockUntil),
+              accountLockDays: 7,
+              accountLockReason: 'many_cancellations',
+            });
+          } catch (persistErr) {
+            console.error('[useUser] Failed to persist derived account lock:', persistErr);
+          }
+        }
+
+        const toastKey = `${user.uid}:${lockState.lockUntil.getTime()}`;
+        if (lastLockToastKeyRef.current !== toastKey) {
+          lastLockToastKeyRef.current = toastKey;
+          toast({
+            variant: 'destructive',
+            title: 'Account Locked',
+            description: lockState.message || 'Your account is locked due to multiple cancellations.',
+          });
+        }
+
+        await signOut(auth);
+      } catch (err) {
+        console.error('[useUser] Account lock enforcement failed:', err);
+      } finally {
+        lockCheckInProgressRef.current = false;
+      }
+    })();
+  }, [auth, firestore, user, data, toast]);
 
   return {
     user,

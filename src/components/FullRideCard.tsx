@@ -12,6 +12,7 @@ import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore
 import { decodePolyline } from '@/lib/route';
 import { detectUniversityFromString } from '@/lib/universities';
 import { parseTimestamp } from '@/lib/timestampUtils';
+import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 import { openGoogleMapsRoute } from '@/lib/googleMapsRoute';
 
@@ -419,6 +420,15 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
       toast({ variant: 'destructive', title: 'Booking Not Allowed', description: `This ride is reserved for ${ride.genderAllowed} riders.` });
       return false;
     }
+    const activeLock = getActiveRideLock(userData);
+    if (activeLock) {
+      toast({
+        variant: 'destructive',
+        title: 'Account Locked',
+        description: formatRideLockMessage(activeLock.lockUntil, activeLock.lockDays),
+      });
+      return false;
+    }
     setLoading(true);
     const pickup = pt || pickupPoint;
     let pickupPlaceName: string | null = null;
@@ -487,14 +497,33 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
       setPickupPlaceName(null);
       return true;
     } catch (err: any) {
-      if (err?.message?.includes('3 active requests')) {
+      const code = err?.code || '';
+      const message = err?.message || String(err);
+
+      if (code === 'permission-denied' || String(message).toLowerCase().includes('permission')) {
+        const activeLockOnFailure = getActiveRideLock(userData);
+        if (activeLockOnFailure) {
+          toast({
+            variant: 'destructive',
+            title: 'Account Locked',
+            description: formatRideLockMessage(activeLockOnFailure.lockUntil, activeLockOnFailure.lockDays),
+          });
+          return false;
+        }
+
+        toast({
+          variant: 'destructive',
+          title: 'Request Failed — Permission Denied',
+          description: 'Your account does not currently have permission to create this request. Please sign out/in and try again.',
+        });
+      } else if (message.includes('3 active requests')) {
         toast({ 
           variant: 'destructive', 
           title: 'Request Limit Reached', 
           description: 'Please confirm or cancel an existing request before requesting another ride.' 
         });
       } else {
-        toast({ variant: 'destructive', title: 'Booking Failed', description: err?.message || String(err) });
+        toast({ variant: 'destructive', title: 'Booking Failed', description: message });
       }
       return false;
     } finally {

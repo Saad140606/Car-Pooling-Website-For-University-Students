@@ -135,7 +135,7 @@ export async function evaluateAndApplyRoleCancellationPolicy(
     ? Math.round((cancelledRides / totalRides) * 100)
     : 0;
 
-  const exceedsThreshold = totalRides >= minimumRides && cancellationRate > thresholdRate;
+  const exceedsThreshold = totalRides >= minimumRides && cancellationRate >= thresholdRate;
   const currentStrike = Number(policyData?.strikeLevel || 0);
   const nextStrike = exceedsThreshold ? (currentStrike >= 1 ? 2 : 1) : currentStrike;
   const lockDays = exceedsThreshold ? (nextStrike === 1 ? 7 : 14) : 0;

@@ -191,7 +191,7 @@ export function shouldLockAccount(
   thresholdRate: number = 35, // 35% default
   minimumParticipations: number = 3
 ): boolean {
-  return totalParticipations >= minimumParticipations && cancellationRate > thresholdRate;
+  return totalParticipations >= minimumParticipations && cancellationRate >= thresholdRate;
 }
 
 /**

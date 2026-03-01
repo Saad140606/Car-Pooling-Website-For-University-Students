@@ -3,12 +3,38 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isAuth() { return request.auth != null; }
     function isAdmin() { return isAuth() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function hasLegacyCancellationThreshold(userData) {
+      return userData.totalParticipations is int
+        && userData.totalCancellations is int
+        && userData.totalParticipations >= 3
+        && (userData.totalCancellations * 100) >= (35 * userData.totalParticipations);
+    }
+    function hasRoleCancellationThreshold(userData) {
+      return (
+        userData.driverCancellationPolicy is map
+        && userData.driverCancellationPolicy.totalRidesWindow is int
+        && userData.driverCancellationPolicy.cancellationRate is int
+        && userData.driverCancellationPolicy.totalRidesWindow >= 3
+        && userData.driverCancellationPolicy.cancellationRate >= 35
+      ) || (
+        userData.passengerCancellationPolicy is map
+        && userData.passengerCancellationPolicy.totalRidesWindow is int
+        && userData.passengerCancellationPolicy.cancellationRate is int
+        && userData.passengerCancellationPolicy.totalRidesWindow >= 3
+        && userData.passengerCancellationPolicy.cancellationRate >= 35
+      );
+    }
+    function hasCancellationThreshold(userData) {
+      return hasRoleCancellationThreshold(userData) || hasLegacyCancellationThreshold(userData);
+    }
     function isRideActionLocked(univId) {
       return isAuth()
         && exists(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid))
         && (
-          get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data.accountLockUntil is timestamp
+          get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data.accountLockReason == 'many_cancellations'
+          && get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data.accountLockUntil is timestamp
           && request.time < get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data.accountLockUntil
+          && hasCancellationThreshold(get(/databases/$(database)/documents/universities/$(univId)/users/$(request.auth.uid)).data)
         );
     }
 

@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Route, Calendar, Users, Search as SearchIcon } from 'lucide-react';
@@ -885,7 +885,11 @@ export default function RidesPage() {
   // Lightweight wrapper to stabilize hooks at this component boundary.
   // The heavy logic and all hooks live inside `RidesPageInner` so React's
   // hook order in the exported component remains stable across renders.
-  return <RidesPageInner />;
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading rides...</div>}>
+      <RidesPageInner />
+    </Suspense>
+  );
 }
 
 function RidesPageInner() {

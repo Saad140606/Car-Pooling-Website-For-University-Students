@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { MapPin, Navigation2, ArrowRight, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Ride as RideType } from '@/lib/types';
+import { setPendingBooking } from '@/lib/bookings';
 
 interface RequestPickupModalProps {
   open: boolean;
@@ -43,6 +44,10 @@ export function RequestPickupModal({
 
     // Store the ride info and request type in session storage for use after login
     try {
+      setPendingBooking({
+        rideId: ride.id,
+        university,
+      });
       sessionStorage.setItem(
         'pendingRideRequest',
         JSON.stringify({

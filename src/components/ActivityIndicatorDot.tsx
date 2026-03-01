@@ -66,15 +66,18 @@ export function ActivityDot({
 
   if (!show) return null;
 
+  // Use a consistent offset that places the dot slightly outside the
+  // top-right (or other) corner so it's visible on dark backgrounds.
+  // Use a small white ring for contrast and a higher z-index.
   return (
     <span
-      className={`pointer-events-none absolute z-20 ${positionClasses[position]} ${color} rounded-full shadow-sm ring-2 ring-slate-950/90 transition-opacity duration-200 ease-out ${
+      className={`pointer-events-none absolute z-40 ${positionClasses[position]} ${color} rounded-full shadow-sm ring-2 ring-white/10 transition-opacity duration-200 ease-out ${
         pulse ? 'animate-pulse' : ''
       } ${className}`}
       style={{
         width: `${size}px`,
         height: `${size}px`,
-        transform: `translate(${position.includes('right') ? size / 2 : -size / 2}px, ${position.includes('bottom') ? size / 2 : -size / 2}px)`,
+        transform: 'translate(50%, -50%)',
       }}
       aria-label="Unread activity indicator"
       role="status"

@@ -11,6 +11,7 @@ import { addDoc, collection, serverTimestamp, doc, getDoc } from 'firebase/fires
 import { useRouter } from 'next/navigation';
 import type { Map as LeafletMap } from 'leaflet';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 import { Button } from '@/components/ui/button';
 import RouteEditor from '@/components/RouteEditor';
@@ -116,8 +117,8 @@ const MapComponent = forwardRef<MapComponentRef, {
     if (imageIconRef.current) return imageIconRef.current;
     if (typeof window === 'undefined') return null;
     try {
-      // Create a lucide-style MapPin SVG in a dark-blue color and use as data URL
-      const color = '#2b2f67';
+      // Create a lucide-style MapPin SVG in red color and use as data URL
+      const color = '#E84C3D';
       const pinSvg = `
         <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
           <path d='M21 10c0 7-9 12-9 12S3 17 3 10a9 9 0 1 1 18 0z' fill='none' stroke='${color}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' />
@@ -161,8 +162,8 @@ const MapComponent = forwardRef<MapComponentRef, {
       try {
           const pinSvg = `
             <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-              <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23FFD166' stroke='%23ffffff' stroke-width='1.2' />
-              <circle cx='12' cy='9' r='2.5' fill='%230b1220' />
+              <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23E84C3D' stroke='%23ffffff' stroke-width='1.2' />
+              <circle cx='12' cy='9' r='2.5' fill='%23ffffff' />
             </svg>
           `;
           const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
@@ -184,11 +185,11 @@ const MapComponent = forwardRef<MapComponentRef, {
       };
 
       // Pre-create a couple of icon styles to use across the map (avoid black default)
-      const yellowPinUrl = makePinDataUrl('#FFD166', '#0b1220');
-      const bluePinUrl = makePinDataUrl('#2563EB', '#ffffff');
+      const redPinUrl = makePinDataUrl('#E84C3D', '#ffffff');
+      const darkRedPinUrl = makePinDataUrl('#C93D33', '#ffffff');
 
-      const DEFAULT_PIN_ICON = L.icon({ iconUrl: yellowPinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
-      const ALT_PIN_ICON = L.icon({ iconUrl: bluePinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
+      const DEFAULT_PIN_ICON = L.icon({ iconUrl: redPinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
+      const ALT_PIN_ICON = L.icon({ iconUrl: darkRedPinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
 
       // Use public map marker image if available to avoid default black markers
       const IMAGE_MARKER_URL = '/map-marker.png';

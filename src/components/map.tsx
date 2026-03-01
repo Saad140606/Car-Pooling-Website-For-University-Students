@@ -10,33 +10,41 @@ if (typeof window !== 'undefined') {
     // Import Leaflet asynchronously to avoid SSR issues
     import('leaflet').then((L) => {
       try {
-        // UI-matching pin (primary accent with subtle stroke)
-        const pinSvg = `
-          <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 36'>
+        // Red/Pink custom pins matching the design in attachments
+        const createCustomPin = (color: string = '#E84C3D') => `
+          <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 48'>
             <defs>
               <filter id='shadow' x='-50%' y='-50%' width='200%' height='200%'>
-                <feGaussianBlur stdDeviation='1.2' />
+                <feDropShadow dx='0' dy='2' stdDeviation='2' flood-opacity='0.3' />
               </filter>
+              <linearGradient id='grad' x1='0%' y1='0%' x2='0%' y2='100%'>
+                <stop offset='0%' style='stop-color:${color};stop-opacity:1' />
+                <stop offset='100%' style='stop-color:#c93d33;stop-opacity:1' />
+              </linearGradient>
             </defs>
-            <path d='M12 2C8 2 5 5 5 9c0 6 7 25 7 25s7-19 7-25c0-4-3-7-7-7z' fill='%235B9BFF' stroke='%23ffffff' stroke-width='1.4' />
-            <circle cx='12' cy='10' r='3.3' fill='%230b1220' />
+            <path d='M16 2C9.9 2 5 6.9 5 13c0 10 11 33 11 33s11-23 11-33c0-6.1-4.9-11-11-11z' 
+              fill='url(#grad)' stroke='#ffffff' stroke-width='1.5' filter='url(#shadow)' />
+            <circle cx='16' cy='14' r='4' fill='#ffffff' opacity='0.9' />
           </svg>
         `;
-        const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+
+        const pinDataUrl = (color?: string) => 
+          `data:image/svg+xml;utf8,${encodeURIComponent(createCustomPin(color))}`;
+
         try {
+          // Set default icon to red pin
           (L as any).Icon.Default.mergeOptions({
-            iconRetinaUrl: pinDataUrl,
-            iconUrl: pinDataUrl,
+            iconRetinaUrl: pinDataUrl(),
+            iconUrl: pinDataUrl(),
             shadowUrl: '',
-            // Ensure stable positioning across zoom levels
-            iconSize: [24, 36],
-            iconAnchor: [12, 36],
-            popupAnchor: [0, -32],
+            iconSize: [32, 48],
+            iconAnchor: [16, 48],
+            popupAnchor: [0, -42],
+            tooltipAnchor: [16, -32],
           });
         } catch (e) {
           // ignore merge failure in unusual build environments
         }
-        // Remove DOM mutation hack; the proper icon options above keep anchors stable.
       } catch (_) {}
       try {
         const proto: any = (L as any).Map && (L as any).Map.prototype;
@@ -48,7 +56,6 @@ if (typeof window !== 'undefined') {
             } catch (e: any) {
               const msg = String(e?.message || e);
               if (msg.includes('being reused') || msg.includes('already initialized')) {
-                // swallow this error which occurs when React Strict Mode causes rapid mount/unmount
                 console.warn('Ignored Leaflet remove error:', msg);
                 return;
               }
@@ -62,6 +69,38 @@ if (typeof window !== 'undefined') {
       }
     }).catch(() => {});
   } catch (_) {}
+}
+
+// Export custom pin creator for use in components
+export const createMapPin = (color: string = '#E84C3D') => {
+  const svg = `
+    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 48'>
+      <defs>
+        <filter id='shadow' x='-50%' y='-50%' width='200%' height='200%'>
+          <feDropShadow dx='0' dy='2' stdDeviation='2' flood-opacity='0.3' />
+        </filter>
+        <linearGradient id='grad' x1='0%' y1='0%' x2='0%' y2='100%'>
+          <stop offset='0%' style='stop-color:${color};stop-opacity:1' />
+          <stop offset='100%' style='stop-color:${adjustColor(color, -30)};stop-opacity:1' />
+        </linearGradient>
+      </defs>
+      <path d='M16 2C9.9 2 5 6.9 5 13c0 10 11 33 11 33s11-23 11-33c0-6.1-4.9-11-11-11z' 
+        fill='url(#grad)' stroke='#ffffff' stroke-width='1.5' filter='url(#shadow)' />
+      <circle cx='16' cy='14' r='4' fill='#ffffff' opacity='0.9' />
+    </svg>
+  `;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+// Helper: adjust color brightness for gradient
+function adjustColor(color: string, amount: number) {
+  const usePound = color[0] === '#';
+  const col = usePound ? color.slice(1) : color;
+  const num = parseInt(col, 16);
+  const r = Math.max(0, Math.min(255, (num >> 16) + amount));
+  const g = Math.max(0, Math.min(255, (num >> 8 & 0x00FF) + amount));
+  const b = Math.max(0, Math.min(255, (num & 0x0000FF) + amount));
+  return (usePound ? '#' : '') + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1);
 }
 
 export const MapContainer = dynamic(

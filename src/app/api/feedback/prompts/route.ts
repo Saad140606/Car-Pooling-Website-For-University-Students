@@ -5,7 +5,8 @@ type University = 'fast' | 'ned' | 'karachi';
 
 const VALID_UNIVERSITIES: University[] = ['fast', 'ned', 'karachi'];
 const APP_FEEDBACK_INITIAL_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
-const APP_FEEDBACK_REPEAT_DELAY_MS = 5 * 24 * 60 * 60 * 1000;
+const APP_FEEDBACK_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
+const FIRST_RIDE_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 
 function parseUniversity(value: string | null): University | null {
   if (!value) return null;
@@ -85,30 +86,29 @@ export async function GET(req: NextRequest) {
     completedRidesCount = driverCompletedSnap.size + passengerCompletedSnap.size;
 
     const hasSubmittedFirstRide = Boolean(firstRideState.submittedAt || firstRideState.submitted === true);
-    const hasSkippedFirstRide = Boolean(firstRideState.skippedAt || firstRideState.skipped === true);
-    const hasDismissedFirstRide = Boolean(
-      firstRideState.dismissed === true ||
-      firstRideState.dismissedAt ||
-      firstRideState.doNotShowAgain === true
-    );
+    const firstRideLastPromptMs = toMs(firstRideState.lastPromptAt || firstRideState.skippedAt || firstRideState.updatedAt);
+    const firstRideExplicitNextPromptMs = toMs(firstRideState.nextPromptAt);
+    const nowMs = Date.now();
+    const firstRideNextPromptAtMs = firstRideExplicitNextPromptMs > 0
+      ? firstRideExplicitNextPromptMs
+      : (firstRideLastPromptMs > 0 ? firstRideLastPromptMs + FIRST_RIDE_REPEAT_DELAY_MS : 0);
 
     const shouldShowFirstRide =
       completedRidesCount >= 1 &&
       !hasSubmittedFirstRide &&
-      !hasSkippedFirstRide &&
-      !hasDismissedFirstRide;
+      nowMs >= firstRideNextPromptAtMs;
 
     const accountCreatedAtMs = toMs(userData.createdAt || userData.registeredAt);
-    const nowMs = Date.now();
 
     const hasSubmittedApp = Boolean(appFeedbackState.submittedAt);
     const lastPromptAtMs = toMs(appFeedbackState.lastPromptAt);
+    const explicitNextPromptAtMs = toMs(appFeedbackState.nextPromptAt);
     const firstEligibleAt = accountCreatedAtMs > 0
       ? accountCreatedAtMs + APP_FEEDBACK_INITIAL_DELAY_MS
       : nowMs + APP_FEEDBACK_INITIAL_DELAY_MS;
-    const nextPromptAt = lastPromptAtMs > 0
-      ? lastPromptAtMs + APP_FEEDBACK_REPEAT_DELAY_MS
-      : firstEligibleAt;
+    const nextPromptAt = explicitNextPromptAtMs > 0
+      ? explicitNextPromptAtMs
+      : (lastPromptAtMs > 0 ? lastPromptAtMs + APP_FEEDBACK_REPEAT_DELAY_MS : firstEligibleAt);
 
     const shouldShowAppFeedback = !hasSubmittedApp && nowMs >= nextPromptAt;
 
@@ -119,8 +119,7 @@ export async function GET(req: NextRequest) {
           shouldShow: shouldShowFirstRide,
           completedRidesCount,
           hasSubmitted: hasSubmittedFirstRide,
-          hasSkipped: hasSkippedFirstRide,
-          hasDismissed: hasDismissedFirstRide,
+          nextPromptAt: firstRideNextPromptAtMs,
         },
         appFeedback: {
           shouldShow: shouldShowAppFeedback,

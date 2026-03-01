@@ -61,10 +61,33 @@ export class FCMTokenManager {
       
       // Get the FCM token
       // Use the main PWA service worker to avoid scope conflicts.
-      let token = await getToken(messaging, {
-        vapidKey: VAPID_KEY,
-        serviceWorkerRegistration: registration,
-      });
+      let token: string | null = null;
+      try {
+        token = await getToken(messaging, {
+          vapidKey: VAPID_KEY,
+          serviceWorkerRegistration: registration,
+        });
+      } catch (err) {
+        // Handle AbortError/storage errors which can happen in some dev
+        // environments (disabled storage, incognito, corrupted subscription)
+        console.warn('[FCMTokenManager] getToken failed:', err);
+
+        const isAbort = (err as any)?.name === 'AbortError' || String(err).toLowerCase().includes('storage');
+        if (isAbort && registration) {
+          try {
+            // Attempt to clean up any stale push subscription and retry once
+            const sub = await registration.pushManager.getSubscription().catch(() => null);
+            if (sub) {
+              console.warn('[FCMTokenManager] Unsubscribing stale push subscription to clear storage');
+              await sub.unsubscribe().catch(() => {});
+            }
+            // Try again without explicitly passing the registration (let FCM manage it)
+            token = await getToken(messaging, { vapidKey: VAPID_KEY });
+          } catch (err2) {
+            console.warn('[FCMTokenManager] Retry getToken also failed:', err2);
+          }
+        }
+      }
 
       if (!token && registration) {
         try {

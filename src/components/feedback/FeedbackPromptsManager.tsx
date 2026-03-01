@@ -35,21 +35,6 @@ export default function FeedbackPromptsManager() {
   const [category, setCategory] = React.useState('');
   const [comment, setComment] = React.useState('');
 
-  const firstRideDismissedKey = React.useMemo(() => {
-    if (!user?.uid || !userData?.university) return null;
-    return `feedback:first_ride:dismissed:${user.uid}:${userData.university}`;
-  }, [user?.uid, userData?.university]);
-
-  const isFirstRideDismissedLocally = React.useCallback(() => {
-    if (typeof window === 'undefined' || !firstRideDismissedKey) return false;
-    return localStorage.getItem(firstRideDismissedKey) === '1';
-  }, [firstRideDismissedKey]);
-
-  const markFirstRideDismissedLocally = React.useCallback(() => {
-    if (typeof window === 'undefined' || !firstRideDismissedKey) return;
-    localStorage.setItem(firstRideDismissedKey, '1');
-  }, [firstRideDismissedKey]);
-
   const fetchPrompts = React.useCallback(async () => {
     if (!user || !userData?.university) return;
 
@@ -73,11 +58,6 @@ export default function FeedbackPromptsManager() {
 
       const prompts = data.prompts as PromptPayload;
       if (prompts.firstRide.shouldShow) {
-        if (isFirstRideDismissedLocally()) {
-          setOpen(false);
-          setActivePrompt(null);
-          return;
-        }
         setActivePrompt('first_ride');
         setOpen(true);
         return;
@@ -107,7 +87,7 @@ export default function FeedbackPromptsManager() {
     } finally {
       setIsLoading(false);
     }
-  }, [user, userData?.university, isFirstRideDismissedLocally]);
+  }, [user, userData?.university]);
 
   React.useEffect(() => {
     fetchPrompts();
@@ -163,10 +143,6 @@ export default function FeedbackPromptsManager() {
         description: 'Thank you for helping improve Campus Ride.',
       });
 
-      if (activePrompt === 'first_ride') {
-        markFirstRideDismissedLocally();
-      }
-
       resetForm();
       setOpen(false);
       setActivePrompt(null);
@@ -207,10 +183,6 @@ export default function FeedbackPromptsManager() {
         throw new Error(data?.error || 'Failed to skip prompt');
       }
 
-      if (activePrompt === 'first_ride') {
-        markFirstRideDismissedLocally();
-      }
-
       resetForm();
       setOpen(false);
       setActivePrompt(null);
@@ -230,16 +202,8 @@ export default function FeedbackPromptsManager() {
 
   const handleDialogOpenChange = React.useCallback(async (nextOpen: boolean) => {
     if (nextOpen || isSubmitting || !activePrompt) return;
-
-    if (activePrompt === 'first_ride') {
-      await handleSkip({ silent: true });
-      return;
-    }
-
-    resetForm();
-    setOpen(false);
-    setActivePrompt(null);
-  }, [isSubmitting, activePrompt]);
+    await handleSkip({ silent: true });
+  }, [isSubmitting, activePrompt, handleSkip]);
 
   if (isLoading || !activePrompt || !open) return null;
 

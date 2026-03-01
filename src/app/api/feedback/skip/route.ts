@@ -7,7 +7,7 @@ type University = 'fast' | 'ned' | 'karachi';
 
 const VALID_UNIVERSITIES: University[] = ['fast', 'ned', 'karachi'];
 const VALID_TYPES: FeedbackType[] = ['first_ride', 'app'];
-const APP_FEEDBACK_REPEAT_DELAY_MS = 5 * 24 * 60 * 60 * 1000;
+const PROMPT_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 
 function parseUniversity(value: unknown): University | null {
   if (typeof value !== 'string') return null;
@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
     const userRef = adminDb.doc(`universities/${university}/users/${authedUser.uid}`);
     const now = admin.firestore.Timestamp.now();
     const nowField = admin.firestore.FieldValue.serverTimestamp();
+    const nextPromptAt = admin.firestore.Timestamp.fromMillis(now.toMillis() + PROMPT_REPEAT_DELAY_MS);
 
     await adminDb.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
 
       if (type === 'first_ride') {
         const firstRide = feedback.firstRide || {};
-        if (firstRide.submittedAt || firstRide.skippedAt) {
+        if (firstRide.submittedAt) {
           return;
         }
 
@@ -76,9 +77,9 @@ export async function POST(req: NextRequest) {
               ...(firstRide || {}),
               skippedAt: nowField,
               skipped: true,
-              dismissed: true,
-              dismissedAt: nowField,
-              doNotShowAgain: true,
+              lastPromptAt: nowField,
+              nextPromptAt,
+              promptCount: Number(firstRide.promptCount || 0) + 1,
               updatedAt: nowField,
             },
           },
@@ -91,8 +92,6 @@ export async function POST(req: NextRequest) {
       if (appState.submittedAt) {
         return;
       }
-
-      const nextPromptAt = admin.firestore.Timestamp.fromMillis(now.toMillis() + APP_FEEDBACK_REPEAT_DELAY_MS);
 
       tx.set(
         userRef,

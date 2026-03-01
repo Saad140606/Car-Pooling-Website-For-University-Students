@@ -164,7 +164,40 @@ export async function POST(req: NextRequest) {
         updatedAt: now
       });
 
-      return { passenger: authenticatedUserId, tripKey: request.tripKey };
+      // ===== CREATE BOOKING DOCUMENT =====
+      // Create a booking document in the bookings collection for easy querying on the My Bookings page
+      const bookingId = requestId; // Use same ID for tracking
+      const bookingRef = db.doc(`universities/${validUniversity}/bookings/${bookingId}`);
+      tx.set(bookingRef, {
+        id: bookingId,
+        rideId: rideId,
+        passengerId: authenticatedUserId,
+        driverId: ride.driverId,
+        university: validUniversity,
+        status: 'CONFIRMED',
+        createdAt: request.createdAt || now,
+        confirmedAt: now,
+        updatedAt: now,
+        // Copy key data from request and ride for quick access
+        price: ride.price,
+        pickupPoint: request.pickupPoint,
+        pickupPlaceName: request.pickupPlaceName,
+        dropoffPlaceName: request.dropoffPlaceName,
+        passengerDetails: request.passengerDetails,
+        ride: {
+          id: ride.id,
+          from: ride.from,
+          to: ride.to,
+          departureTime: ride.departureTime,
+          route: ride.route,
+          routePolyline: ride.routePolyline,
+          driverInfo: ride.driverInfo,
+          driverId: ride.driverId,
+          availableSeats: ride.availableSeats,
+        }
+      });
+
+      return { passenger: authenticatedUserId, tripKey: request.tripKey, bookingId };
     });
 
     // After confirm, auto-cancel other requests for same passenger and tripKey

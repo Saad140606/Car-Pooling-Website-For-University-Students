@@ -5,7 +5,7 @@ import { adminAuth, adminDb } from '@/firebase/firebaseAdmin';
 type University = 'fast' | 'ned' | 'karachi';
 
 const VALID_UNIVERSITIES: University[] = ['fast', 'ned', 'karachi'];
-const APP_FEEDBACK_REPEAT_DELAY_MS = 5 * 24 * 60 * 60 * 1000;
+const APP_FEEDBACK_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 
 function parseUniversity(value: unknown): University | null {
   if (typeof value !== 'string') return null;

@@ -138,27 +138,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
         return;
       }
 
-      const emailUniversity = detectUniversityFromEmail(normalizedEmail);
-      if (!emailUniversity) {
-        try { await signOut(auth); } catch (_) {}
-        toast({
-          variant: "destructive",
-          title: "University Email Required",
-          description: `Please sign in using your ${config.name} Google account (${config.domain}).`,
-        });
-        return;
-      }
-
-      if (emailUniversity !== selectedUni) {
-        try { await signOut(auth); } catch (_) {}
-        const uniName = universityConfig[emailUniversity].name;
-        toast({
-          variant: "destructive",
-          title: "Wrong University Portal",
-          description: `This Google account is associated with ${uniName}. Please sign in through the correct portal.`,
-        });
-        return;
-      }
+      // Allow any Google account to sign in. Do not enforce domain-only restriction.
 
       let serverResult: any = null;
       try {

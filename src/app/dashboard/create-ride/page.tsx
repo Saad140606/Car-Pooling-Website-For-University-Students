@@ -2033,6 +2033,29 @@ export default function CreateRidePage() {
     // Sanitize AFTER stops have been added
     const sanitizedRideData = removeUndefined(rideData);
 
+      const createRideViaServerFallback = async () => {
+        const token = await user!.getIdToken();
+        const response = await fetch('/api/rides/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            university: universityId,
+            rideData: sanitizedRideData,
+          }),
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        const rideId = payload?.rideId || payload?.data?.rideId;
+        if (!response.ok || !rideId) {
+          throw new Error(payload?.error || payload?.message || 'Server fallback ride creation failed');
+        }
+
+        return rideId as string;
+      };
+
       try {
         console.debug('Creating ride: writing to Firestore', { university: userData!.university, rideData: sanitizedRideData });
         const ridesCollection = collection(firestore!, 'universities', universityId, 'rides');
@@ -2089,9 +2112,26 @@ export default function CreateRidePage() {
         }
       };
 
+      let createdRideId: string | null = null;
+
       try {
         const docRef = await addDocWithRetry(2);
-        console.debug('✅ Ride write attempt finished successfully', { durationMs: Date.now() - writeStart, docId: docRef!.id });
+        createdRideId = docRef!.id;
+        console.debug('✅ Ride write attempt finished successfully', { durationMs: Date.now() - writeStart, docId: createdRideId });
+      } catch (err: any) {
+        if (err?.code === 'permission-denied') {
+          console.warn('[Ride Creation] Client write permission denied; trying server fallback');
+          createdRideId = await createRideViaServerFallback();
+          console.debug('✅ Ride created via server fallback', { rideId: createdRideId, durationMs: Date.now() - writeStart });
+        } else {
+          console.error('❌ All addDoc retry attempts failed:', err);
+          throw err;
+        }
+      }
+
+      if (!createdRideId) {
+        throw new Error('ride-create-failed');
+      }
         
         // Initialize lifecycle state machine
         try {
@@ -2104,7 +2144,7 @@ export default function CreateRidePage() {
             },
             body: JSON.stringify({
               university: universityId,
-              rideId: docRef!.id,
+              rideId: createdRideId,
             }),
           });
           
@@ -2117,11 +2157,6 @@ export default function CreateRidePage() {
         } catch (initErr) {
           console.warn('[CreateRide] Lifecycle init error (non-fatal):', initErr);
         }
-      } catch (err: any) {
-        // Re-throw to be handled by outer catch
-        console.error('❌ All addDoc retry attempts failed:', err);
-        throw err;
-      }
 
       console.debug('Ride created successfully - notifying user');
       toast({ title: 'Success!', description: 'Your ride has been created. Redirecting to My Rides...' });
@@ -2167,12 +2202,14 @@ export default function CreateRidePage() {
 
         // Emit the permission error for developer visibility, but do it asynchronously so the UI can update first
         try {
-          const permissionError = new FirestorePermissionError({
-              path: `universities/${ud.university}/rides`,
-              operation: 'create',
-              requestResourceData: rideData
-          });
-          setTimeout(() => errorEmitter.emit('permission-error', permissionError), 50);
+          if (e?.code === 'permission-denied') {
+            const permissionError = new FirestorePermissionError({
+                path: `universities/${ud.university}/rides`,
+                operation: 'create',
+                requestResourceData: rideData
+            });
+            setTimeout(() => errorEmitter.emit('permission-error', permissionError), 50);
+          }
         } catch (emitErr) {
           console.error('Failed to emit permission-error:', emitErr);
         }

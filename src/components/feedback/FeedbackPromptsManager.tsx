@@ -60,6 +60,15 @@ export default function FeedbackPromptsManager() {
       if (prompts.firstRide.shouldShow) {
         setActivePrompt('first_ride');
         setOpen(true);
+
+        await fetch('/api/feedback/mark-shown', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ type: 'first_ride', university: userData.university }),
+        });
         return;
       }
 

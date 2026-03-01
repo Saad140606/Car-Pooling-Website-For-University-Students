@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import admin from 'firebase-admin';
 import { adminAuth, adminDb } from '@/firebase/firebaseAdmin';
 
+type FeedbackType = 'first_ride' | 'app';
 type University = 'fast' | 'ned' | 'karachi';
 
 const VALID_UNIVERSITIES: University[] = ['fast', 'ned', 'karachi'];
+const VALID_TYPES: FeedbackType[] = ['first_ride', 'app'];
 const APP_FEEDBACK_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 
 function parseUniversity(value: unknown): University | null {
@@ -38,9 +40,14 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const university = parseUniversity(body?.university);
+    const type = (body?.type || 'app') as FeedbackType;
 
     if (!university) {
       return NextResponse.json({ success: false, error: 'Valid university is required' }, { status: 400 });
+    }
+
+    if (!VALID_TYPES.includes(type)) {
+      return NextResponse.json({ success: false, error: 'Invalid feedback type' }, { status: 400 });
     }
 
     const userRef = adminDb.doc(`universities/${university}/users/${authedUser.uid}`);
@@ -55,6 +62,31 @@ export async function POST(req: NextRequest) {
       }
 
       const userData = userSnap.data() || {};
+      if (type === 'first_ride') {
+        const firstRideState = userData.feedback?.firstRide || {};
+
+        if (firstRideState.submittedAt || firstRideState.doNotShowAgain === true || firstRideState.promptShownAt) {
+          return;
+        }
+
+        tx.set(
+          userRef,
+          {
+            'feedback.firstRide': {
+              ...(firstRideState || {}),
+              promptShownAt: nowField,
+              lastPromptAt: nowField,
+              doNotShowAgain: true,
+              promptCount: Number(firstRideState.promptCount || 0) + 1,
+              updatedAt: nowField,
+              nextPromptAt: null,
+            },
+          },
+          { merge: true }
+        );
+        return;
+      }
+
       const appState = userData.feedback?.app || {};
 
       if (appState.submittedAt) {

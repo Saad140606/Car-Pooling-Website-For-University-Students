@@ -6,7 +6,6 @@ type University = 'fast' | 'ned' | 'karachi';
 const VALID_UNIVERSITIES: University[] = ['fast', 'ned', 'karachi'];
 const APP_FEEDBACK_INITIAL_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 const APP_FEEDBACK_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
-const FIRST_RIDE_REPEAT_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 
 function parseUniversity(value: string | null): University | null {
   if (!value) return null;
@@ -86,17 +85,20 @@ export async function GET(req: NextRequest) {
     completedRidesCount = driverCompletedSnap.size + passengerCompletedSnap.size;
 
     const hasSubmittedFirstRide = Boolean(firstRideState.submittedAt || firstRideState.submitted === true);
-    const firstRideLastPromptMs = toMs(firstRideState.lastPromptAt || firstRideState.skippedAt || firstRideState.updatedAt);
-    const firstRideExplicitNextPromptMs = toMs(firstRideState.nextPromptAt);
+    const firstRidePromptShownAtMs = toMs(
+      firstRideState.promptShownAt ||
+      firstRideState.lastPromptAt ||
+      firstRideState.skippedAt ||
+      firstRideState.dismissedAt
+    );
+    const hasFirstRideDoNotShowAgain = firstRideState.doNotShowAgain === true;
+    const hasSeenFirstRidePrompt = hasFirstRideDoNotShowAgain || firstRidePromptShownAtMs > 0;
     const nowMs = Date.now();
-    const firstRideNextPromptAtMs = firstRideExplicitNextPromptMs > 0
-      ? firstRideExplicitNextPromptMs
-      : (firstRideLastPromptMs > 0 ? firstRideLastPromptMs + FIRST_RIDE_REPEAT_DELAY_MS : 0);
 
     const shouldShowFirstRide =
       completedRidesCount >= 1 &&
       !hasSubmittedFirstRide &&
-      nowMs >= firstRideNextPromptAtMs;
+      !hasSeenFirstRidePrompt;
 
     const accountCreatedAtMs = toMs(userData.createdAt || userData.registeredAt);
 
@@ -119,7 +121,7 @@ export async function GET(req: NextRequest) {
           shouldShow: shouldShowFirstRide,
           completedRidesCount,
           hasSubmitted: hasSubmittedFirstRide,
-          nextPromptAt: firstRideNextPromptAtMs,
+          nextPromptAt: 0,
         },
         appFeedback: {
           shouldShow: shouldShowAppFeedback,

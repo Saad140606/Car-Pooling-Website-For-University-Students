@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
+import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { Check, MapPin, X, Trash, CheckCircle2, Clock } from 'lucide-react';
 import { useCollection as useBookingCollection } from '@/firebase/firestore/use-collection';
 import { errorEmitter } from '@/firebase/error-emitter';
@@ -70,6 +71,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const firestore = useFirestore();
   const { user, data: userData } = useUser();
   const { toast } = useToast();
+  const actionFeedback = useActionFeedback();
   const [selectedRequest, setSelectedRequest] = React.useState<any | null>(null);
   const [showRequestDetail, setShowRequestDetail] = React.useState(false);
 
@@ -91,6 +93,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const { data: bookings, loading } = useBookingCollection<BookingType>(bookingsQuery, { includeUserDetails: 'passengerId', listen: true });
   
   const [processingIds, setProcessingIds] = React.useState<string[]>([]);
+  const [processingStateById, setProcessingStateById] = React.useState<Record<string, 'accepting' | 'rejecting'>>({});
   const [shownBookings, setShownBookings] = React.useState<BookingType[]>([]);
   const [placeNames, setPlaceNames] = React.useState<Record<string, string>>({});
   const fetchingPlaceNameIdsRef = React.useRef<Set<string>>(new Set());
@@ -171,6 +174,16 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
     }
     
     setProcessingIds((s) => [...s, booking.id]);
+    setProcessingStateById((prev) => ({
+      ...prev,
+      [booking.id as string]: newStatus === 'accepted' ? 'accepting' : 'rejecting',
+    }));
+    actionFeedback.start(
+      newStatus === 'accepted'
+        ? 'Accepting request, please wait…'
+        : 'Rejecting request, please wait…',
+      newStatus === 'accepted' ? 'Accepting Request...' : 'Rejecting Request...'
+    );
     // Optimistically remove the booking from the shown list so the provider
     // sees immediate feedback and cannot accept/reject the same request twice.
     const previousShown = shownBookings;
@@ -296,7 +309,13 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       });
     } finally {
       console.log('[handleBooking][perf] action=', newStatus, 'bookingId=', booking.id, 'total_ms=', Math.round(performance.now() - actionStartMs));
+      actionFeedback.clear();
       setProcessingIds((s) => s.filter((id) => id !== booking.id));
+      setProcessingStateById((prev) => {
+        const next = { ...prev };
+        delete next[booking.id as string];
+        return next;
+      });
     }
   };
 
@@ -374,6 +393,13 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                 <X className="h-5 w-5" />
               </Button>
             </div>
+            {processingIds.includes(booking.id) && (
+              <p className="absolute bottom-2 right-4 text-[11px] text-amber-300">
+                {processingStateById[booking.id] === 'accepting'
+                  ? 'Please wait, request is accepting...'
+                  : 'Please wait, request is rejecting...'}
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -458,7 +484,9 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                   className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                 >
                   <Check className="h-4 w-4 mr-2" />
-                  Accept Request
+                  {processingIds.includes(selectedRequest.id) && processingStateById[selectedRequest.id] === 'accepting'
+                    ? 'Accepting...'
+                    : 'Accept Request'}
                 </Button>
                 <Button
                   onClick={() => {
@@ -470,7 +498,9 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                   className="flex-1 border-red-500/50 text-red-400 hover:bg-red-500/10"
                 >
                   <X className="h-4 w-4 mr-2" />
-                  Reject
+                  {processingIds.includes(selectedRequest.id) && processingStateById[selectedRequest.id] === 'rejecting'
+                    ? 'Rejecting...'
+                    : 'Reject'}
                 </Button>
               </div>
             </div>

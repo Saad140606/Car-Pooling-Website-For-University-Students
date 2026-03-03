@@ -189,17 +189,21 @@ export async function notifyNewRideRequest(
   rideId: string,
   passengerName: string,
   rideFrom: string,
-  rideTo: string
+  rideTo: string,
+  details?: { pickupPoint?: string | null; dropoffPoint?: string | null }
 ): Promise<void> {
+  const pickupPoint = (details?.pickupPoint || '').trim() || rideFrom;
+  const dropoffPoint = (details?.dropoffPoint || '').trim() || rideTo;
+
   await writeNotification(db, university, {
     userId: driverId,
     type: 'ride_request',
     title: 'New Ride Request 🚗',
-    message: `${passengerName} wants to join your ride from ${rideFrom} to ${rideTo}`,
+    message: `${passengerName} requested a ride. Pickup: ${pickupPoint}. Dropoff: ${dropoffPoint}.`,
     relatedRideId: rideId,
     priority: 'high',
     actionUrl: '/dashboard/my-rides',
-    metadata: { senderName: passengerName, rideFrom, rideTo },
+    metadata: { senderName: passengerName, rideFrom, rideTo, pickupPoint, dropoffPoint },
   });
 }
 

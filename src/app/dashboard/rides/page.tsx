@@ -12,6 +12,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { Loader2, Route, Calendar, Users, Search as SearchIcon } from 'lucide-react';
 import FullRideCard from '@/components/FullRideCard';
 import { useCollection as useBookingsCollection } from '@/firebase/firestore/use-collection';
@@ -433,6 +434,7 @@ class MapErrorBoundary extends React.Component<{ children: React.ReactNode, onMa
 function RideCard({ ride, user, userData, firestore, selectedUniversity }: { ride: any, user: any, userData: any, firestore: any, selectedUniversity?: string }) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const actionFeedback = useActionFeedback();
   const router = useRouter();
 
   const [existingBooking, setExistingBooking] = useState<any | null>(null);
@@ -525,6 +527,7 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
     }
 
     setLoading(true);
+    actionFeedback.start('Sending request to ride provider, please wait…', 'Sending Request...');
 
     // Attempt to reverse-geocode the chosen pickupPoint to a human-readable place name.
     let pickupPlaceName: string | null = null;
@@ -558,11 +561,24 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
       rideId: ride.id,
       driverId: ride.driverId,
       passengerId: user.uid,
+      university: userData.university,
       status: 'PENDING' as any,
       createdAt: serverTimestamp(),
       pickupPoint: { lat: pickupPoint.lat, lng: pickupPoint.lng },
       pickupPlaceName,
+      dropoffPlaceName: ride.to || null,
       tripKey,
+      rideData: {
+        id: ride.id,
+        from: ride.from || null,
+        to: ride.to || null,
+        price: ride.price ?? null,
+        departureTime: ride.departureTime || null,
+        route: ride.route || [],
+        routePolyline: ride.routePolyline || null,
+        driverId: ride.driverId || null,
+        driverInfo: ride.driverInfo || null,
+      },
       passengerDetails: {
         uid: user.uid,
         fullName: userData?.fullName || '',
@@ -603,7 +619,12 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
             ride.driverId,
             ride.id,
             { uid: user.uid, fullName: userData?.fullName || 'A student' },
-            { from: ride.from || 'Unknown', to: ride.to || 'Unknown' }
+            {
+              from: ride.from || 'Unknown',
+              to: ride.to || 'Unknown',
+              pickupPoint: pickupPlaceName || `${pickupPoint.lat.toFixed(5)}, ${pickupPoint.lng.toFixed(5)}`,
+              dropoffPoint: ride.to || 'Unknown',
+            }
           );
         } catch (notifError) {
           console.debug('[RideRequest] Client notification failed, trying server fallback:', notifError);
@@ -621,6 +642,8 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
                 passengerName: userData?.fullName || user.displayName || 'A student',
                 from: ride.from || 'Unknown',
                 to: ride.to || 'Unknown',
+                pickupPoint: pickupPlaceName || `${pickupPoint.lat.toFixed(5)}, ${pickupPoint.lng.toFixed(5)}`,
+                dropoffPoint: ride.to || 'Unknown',
               }),
             });
 
@@ -667,6 +690,7 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
       return false;
     } finally {
       console.log('[RideRequest][perf] total_ms=', Math.round(performance.now() - requestStartMs));
+      actionFeedback.clear();
       setLoading(false);
     }
   };
@@ -728,8 +752,16 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
           </filter>
         </defs>
         <rect x="0" y="0" width="100%" height="100%" rx="8" fill="#f8fafc" />
+        {loading && (
+          <p className="text-sm text-center text-amber-400">Please wait, request is sending...</p>
+        )}
         <path d={pathD} fill="none" stroke="#1E88FF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" filter="url(#shadow)" opacity="0.95" />
-        <path d={pathD} fill="none" stroke="#8ACBFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+          {loading ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Sending Request...
+            </span>
+          ) : (alreadyBooked ? 'Already Requested' : 'Request Pickup')}
         <circle cx={start.x} cy={start.y} r="3.5" fill="#10B981" stroke="#ffffff" strokeWidth="1" />
         {/* End pin: small map-pin shape composed of head + tail */}
         <g transform={`translate(${end.x}, ${end.y})`}>
@@ -995,11 +1027,10 @@ function RidesPageInner() {
     limit(50) // ── PERF: Limit initial load ──
   ) : null;
 
-  // ── PERF: Use listen: false for search pages ──
-  // Rides search doesn't need real-time updates; user can refresh to see new rides
-  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQuery, { listen: false });
-  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQuery, { listen: false });
-  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQuery, { listen: false });
+  // Keep rides live so newly offered rides appear without manual refresh.
+  const { data: fastRides, loading: fastRidesLoading, error: fastRidesError } = useCollection<RideType>(fastRidesQuery, { listen: true });
+  const { data: nedRides, loading: nedRidesLoading, error: nedRidesError } = useCollection<RideType>(nedRidesQuery, { listen: true });
+  const { data: karachiRides, loading: karachiRidesLoading, error: karachiRidesError } = useCollection<RideType>(karachiRidesQuery, { listen: true });
 
   // myBookingsQuery hook
   // CRITICAL FIX: Only fetch ACTIVE bookings at query level

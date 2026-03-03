@@ -3,7 +3,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/firebase/auth/use-user';
-import { useAuth } from '@/firebase';
+import { useAuth, useFirestore } from '@/firebase';
+import { getSelectedUniversity } from '@/lib/university';
+import { resolveDashboardLandingRoute } from '@/lib/dashboardLanding';
 
 /**
  * RootPageGuard: Handles auth-based routing at the root level
@@ -18,9 +20,11 @@ import { useAuth } from '@/firebase';
 export function RootPageGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, initialized, data: userData } = useUser();
   const auth = useAuth();
+  const firestore = useFirestore();
   const router = useRouter();
   const [isRedirecting, setIsRedirecting] = useState(false);
   const verificationHandledRef = useRef(false);
+  const dashboardRedirectHandledUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     const run = async () => {
@@ -58,17 +62,32 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        console.debug('[RootPageGuard] Authenticated user detected, redirecting to dashboard');
+        if (dashboardRedirectHandledUidRef.current === user.uid) {
+          return;
+        }
+        dashboardRedirectHandledUidRef.current = user.uid;
+
+        const fallbackUniversity = getSelectedUniversity();
+        const resolvedUniversity = university || fallbackUniversity || null;
+        const destination = await resolveDashboardLandingRoute({
+          firestore,
+          uid: user.uid,
+          university: resolvedUniversity,
+        });
+
+        console.debug('[RootPageGuard] Authenticated user detected, redirecting to:', destination);
         setIsRedirecting(true);
-        router.replace('/dashboard/rides');
+        router.replace(destination);
         return;
       }
+
+      dashboardRedirectHandledUidRef.current = null;
 
       // User is not authenticated, show home page (no action needed)
     };
 
     run();
-  }, [initialized, loading, user, userData, auth, router]);
+  }, [initialized, loading, user, userData, auth, router, firestore]);
 
   // CRITICAL: Return null during auth check (invisible to user)
   // This prevents the Home page from rendering and being discarded

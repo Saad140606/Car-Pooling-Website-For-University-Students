@@ -44,10 +44,11 @@ export function PWAInstallPromptHandler() {
   const [installationStatus, setInstallationStatus] = useState<'idle' | 'installing' | 'success' | 'error'>('idle');
   const [hasInteracted, setHasInteracted] = useState(false);
 
-  const SHOW_DELAY_MS = 1000; // 1 second - must be short to avoid browser warnings
+  const INSTALL_PROMPT_DELAY_MS = 5 * 60 * 1000; // 5 minutes after website open
   const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
   const STORAGE_LAST_SHOWN = 'pwa_install_last_shown';
   const STORAGE_LAST_DISMISSED = 'pwa_install_last_dismissed';
+  const SESSION_START_KEY = 'pwa_install_session_start';
 
   const canShowPrompt = () => {
     if (typeof window === 'undefined') return false;
@@ -67,6 +68,34 @@ export function PWAInstallPromptHandler() {
   const markDismissed = () => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(STORAGE_LAST_DISMISSED, String(Date.now()));
+  };
+
+  const getSessionStartMs = () => {
+    if (typeof window === 'undefined') return Date.now();
+    const existing = Number(window.sessionStorage.getItem(SESSION_START_KEY) || 0);
+    if (existing > 0) return existing;
+    const now = Date.now();
+    window.sessionStorage.setItem(SESSION_START_KEY, String(now));
+    return now;
+  };
+
+  const getRemainingDelayMs = () => {
+    const elapsed = Date.now() - getSessionStartMs();
+    return Math.max(0, INSTALL_PROMPT_DELAY_MS - elapsed);
+  };
+
+  const schedulePromptDisplay = () => {
+    if (typeof window === 'undefined') return () => {};
+    const remainingDelayMs = getRemainingDelayMs();
+
+    const timeout = window.setTimeout(() => {
+      if (dismissedCount === 0 && !isAlreadyInstalled() && canShowPrompt()) {
+        markShown();
+        setShowInstallUI(true);
+      }
+    }, remainingDelayMs);
+
+    return () => window.clearTimeout(timeout);
   };
 
   useEffect(() => {
@@ -161,11 +190,8 @@ export function PWAInstallPromptHandler() {
       // Store the prompt for later use
       (window as any).deferredInstallPrompt = event as BeforeInstallPromptEvent;
 
-      // Show install UI immediately if not dismissed, to avoid browser warnings about preventDefault() without prompt()
-      if (dismissedCount === 0 && !isAlreadyInstalled() && canShowPrompt()) {
-        markShown();
-        setShowInstallUI(true);
-      }
+      // Show install UI only after 5 minutes from website open.
+      schedulePromptDisplay();
     };
 
     // Listen for app installed event
@@ -221,6 +247,19 @@ export function PWAInstallPromptHandler() {
       }
     };
   }, [dismissedCount, hasInteracted]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Ensure this session has a stable start timestamp and schedule delayed prompt display.
+    getSessionStartMs();
+
+    if (dismissedCount > 0 || isAlreadyInstalled() || !canShowPrompt()) {
+      return;
+    }
+
+    return schedulePromptDisplay();
+  }, [dismissedCount]);
 
   /**
    * Check if desktop browser supports PWA

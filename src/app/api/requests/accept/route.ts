@@ -20,6 +20,27 @@ import {
 import { notifyRequestAccepted } from '@/lib/serverNotificationService';
 import { handleAcceptRequest } from '@/lib/rideLifecycle/lifecycleService';
 
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripUndefined(item))
+      .filter((item) => item !== undefined) as unknown as T;
+  }
+
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const normalized: Record<string, any> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, any>)) {
+      const cleaned = stripUndefined(nested);
+      if (cleaned !== undefined) {
+        normalized[key] = cleaned;
+      }
+    }
+    return normalized as T;
+  }
+
+  return value;
+}
+
 export async function POST(req: NextRequest) {
   console.log('[API /api/requests/accept] Received request');
   console.log('[API] Headers:', {
@@ -73,6 +94,7 @@ export async function POST(req: NextRequest) {
     const db = adminDb;
     const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
     const requestRef = db.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
+    const bookingRef = db.doc(`universities/${validUniversity}/bookings/${requestId}`);
 
     const result = await db.runTransaction(async (tx) => {
       // Get ride data
@@ -94,9 +116,41 @@ export async function POST(req: NextRequest) {
         throw new Error('Request not found');
       }
       const request = reqSnap.data() as any;
+      const now = admin.firestore.Timestamp.now();
+
+      const bookingPayload = stripUndefined({
+        id: requestId,
+        rideId,
+        passengerId: request.passengerId,
+        driverId: ride.driverId || ride.createdBy || request.driverId || null,
+        university: validUniversity,
+        status: 'ACCEPTED',
+        createdAt: request.createdAt || now,
+        acceptedAt: request.acceptedAt || now,
+        updatedAt: now,
+        price: ride.price ?? request.price ?? null,
+        departureTime: ride.departureTime || request.rideData?.departureTime || null,
+        pickupPoint: request.pickupPoint || null,
+        pickupPlaceName: request.pickupPlaceName || null,
+        dropoffPlaceName: request.dropoffPlaceName || ride.to || null,
+        passengerDetails: request.passengerDetails || null,
+        driverDetails: request.driverDetails || ride.driverInfo || null,
+        ride: {
+          id: ride.id || rideId,
+          from: ride.from || request.rideData?.from || null,
+          to: ride.to || request.rideData?.to || null,
+          departureTime: ride.departureTime || request.rideData?.departureTime || null,
+          route: ride.route || request.rideData?.route || [],
+          routePolyline: ride.routePolyline || request.rideData?.routePolyline || null,
+          driverInfo: ride.driverInfo || null,
+          driverId: ride.driverId || ride.createdBy || null,
+          availableSeats: ride.availableSeats ?? null,
+        },
+      });
 
       // ===== IDEMPOTENCY CHECK: If already ACCEPTED, return success =====
       if (request.status === 'ACCEPTED') {
+        tx.set(bookingRef, bookingPayload, { merge: true });
         return { 
           passengerId: request.passengerId, 
           rideId, 
@@ -134,7 +188,6 @@ export async function POST(req: NextRequest) {
       // they require a composite index that can block acceptance in production.
       // Seat safety and request idempotency are already enforced below transactionally.
 
-      const now = admin.firestore.Timestamp.now();
       const reservedSeats = (ride.reservedSeats ?? 0) as number;
       const availableSeats = (ride.availableSeats ?? 0) as number;
       const totalSeats = (ride.totalSeats ?? 0) as number;
@@ -199,6 +252,10 @@ export async function POST(req: NextRequest) {
         remindersCount: 0,
         updatedAt: now
       });
+      tx.set(bookingRef, {
+        ...bookingPayload,
+        acceptedAt: now,
+      }, { merge: true });
 
       return { passengerId, rideId, timerType };
     });

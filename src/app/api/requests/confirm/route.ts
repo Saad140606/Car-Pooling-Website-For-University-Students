@@ -20,6 +20,41 @@ import {
 import { notifyRideConfirmed } from '@/lib/serverNotificationService';
 import { handleConfirmSeat } from '@/lib/rideLifecycle/lifecycleService';
 
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripUndefined(item))
+      .filter((item) => item !== undefined) as unknown as T;
+  }
+
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const normalized: Record<string, any> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, any>)) {
+      const cleaned = stripUndefined(nested);
+      if (cleaned !== undefined) {
+        normalized[key] = cleaned;
+      }
+    }
+    return normalized as T;
+  }
+
+  return value;
+}
+
+function toMillisSafe(value: any): number | null {
+  if (!value) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  if (value instanceof Date) return value.getTime();
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  if (typeof value?.seconds === 'number') return value.seconds * 1000;
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
   if (!adminDb) {
@@ -143,10 +178,15 @@ export async function POST(req: NextRequest) {
 
       const reservedSeats = (ride.reservedSeats ?? 0) as number;
       const availableSeats = (ride.availableSeats ?? 0) as number;
+
+      const departureMs = toMillisSafe(ride.departureTime);
+      if (departureMs !== null && Date.now() >= departureMs) {
+        throw new Error('Ride already started. You cannot confirm this ride now.');
+      }
       
       // Check seats are available BEFORE confirming
       if (availableSeats <= 0) {
-        throw new Error('Ride is full - no seats available');
+        throw new Error('All seats are filled. You cannot confirm this ride.');
       }
 
       // ===== ATOMIC UPDATE: Confirm ride and decrement available seats =====
@@ -168,34 +208,35 @@ export async function POST(req: NextRequest) {
       // Create a booking document in the bookings collection for easy querying on the My Bookings page
       const bookingId = requestId; // Use same ID for tracking
       const bookingRef = db.doc(`universities/${validUniversity}/bookings/${bookingId}`);
-      tx.set(bookingRef, {
+      tx.set(bookingRef, stripUndefined({
         id: bookingId,
         rideId: rideId,
         passengerId: authenticatedUserId,
-        driverId: ride.driverId,
+        driverId: ride.driverId || ride.createdBy || request.driverId || null,
         university: validUniversity,
         status: 'CONFIRMED',
         createdAt: request.createdAt || now,
         confirmedAt: now,
         updatedAt: now,
         // Copy key data from request and ride for quick access
-        price: ride.price,
-        pickupPoint: request.pickupPoint,
-        pickupPlaceName: request.pickupPlaceName,
-        dropoffPlaceName: request.dropoffPlaceName,
-        passengerDetails: request.passengerDetails,
+        price: ride.price ?? request.price ?? null,
+        departureTime: ride.departureTime || request.rideData?.departureTime || null,
+        pickupPoint: request.pickupPoint || null,
+        pickupPlaceName: request.pickupPlaceName || null,
+        dropoffPlaceName: request.dropoffPlaceName || ride.to || null,
+        passengerDetails: request.passengerDetails || null,
         ride: {
-          id: ride.id,
-          from: ride.from,
-          to: ride.to,
-          departureTime: ride.departureTime,
-          route: ride.route,
-          routePolyline: ride.routePolyline,
-          driverInfo: ride.driverInfo,
-          driverId: ride.driverId,
-          availableSeats: ride.availableSeats,
+          id: ride.id || rideId,
+          from: ride.from || request.rideData?.from || null,
+          to: ride.to || request.rideData?.to || null,
+          departureTime: ride.departureTime || request.rideData?.departureTime || null,
+          route: ride.route || request.rideData?.route || [],
+          routePolyline: ride.routePolyline || request.rideData?.routePolyline || null,
+          driverInfo: ride.driverInfo || null,
+          driverId: ride.driverId || ride.createdBy || null,
+          availableSeats: ride.availableSeats ?? null,
         }
-      });
+      }));
 
       return { passenger: authenticatedUserId, tripKey: request.tripKey, bookingId };
     });

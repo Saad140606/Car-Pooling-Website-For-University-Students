@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { university, rideId, driverId, passengerName, from, to } = body;
+    const { university, rideId, driverId, passengerName, from, to, pickupPoint, dropoffPoint } = body;
 
     const validUniversity = validateUniversity(university);
     if (!validUniversity) {
@@ -73,7 +73,11 @@ export async function POST(req: NextRequest) {
       rideId,
       passengerName || 'A student',
       from || rideData?.from || rideData?.pickupLocation || 'Starting point',
-      to || rideData?.to || rideData?.dropoffLocation || 'Destination'
+      to || rideData?.to || rideData?.dropoffLocation || 'Destination',
+      {
+        pickupPoint: pickupPoint || rideData?.from || rideData?.pickupLocation || 'Starting point',
+        dropoffPoint: dropoffPoint || rideData?.to || rideData?.dropoffLocation || 'Destination',
+      }
     );
 
     return successResponse({ ok: true });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -34,8 +34,10 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth, useFirestore } from "@/firebase";
 import { useToast } from "@/hooks/use-toast";
+import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { FirestorePermissionError } from "@/firebase/errors";
 import { errorEmitter } from "@/firebase/error-emitter";
+import { resolveDashboardLandingRoute } from '@/lib/dashboardLanding';
 
 type AuthFormProps = {
   university: "ned" | "fast" | "karachi";
@@ -54,6 +56,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
   const firestore = useFirestore();
   const router = useRouter();
   const { toast } = useToast();
+  const actionFeedback = useActionFeedback();
 
   const config = universityConfig[university];
 
@@ -91,9 +94,27 @@ export function AuthForm({ university, action }: AuthFormProps) {
     return null;
   };
 
+  useEffect(() => {
+    if (!loading) return;
+    actionFeedback.update(
+      action === 'register' ? 'Signing you up, please wait…' : 'Signing you in, please wait…',
+      action === 'register' ? 'Signing up...' : 'Signing in...'
+    );
+  }, [loading, action, actionFeedback.update]);
+
+  const pushPreferredDashboard = async (uid: string, uni: 'ned' | 'fast' | 'karachi') => {
+    const nextRoute = await resolveDashboardLandingRoute({
+      firestore,
+      uid,
+      university: uni,
+    });
+    router.push(nextRoute);
+  };
+
   async function onGoogleSignIn() {
     const submitStartMs = performance.now();
     setLoading(true);
+    actionFeedback.start('Signing you in, please wait…', 'Signing in...');
 
     if (!auth || !firestore) {
       toast({
@@ -243,7 +264,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
         }
       } catch (_) {}
 
-      router.push('/dashboard/rides');
+      await pushPreferredDashboard(u.uid, selectedUni);
       return;
     } catch (error: any) {
       if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
@@ -260,6 +281,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
       }
     } finally {
       console.log('[AuthForm][perf][google] university=', university, 'total_ms=', Math.round(performance.now() - submitStartMs));
+      actionFeedback.clear();
       setLoading(false);
     }
   }
@@ -267,6 +289,10 @@ export function AuthForm({ university, action }: AuthFormProps) {
   async function onSubmit(values: AuthFormValues) {
     const submitStartMs = performance.now();
     setLoading(true);
+    actionFeedback.start(
+      action === 'register' ? 'Signing you up, please wait…' : 'Signing you in, please wait…',
+      action === 'register' ? 'Signing up...' : 'Signing in...'
+    );
     if (!auth || !firestore) {
       toast({
         variant: "destructive",
@@ -622,7 +648,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
                 if (!complete) {
                   // Profile incomplete but still redirect to dashboard - user can complete later
                   toast({ title: 'Signed In', description: 'Welcome! You can complete your profile from the dashboard.' });
-                  router.push('/dashboard/rides');
+                    await pushPreferredDashboard(u.uid, selectedUni);
                   return;
                 }
               } catch (e) {
@@ -638,7 +664,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
                   return;
                 }
               } catch (e) {}
-              router.push('/dashboard/rides');
+              await pushPreferredDashboard(u.uid, selectedUni);
               return;
             }
 
@@ -659,7 +685,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
             try {
               await setDoc(doc(firestore, 'universities', selectedUni, 'users', u.uid), { email: u.email || null, university: selectedUni, createdAt: serverTimestamp() });
               toast({ title: 'Signed In', description: 'Admin access granted.' });
-              router.push('/dashboard/rides');
+              await pushPreferredDashboard(u.uid, selectedUni);
               return;
             } catch (e) {
               console.warn('Failed to create admin profile under selected university:', e);
@@ -716,7 +742,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
             } catch (e) {}
             // Profile created - go straight to dashboard
             toast({ title: 'Signed In', description: 'Welcome! You can complete your profile from the dashboard.' });
-            router.push('/dashboard/rides');
+            await pushPreferredDashboard(u.uid, finalUniversity);
             return;
           } catch (e) {
             console.warn('Failed to create university-scoped profile during login fallback:', e);
@@ -752,6 +778,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
       });
     } finally {
       console.log('[AuthForm][perf] action=', action, 'university=', university, 'total_ms=', Math.round(performance.now() - submitStartMs));
+      actionFeedback.clear();
       setLoading(false);
     }
   }

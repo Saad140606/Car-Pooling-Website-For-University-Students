@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { MapPin, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { ErrorState, EmptyState, LoadingState } from '@/components/StateComponents';
 import { safeGet } from '@/lib/safeApi';
@@ -51,8 +52,25 @@ const ACTIVE_BOOKING_STATUSES = new Set(['PENDING', 'ACCEPTED', 'CONFIRMED']);
  */
 function formatDate(ts: any, defaultValue = '') {
   try {
-    if (!ts || typeof ts !== 'object') return defaultValue;
-    const milliseconds = ts.seconds ? ts.seconds * 1000 : ts;
+    if (!ts) return defaultValue;
+
+    let milliseconds: number | null = null;
+    if (typeof ts === 'number') {
+      milliseconds = ts;
+    } else if (typeof ts === 'string') {
+      const parsed = Date.parse(ts);
+      milliseconds = Number.isNaN(parsed) ? null : parsed;
+    } else if (ts instanceof Date) {
+      milliseconds = ts.getTime();
+    } else if (typeof ts === 'object') {
+      if (typeof ts.seconds === 'number') {
+        milliseconds = ts.seconds * 1000;
+      } else if (typeof ts.toMillis === 'function') {
+        milliseconds = ts.toMillis();
+      }
+    }
+
+    if (milliseconds === null) return defaultValue;
     const date = new Date(milliseconds);
     if (isNaN(date.getTime())) return defaultValue;
     
@@ -106,6 +124,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const firestore = useFirestore();
   const { user } = useUser();
   const { toast } = useToast();
+  const actionFeedback = useActionFeedback();
   const { getUnreadForRide } = useNotifications();
   const passengerCompletionFromRide = React.useMemo(() => {
     const confirmedPassengers = Array.isArray((ride as any)?.confirmedPassengers)
@@ -146,7 +165,10 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       setStatusError(null);
       
       // Check departure time
-      const departureTimeData = safeGet(ride, 'departureTime');
+      const departureTimeData =
+        safeGet(ride, 'departureTime') ||
+        safeGet(booking, 'departureTime') ||
+        safeGet(booking, 'ride.departureTime');
       if (!departureTimeData) {
         console.debug('[BookingCard] Departure time not available');
         return;
@@ -219,6 +241,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       setStatusError(null);
       setConfirmationProcessed(true);
       setLocalBookingStatus('CONFIRMED');
+      actionFeedback.start('Confirming request, please wait…', 'Confirming Request...');
 
       const idToken = await user.getIdToken(true);
       const response = await fetch('/api/requests/confirm', {
@@ -253,13 +276,22 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       setConfirmationProcessed(false);
       setLocalBookingStatus(initialStatus);
       
-      if (err.message === 'SEATS_FULL' || err.message?.toLowerCase?.().includes('full')) {
+      const lowerMessage = String(err?.message || '').toLowerCase();
+
+      if (err.message === 'SEATS_FULL' || lowerMessage.includes('full') || lowerMessage.includes('all seats are filled')) {
         toast({
           variant: 'destructive',
           title: 'Seats Full',
-          description: 'All seats have been taken'
+          description: 'All seats are filled. You cannot confirm this ride.'
         });
         setRideStatus('full');
+      } else if (lowerMessage.includes('ride already started') || lowerMessage.includes('cannot confirm this ride now')) {
+        toast({
+          variant: 'destructive',
+          title: 'Ride Started',
+          description: 'Ride already started. You cannot confirm this ride now.'
+        });
+        setRideStatus('expired');
       } else if (err.message === 'ALREADY_CONFIRMED' || err.message?.toLowerCase?.().includes('already confirmed')) {
         toast({
           title: 'Already Confirmed',
@@ -274,6 +306,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         });
       }
     } finally {
+      actionFeedback.clear();
       setConfirming(false);
     }
   };
@@ -428,12 +461,16 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
 
   // Departure timer
   React.useEffect(() => {
-    if (normalizedStatus !== 'CONFIRMED' || !ride?.departureTime) return;
+    const departureSource =
+      safeGet(ride, 'departureTime') ||
+      safeGet(booking, 'departureTime') ||
+      safeGet(booking, 'ride.departureTime');
+    if (normalizedStatus !== 'CONFIRMED' || !departureSource) return;
 
     const updateTimer = () => {
       try {
         const now = new Date();
-        const departureData = safeGet(ride, 'departureTime');
+        const departureData = departureSource;
         const departure = new Date(
           departureData?.seconds ? departureData.seconds * 1000 : departureData
         );
@@ -464,7 +501,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
-  }, [normalizedStatus, ride?.departureTime]);
+  }, [normalizedStatus, ride?.departureTime, (booking as any)?.departureTime]);
 
   const driverName = safeGet(driver, 'fullName', 'Ride Provider');
   const driverVerified = !!(safeGet(driver, 'universityEmailVerified') && safeGet(driver, 'idVerified')) || safeGet(driver, 'isVerified') || false;
@@ -572,10 +609,10 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   return (
     <>
     <Card 
-      className="overflow-hidden transition-all duration-300 ease-out hover:shadow-xl hover:shadow-primary/20 border border-slate-700 bg-gradient-to-br from-slate-900/80 to-slate-950/80 backdrop-blur-xl cursor-pointer"
+      className="w-full max-w-sm md:max-w-none overflow-hidden transition-all duration-300 ease-out hover:shadow-xl hover:shadow-primary/20 border border-slate-700 bg-gradient-to-br from-slate-900/80 to-slate-950/80 backdrop-blur-xl cursor-pointer"
       onClick={() => setShowBookingDetail(true)}
     >
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-3 md:px-4 md:pt-4 md:pb-2.5 lg:px-3.5 lg:pt-3.5 lg:pb-2">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5 flex-1 min-w-0">
             <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-xs flex-shrink-0 shadow-lg">
@@ -624,7 +661,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         </div>
       </CardHeader>
 
-      <CardContent className="pb-2.5 space-y-2">
+      <CardContent className="pb-2.5 space-y-2 md:px-4 md:pb-2 md:space-y-1.5 lg:px-3.5 lg:pb-1.5">
         {/* ========================================
             COMPLETION WINDOW - PASSENGER UI (PROMINENT)
             ======================================== */}
@@ -747,7 +784,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         {/* Departure time */}
         <div className="text-xs">
           <span className="text-slate-400 font-medium">Departure:</span>
-          <div className="text-slate-300">{formatDate(ride?.departureTime, 'Unknown time')}</div>
+          <div className="text-slate-300">{formatDate(safeGet(ride, 'departureTime') || safeGet(booking, 'departureTime') || safeGet(booking, 'ride.departureTime'), 'Unknown time')}</div>
         </div>
 
         {/* Departure timer for confirmed rides */}
@@ -766,12 +803,12 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         )}
       </CardContent>
 
-      <CardFooter className="flex flex-col gap-2 pt-3" onClick={(e) => e.stopPropagation()}>
+      <CardFooter className="flex flex-col gap-2 pt-3 md:px-4 md:pb-4 md:pt-2.5 lg:px-3.5 lg:pb-3 lg:gap-1.5" onClick={(e) => e.stopPropagation()}>
         <Button
           onClick={() => setShowRoutePickup(true)}
           variant="outline"
           size="sm"
-          className="w-full h-10 border-slate-600/80 bg-gradient-to-r from-slate-800/80 to-slate-700/60 hover:from-slate-700 hover:to-slate-600 text-slate-100 shadow-md"
+          className="w-full h-10 md:h-9 border-slate-600/80 bg-gradient-to-r from-slate-800/80 to-slate-700/60 hover:from-slate-700 hover:to-slate-600 text-slate-100 shadow-md"
         >
           View Route & Pickup
         </Button>
@@ -780,7 +817,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
             onClick={openInGoogleMaps}
             variant="outline"
             size="sm"
-            className="w-full h-9 px-4 text-sm border-slate-600/80 bg-slate-800/70 hover:bg-slate-700/80 text-slate-200"
+            className="w-full h-9 md:h-8.5 px-4 text-sm border-slate-600/80 bg-slate-800/70 hover:bg-slate-700/80 text-slate-200"
           >
             View on Maps
           </Button>
@@ -789,7 +826,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         {/* ACCEPTED STATUS - Show Confirm button */}
         {normalizedStatus === 'ACCEPTED' && !confirmationProcessed && (
           <>
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid gap-2 w-full ${chatId ? 'grid-cols-2' : 'grid-cols-1'}`}>
               {chatId && (
                 <ChatButton chatId={chatId} university={university} label="Chat" className="h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
               )}
@@ -807,7 +844,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
               onClick={handleConfirmRide}
               disabled={confirming || confirmationProcessed || rideStatus !== 'available'}
               size="sm"
-              className="w-full h-10 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 shadow-lg shadow-emerald-500/20"
+              className="w-full h-10 md:h-9 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 shadow-lg shadow-emerald-500/20"
             >
               {confirming ? 'Confirming...' : 'Confirm Ride'}
             </Button>
@@ -818,7 +855,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         )}
 
         {normalizedStatus === 'PENDING' && !confirmationProcessed && (
-          <div className="grid grid-cols-2 gap-2 w-full">
+          <div className={`grid gap-2 w-full ${chatId ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {chatId && (
               <ChatButton chatId={chatId} university={university} label="Chat" className="h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
             )}
@@ -841,7 +878,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
               <CheckCircle2 className="h-4 w-4" />
               Ride Confirmed!
             </div>
-            <div className="flex gap-2">
+            <div className={`flex gap-2 ${chatId ? '' : 'w-full'}`}>
               {chatId && (
                 <ChatButton chatId={chatId} university={university} label="Chat" className="flex-1 h-9 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-400 hover:to-blue-500 shadow-md shadow-blue-500/20" />
               )}
@@ -850,7 +887,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                 disabled={cancelling}
                 variant="destructive"
                 size="sm"
-                className="flex-1"
+                className={chatId ? 'flex-1' : 'w-full'}
               >
                 {cancelling ? 'Cancelling...' : 'Cancel Ride'}
               </Button>
@@ -951,12 +988,16 @@ export default function MyBookingsPage() {
   const [requestBookings, setRequestBookings] = React.useState<BookingType[]>([]);
   const [requestBackfillLoading, setRequestBackfillLoading] = React.useState(false);
   const [requestBackfillInitialized, setRequestBackfillInitialized] = React.useState(false);
+  const normalizedUniversity = React.useMemo(
+    () => String(userData?.university || '').trim().toLowerCase(),
+    [userData?.university]
+  );
 
   // Safety checks
-  const hasRequiredData = user?.uid && firestore && userData?.university;
+  const hasRequiredData = user?.uid && firestore && normalizedUniversity;
 
   const bookingsQuery = hasRequiredData ? query(
-    collection(firestore, 'universities', userData.university, 'bookings'),
+    collection(firestore, 'universities', normalizedUniversity, 'bookings'),
     where('passengerId', '==', user.uid),
     orderBy('createdAt', 'desc'),
     limit(100) // ── PERF: Limit to last 100 bookings ──
@@ -974,7 +1015,7 @@ export default function MyBookingsPage() {
       setRequestBackfillLoading(true);
       setRequestBackfillInitialized(false);
 
-      if (!firestore || !user?.uid || !userData?.university) {
+      if (!firestore || !user?.uid || !normalizedUniversity) {
         if (!cancelled) {
           setRequestBookings([]);
           setRequestBackfillLoading(false);
@@ -984,74 +1025,25 @@ export default function MyBookingsPage() {
       }
 
       try {
-        const requestsQuery = query(
-          collectionGroup(firestore, 'requests'),
-          where('passengerId', '==', user.uid),
-          limit(180)
+        const idToken = await user.getIdToken(true);
+        const response = await fetch(
+          `/api/bookings/request-backfill?university=${encodeURIComponent(normalizedUniversity)}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${idToken}`,
+            },
+          }
         );
 
-        const requestsSnap = await getDocs(requestsQuery);
-        if (cancelled) return;
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error || 'Failed to load accepted requests');
+        }
 
-        const activeStatuses = new Set(['PENDING', 'pending', 'ACCEPTED', 'accepted', 'CONFIRMED', 'confirmed']);
-
-        const mappedRequests = requestsSnap.docs
-          .filter((requestDoc) => requestDoc.ref.path.includes(`/universities/${userData.university}/`))
-          .map((requestDoc) => {
-            const requestData = requestDoc.data() as any;
-            const status = requestData?.status;
-            if (!activeStatuses.has(String(status || ''))) return null;
-
-            const segments = requestDoc.ref.path.split('/');
-            const rideSegmentIndex = segments.indexOf('rides');
-            const rideIdFromPath = rideSegmentIndex >= 0 ? segments[rideSegmentIndex + 1] : null;
-
-            return {
-              id: requestDoc.id,
-              rideId: requestData?.rideId || rideIdFromPath,
-              passengerId: requestData?.passengerId || user.uid,
-              driverId: requestData?.driverId,
-              status: status || 'PENDING',
-              createdAt: requestData?.createdAt || requestData?.updatedAt || null,
-              pickupPoint: requestData?.pickupPoint || null,
-              pickupPlaceName: requestData?.pickupPlaceName || null,
-              passengerDetails: requestData?.passengerDetails || null,
-              driverDetails: requestData?.driverDetails || null,
-              ride: requestData?.rideData || null,
-            } as BookingType;
-          })
-          .filter(Boolean) as BookingType[];
-
-        const rideIds = Array.from(new Set(
-          mappedRequests
-            .map((booking) => String(booking?.rideId || '').trim())
-            .filter(Boolean)
-        ));
-
-        const rideMap = new Map<string, any>();
-        await Promise.all(
-          rideIds.map(async (rideId) => {
-            try {
-              const rideSnap = await getDoc(doc(firestore, 'universities', userData.university, 'rides', rideId));
-              if (rideSnap.exists()) {
-                rideMap.set(rideId, { id: rideSnap.id, ...rideSnap.data() });
-              }
-            } catch (_) {
-              // Ignore single ride fetch failures, keep graceful fallback
-            }
-          })
-        );
-
-        const mapped = mappedRequests.map((booking) => {
-          const rideId = String(booking.rideId || '').trim();
-          const rideData = rideMap.get(rideId) || booking.ride || null;
-          return {
-            ...booking,
-            ride: rideData,
-            driverId: booking.driverId || rideData?.driverId || null,
-            driverDetails: booking.driverDetails || rideData?.driverInfo || null,
-          } as BookingType;
-        });
+        const mapped = Array.isArray(payload?.bookings)
+          ? payload.bookings as BookingType[]
+          : [];
 
         if (!cancelled) {
           setRequestBookings(mapped);
@@ -1072,7 +1064,7 @@ export default function MyBookingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, user?.uid, userData?.university, retryKey]);
+  }, [firestore, user?.uid, normalizedUniversity, retryKey]);
 
   // Safe bookings array
   const allBookings = toArray(bookingsData).filter((b) => b && b.id);
@@ -1087,6 +1079,22 @@ export default function MyBookingsPage() {
       return true;
     });
   }, [allBookings, requestBookings]);
+
+  // Debug logs
+  React.useEffect(() => {
+    console.log('[MyBookings] Debug Info:', {
+      allBookings: allBookings.length,
+      requestBookings: requestBookings.length,
+      totalBookings: bookings.length,
+      hasRequiredData,
+      normalizedUniversity,
+      bookingsLoading: loading,
+      requestBackfillLoading,
+      bookingsDataSample: allBookings[0] ? { id: allBookings[0].id, status: allBookings[0].status } : null,
+      requestBookingsSample: requestBookings[0] ? { id: requestBookings[0].id, status: requestBookings[0].status } : null,
+    });
+  }, [allBookings, requestBookings, bookings, hasRequiredData, normalizedUniversity, loading, requestBackfillLoading]);
+
   const visibleBookings = bookings.filter((booking) => {
     const normalizedStatus = String(booking?.status || '').trim().toUpperCase();
     if (!ACTIVE_BOOKING_STATUSES.has(normalizedStatus)) {
@@ -1094,7 +1102,10 @@ export default function MyBookingsPage() {
     }
 
     const bookingRide = safeGet(booking, 'ride');
-    const departureData = safeGet(bookingRide, 'departureTime') || safeGet(booking, 'ride.departureTime');
+    const departureData =
+      safeGet(bookingRide, 'departureTime') ||
+      safeGet(booking, 'ride.departureTime') ||
+      safeGet(booking, 'departureTime');
     const departureMs = parseTimestampToMs(departureData, { silent: true });
 
     if (departureMs === null) return true;
@@ -1114,7 +1125,10 @@ export default function MyBookingsPage() {
     ? Math.round((cancelledCount / allBookings.length) * 100)
     : 0;
 
-  const isLoading = userLoading || loading || requestBackfillLoading || (!requestBackfillInitialized && hasRequiredData);
+  const waitingForUniversityResolution = !!user?.uid && !userLoading && !normalizedUniversity;
+  const waitingForBackfillBeforeEmpty =
+    !!user?.uid && !!normalizedUniversity && allBookings.length === 0 && !requestBackfillInitialized;
+  const isLoading = userLoading || waitingForUniversityResolution || loading || waitingForBackfillBeforeEmpty;
   const hasError = !!queryError || !!pageError;
   const errorMessage = queryError?.message || pageError;
 
@@ -1212,12 +1226,12 @@ export default function MyBookingsPage() {
           <p className="text-slate-300">View and manage your ride bookings</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
           {visibleBookings.map((booking) => (
             <BookingCard
               key={`${booking.id}-${retryKey}`}
               booking={booking}
-              university={userData?.university}
+              university={normalizedUniversity}
               cancellationRate={cancellationRate}
             />
           ))}

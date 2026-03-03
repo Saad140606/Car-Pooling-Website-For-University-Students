@@ -26,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useUser } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
+import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { Loader2, MapPin, Lock } from 'lucide-react';
 import { LeavingTimePicker } from '@/components/ui/leaving-time-picker';
 import { errorEmitter } from '@/firebase/error-emitter';
@@ -847,6 +848,7 @@ export default function CreateRidePage() {
   const firestore = useFirestore();
   const router = useRouter();
   const { toast } = useToast();
+  const actionFeedback = useActionFeedback();
 
   const [fromCoords, setFromCoords] = useState<LatLngLiteral | null>(null);
   const [toCoords, setToCoords] = useState<LatLngLiteral | null>(null);
@@ -855,6 +857,8 @@ export default function CreateRidePage() {
   const [routeBounds, setRouteBounds] = useState<any | null>(null);
   const [routeWaypoints, setRouteWaypoints] = useState<{ name?: string; lat: number; lng: number }[] | null>(null);
   const [routeLatLngs, setRouteLatLngs] = useState<RouteLatLng[] | null>(null);
+  const [routeGenerating, setRouteGenerating] = useState(false);
+  const [routeGenerationError, setRouteGenerationError] = useState<string | null>(null);
   const [generatedStops, setGeneratedStops] = useState<any[] | null>(null);
   const [stopsLoading, setStopsLoading] = useState(false);
   const [recommendedPricePerSeat, setRecommendedPricePerSeat] = useState<number | null>(null);
@@ -1003,6 +1007,16 @@ export default function CreateRidePage() {
     // Clear stops when coordinates or route changes (route will regenerate)
     setGeneratedStops(null);
   }, [fromCoords?.lat, fromCoords?.lng, toCoords?.lat, toCoords?.lng, routeLatLngs]);
+
+  useEffect(() => {
+    if (fromCoords && toCoords) {
+      setRouteGenerating(true);
+      setRouteGenerationError(null);
+    } else {
+      setRouteGenerating(false);
+      setRouteGenerationError(null);
+    }
+  }, [fromCoords?.lat, fromCoords?.lng, toCoords?.lat, toCoords?.lng]);
   
   const [activeMapSelect, setActiveMapSelect] = useState<'from' | 'to' | null>(null);
   const [pendingSelection, setPendingSelection] = useState<{ center: L.LatLngExpression; bounds?: L.LatLngBoundsExpression; radius?: number } | null>(null);
@@ -1191,10 +1205,16 @@ export default function CreateRidePage() {
   const handleRouteUpdate = useCallback((distance: number | null, duration: number | null) => {
       if(distance) setDistanceKm(Math.round(distance * 100) / 100);
       if(duration) setDurationMin(Math.round(duration));
+      if (distance !== null && duration !== null) {
+        setRouteGenerating(false);
+        setRouteGenerationError(null);
+      }
   }, []);
 
   const onRouteGenerated = useCallback((data: { waypoints: any[]; polyline: string; bounds: any; distanceMeters?: number | null; durationSeconds?: number | null } ) => {
     try {
+      setRouteGenerating(false);
+      setRouteGenerationError(null);
       setRouteWaypoints(data.waypoints || []);
       setRoutePolyline(data.polyline || null);
       setRouteBounds(data.bounds || null);
@@ -2058,6 +2078,7 @@ export default function CreateRidePage() {
       };
 
       try {
+        actionFeedback.start('Creating ride, please wait…', 'Creating Ride...');
         console.debug('Creating ride: writing to Firestore', { university: userData!.university, rideData: sanitizedRideData });
         const ridesCollection = collection(firestore!, 'universities', universityId, 'rides');
 
@@ -2216,6 +2237,7 @@ export default function CreateRidePage() {
         }
         return; // we've already cleaned up
     } finally {
+      actionFeedback.clear();
       // Defensive: ensure submitting is cleared if it hasn't been already
       setIsSubmitting(false);
     }
@@ -2382,6 +2404,8 @@ export default function CreateRidePage() {
                     onRouteUpdate={handleRouteUpdate}
                     onRouteError={(err) => {
                       const msg = err?.message || 'Could not fetch route. Please try again.';
+                      setRouteGenerating(false);
+                      setRouteGenerationError(msg);
                       const isORSDown = /ORS proxy error|Status: 500|500/.test(msg);
                       const isNoRoute = /No routable path found|No route found/i.test(msg);
                       if (isORSDown) {
@@ -2424,6 +2448,17 @@ export default function CreateRidePage() {
                   onRouteGenerated={onRouteGenerated}
                   getAuthToken={user ? () => user.getIdToken() : undefined}
                 />
+                {routeGenerating && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-amber-300">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Route is generating, please wait...
+                  </div>
+                )}
+                {!!routeGenerationError && (
+                  <div className="mt-2 text-xs text-red-300">
+                    Route could not be generated. Please try selecting again or choose a different location.
+                  </div>
+                )}
                 {routePolyline ? (
                   <div className="mt-2 text-xs text-muted-foreground">
                     {(() => {

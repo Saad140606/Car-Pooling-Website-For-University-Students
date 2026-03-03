@@ -23,17 +23,8 @@ const FIRST_RIDE_CATEGORIES = ['Safety', 'Punctuality', 'Ride Comfort', 'Driver/
 const APP_FEEDBACK_CATEGORIES = ['App UI', 'Performance', 'Bugs', 'Feature Request', 'Other'];
 
 export default function FeedbackPromptsManager() {
-  const { user, data: userData } = useUser();
-  const { toast } = useToast();
-
-  const [open, setOpen] = React.useState(false);
-  const [activePrompt, setActivePrompt] = React.useState<PromptType | null>(null);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [rating, setRating] = React.useState(0);
-  const [hoveredRating, setHoveredRating] = React.useState(0);
-  const [category, setCategory] = React.useState('');
-  const [comment, setComment] = React.useState('');
+  // DISABLED: Feedback form temporarily disabled per user request
+  return null;
 
   const fetchPrompts = React.useCallback(async () => {
     if (!user || !userData?.university) return;

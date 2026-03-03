@@ -139,20 +139,25 @@ export async function notifyNewRideRequest(
   driverId: string,
   rideId: string,
   passenger: PassengerInfo,
-  ride: Pick<RideInfo, 'from' | 'to'>
+  ride: Pick<RideInfo, 'from' | 'to'> & { pickupPoint?: string | null; dropoffPoint?: string | null }
 ): Promise<void> {
+  const pickupPoint = (ride.pickupPoint || '').trim() || ride.from;
+  const dropoffPoint = (ride.dropoffPoint || '').trim() || ride.to;
+
   await createNotificationDoc(firestore, university, {
     userId: driverId,
     type: 'ride_request',
     title: 'New Ride Request 🚗',
-    message: `${passenger.fullName} wants to join your ride from ${ride.from} to ${ride.to}`,
+    message: `${passenger.fullName} requested a ride. Pickup: ${pickupPoint}. Dropoff: ${dropoffPoint}.`,
     relatedRideId: rideId,
     priority: 'high',
     metadata: {
       senderId: passenger.uid,
       senderName: passenger.fullName,
       rideFrom: ride.from,
-      rideTo: ride.to
+      rideTo: ride.to,
+      pickupPoint,
+      dropoffPoint,
     }
   });
 }

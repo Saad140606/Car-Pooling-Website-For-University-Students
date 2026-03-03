@@ -36,7 +36,7 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
 
       // If user is authenticated, handle email verification before routing to dashboard
       if (user) {
-        const isVerified = Boolean((userData as any)?.universityEmailVerified ?? (userData as any)?.emailVerified);
+        const isVerified = Boolean((userData as any)?.universityEmailVerified);
         const university = (userData as any)?.university || null;
 
         if (university && !isVerified && !verificationHandledRef.current) {

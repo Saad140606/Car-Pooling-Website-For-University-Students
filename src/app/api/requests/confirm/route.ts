@@ -288,22 +288,37 @@ export async function POST(req: NextRequest) {
         const rideData = rideSnap.data() as any;
         const requestData = requestSnap.data() as any;
         
-        // Get passenger info for notification
-        const passengerRef = await adminDb.collection('users').doc(authenticatedUserId).get();
+        // Get passenger info for notification from university-scoped users collection
+        const passengerRef = await adminDb.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
         const passengerData = passengerRef.data() as any;
-        
-        await notifyRideConfirmed(
-          adminDb,
-          validUniversity,
-          rideData?.driverId,
-          rideId,
-          requestId,
-          passengerData?.fullName || 'Passenger',
-          {
-            from: rideData?.pickupLocation || rideData?.from || 'Starting point',
-            to: rideData?.dropoffLocation || rideData?.to || 'Destination'
-          }
-        );
+
+        const targetDriverId =
+          rideData?.driverId ||
+          rideData?.createdBy ||
+          requestData?.driverId ||
+          requestData?.providerId ||
+          null;
+
+        if (!targetDriverId) {
+          console.warn('[ConfirmRequest] Missing driver id, skipping ride_confirmed notification', {
+            university: validUniversity,
+            rideId,
+            requestId,
+          });
+        } else {
+          await notifyRideConfirmed(
+            adminDb,
+            validUniversity,
+            targetDriverId,
+            rideId,
+            requestId,
+            passengerData?.fullName || requestData?.passengerDetails?.fullName || requestData?.passengerDetails?.name || 'Passenger',
+            {
+              from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+              to: rideData?.dropoffLocation || rideData?.to || 'Destination'
+            }
+          );
+        }
       }
     } catch (notifError) {
       // Log notification error but don't fail the request

@@ -128,6 +128,45 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           }
         };
 
+        const bootstrapChatFromRequest = async (): Promise<{ id: string; data: any } | null> => {
+          if (!chatId || !user?.uid) return null;
+          try {
+            const separatorIndex = chatId.indexOf('_');
+            if (separatorIndex <= 0) return null;
+            const rideId = chatId.slice(0, separatorIndex);
+            if (!rideId) return null;
+
+            const requestRef = doc(firestore, `universities/${universityId}/rides/${rideId}/requests`, chatId);
+            const requestSnap = await getDoc(requestRef);
+            if (!requestSnap.exists()) return null;
+            const requestData = requestSnap.data() as any;
+
+            const passengerId = requestData?.passengerId;
+            const providerId = requestData?.driverId || requestData?.providerId;
+            if (!passengerId || !providerId) return null;
+            if (user.uid !== passengerId && user.uid !== providerId) return null;
+
+            const payload = {
+              bookingId: chatId,
+              rideId,
+              passengerId,
+              providerId,
+              participants: [passengerId, providerId],
+              passengerDetails: requestData?.passengerDetails || null,
+              status: 'active',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            };
+
+            const newChatRef = chatRef(firestore, universityId, chatId);
+            await setDoc(newChatRef, payload, { merge: true });
+            return { id: chatId, data: payload };
+          } catch (bootstrapErr) {
+            console.debug('useChat: bootstrap chat from request failed', bootstrapErr);
+            return null;
+          }
+        };
+
         let targetChatId = chatId as string;
         let data: any = null;
 
@@ -154,6 +193,14 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           if (bootstrapped) {
             targetChatId = bootstrapped.id;
             data = bootstrapped.data;
+          }
+        }
+
+        if (!data) {
+          const fromRequest = await bootstrapChatFromRequest();
+          if (fromRequest) {
+            targetChatId = fromRequest.id;
+            data = fromRequest.data;
           }
         }
 
@@ -218,6 +265,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           // Fallback: some legacy chat docs may omit a participants array but include a bookingId.
           // In that case verify membership by reading the booking referenced by chat.bookingId.
           let allowedViaBooking = false;
+          let allowedViaRequest = false;
           try {
             if (data?.bookingId && typeof data.bookingId === 'string') {
               const bookingRef = doc(firestore, `universities/${universityId}/bookings`, data.bookingId);
@@ -230,12 +278,27 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
                 // also allow if chat explicitly names providerId and it matches the current user
                 if (!allowedViaBooking && data?.providerId && data.providerId === user.uid) allowedViaBooking = true;
               }
+
+              if (!allowedViaBooking) {
+                const separatorIndex = data.bookingId.indexOf('_');
+                if (separatorIndex > 0) {
+                  const rideId = data.bookingId.slice(0, separatorIndex);
+                  const reqRef = doc(firestore, `universities/${universityId}/rides/${rideId}/requests`, data.bookingId);
+                  const reqSnap = await getDoc(reqRef);
+                  if (reqSnap.exists()) {
+                    const reqData = reqSnap.data() as any;
+                    if (reqData?.passengerId === user.uid || reqData?.driverId === user.uid || reqData?.providerId === user.uid) {
+                      allowedViaRequest = true;
+                    }
+                  }
+                }
+              }
             }
           } catch (e) {
             // ignore booking read errors — we'll fall back to denying access below
           }
 
-          if (!allowedViaBooking) {
+          if (!allowedViaBooking && !allowedViaRequest) {
             try {
               // eslint-disable-next-line no-console
               console.warn('useChat: access denied for chat', { chatId, resolvedParticipants: Array.from(participants), currentUid: user?.uid });
@@ -300,5 +363,14 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
     } catch (_) {}
   }, [firestore, chatId, resolvedChatId, user, universityId]);
 
-  return { messages, loading, sendMessage, setTyping, accessible, resolvedChatId };
+  return {
+    messages,
+    loading,
+    sendMessage,
+    setTyping,
+    accessible,
+    resolvedChatId,
+    resolvedRecipientId,
+    resolvedRideId,
+  };
 }

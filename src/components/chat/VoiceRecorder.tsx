@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Trash2, Send, AlertCircle } from 'lucide-react';
 import { voiceMessageService } from '@/lib/voiceMessageService';
 
-export default function VoiceRecorder({ onSend }: { onSend: (url: string) => void }) {
+export default function VoiceRecorder({ onSend, disabled = false }: { onSend: (url: string) => Promise<any> | any; disabled?: boolean }) {
   const [recording, setRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [duration, setDuration] = useState(0);
@@ -32,6 +32,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
   }, []);
 
   const startRecording = async () => {
+    if (disabled) return;
     try {
       setError(null);
       setRetryCount(0);
@@ -120,6 +121,7 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
   };
 
   const sendVoice = async () => {
+    if (disabled) return;
     if (!audioBlob) return;
     
     setUploading(true);
@@ -236,7 +238,8 @@ export default function VoiceRecorder({ onSend }: { onSend: (url: string) => voi
   return (
     <button
       onClick={startRecording}
-      className="p-2.5 rounded-full hover:bg-primary/20 text-primary transition-colors"
+      disabled={disabled}
+      className="p-2.5 rounded-full hover:bg-primary/20 text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       title="Record voice message"
     >
       <Mic className="h-5 w-5" />

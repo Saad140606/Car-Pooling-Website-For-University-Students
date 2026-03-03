@@ -66,6 +66,12 @@ export async function POST(req: NextRequest) {
     const rideRef = db.doc(`universities/${validUniversity}/rides/${rideId}`);
 
     const result = await db.runTransaction(async (tx) => {
+      const rideSnap = await tx.get(rideRef);
+      if (!rideSnap.exists) {
+        throw new Error('Ride not found');
+      }
+      const ride = rideSnap.data() as any;
+
       const reqSnap = await tx.get(requestRef);
       if (!reqSnap.exists) {
         throw new Error('Request not found');
@@ -73,11 +79,14 @@ export async function POST(req: NextRequest) {
       const request = reqSnap.data() as any;
 
       // ===== AUTHORIZATION: Verify authenticated user is the driver =====
-      if (request.driverId !== authenticatedUserId) {
+      const requestDriverId = request?.driverId || request?.providerId;
+      const rideOwnerId = ride?.driverId || ride?.createdBy;
+      if (authenticatedUserId !== requestDriverId && authenticatedUserId !== rideOwnerId) {
         throw new Error('FORBIDDEN: Only the ride owner can reject requests');
       }
 
-      if (request.status !== 'PENDING') {
+      const normalizedRequestStatus = String(request.status || '').toUpperCase();
+      if (normalizedRequestStatus !== 'PENDING') {
         throw new Error('Only PENDING requests can be rejected');
       }
 
@@ -95,7 +104,9 @@ export async function POST(req: NextRequest) {
     try {
       // Get ride info for notification
       const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+      const actorSnap = await adminDb.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
       const rideData = rideSnap.data() as any;
+      const actorData = actorSnap.data() as any;
       
       if (result.passengerId) {
         await notifyRequestRejected(
@@ -106,7 +117,13 @@ export async function POST(req: NextRequest) {
           requestId,
           {
             from: rideData?.pickupLocation || rideData?.from || 'Starting point',
-            to: rideData?.dropoffLocation || rideData?.to || 'Destination'
+            to: rideData?.dropoffLocation || rideData?.to || 'Destination',
+            driverName:
+              actorData?.fullName ||
+              actorData?.name ||
+              rideData?.driverInfo?.fullName ||
+              rideData?.driverName ||
+              'Driver',
           }
         );
       }

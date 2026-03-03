@@ -198,19 +198,20 @@ export async function notifyRequestRejected(
   passengerId: string,
   rideId: string,
   bookingId: string,
-  ride: Pick<RideInfo, 'from' | 'to'>
+  ride: Pick<RideInfo, 'from' | 'to' | 'driverName'>
 ): Promise<void> {
   await createNotificationDoc(firestore, university, {
     userId: passengerId,
     type: 'ride_rejected',
-    title: 'Request Declined',
-    message: `Your request for ${ride.from} → ${ride.to} was not accepted. Find another ride.`,
+    title: 'Request Rejected',
+    message: `${ride.driverName || 'The driver'} rejected your request for ${ride.from} → ${ride.to}.`,
     relatedRideId: rideId,
     relatedBookingId: bookingId,
     priority: 'normal',
     metadata: {
       rideFrom: ride.from,
-      rideTo: ride.to
+      rideTo: ride.to,
+      senderName: ride.driverName,
     }
   });
 }

@@ -218,6 +218,24 @@ export function AuthForm({ university, action }: AuthFormProps) {
           });
           return;
         }
+
+        // Google sign-in must NOT auto-mark university email as verified.
+        // If this was incorrectly set in older versions without verification timestamp,
+        // normalize it back to false and require OTP flow.
+        if (
+          existingProfile?.authProvider === 'google' &&
+          existingProfile?.universityEmailVerified === true &&
+          !existingProfile?.universityEmailVerifiedAt
+        ) {
+          await setDoc(
+            universityUserRef,
+            {
+              universityEmailVerified: false,
+              emailVerified: false,
+            },
+            { merge: true }
+          );
+        }
       }
 
       if (!universityUserSnap.exists()) {
@@ -231,19 +249,17 @@ export function AuthForm({ university, action }: AuthFormProps) {
             university: selectedUni,
             role: 'passenger',
             createdAt: serverTimestamp(),
-            emailVerified: true,
-            universityEmailVerified: true,
+            emailVerified: false,
+            universityEmailVerified: false,
             authProvider: 'google',
           },
           { merge: true }
         );
       } else {
-        // Ensure existing Google users are treated as verified without OTP.
+        // Keep Google-auth account marker, but do not auto-verify university email.
         await setDoc(
           universityUserRef,
           {
-            emailVerified: true,
-            universityEmailVerified: true,
             authProvider: 'google',
           },
           { merge: true }
@@ -524,7 +540,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
               }
             }
 
-            emailVerifiedFlag = Boolean(profile?.universityEmailVerified ?? profile?.emailVerified);
+            emailVerifiedFlag = Boolean(profile?.universityEmailVerified);
           }
 
           // If user does NOT have a university profile yet, force verification flow

@@ -274,6 +274,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
   const isPendingRequest = existingRequestStatus === 'pending' || existingRequestStatus === 'PENDING';
   const isRejectedRequest = existingRequestStatus === 'rejected' || existingRequestStatus === 'REJECTED';
   const isAcceptedRequest = existingRequestStatus === 'ACCEPTED' || existingRequestStatus === 'accepted';
+  const rideDriverName = String(ride?.driverInfo?.fullName || ride?.driverName || 'Driver');
 
   const disabledReason = isDriver ? "Can't book own ride"
     : isFull ? 'Ride is full'
@@ -802,10 +803,16 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
 
           {isRejectedRequest && existingRequest && (
             <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-lg">
-              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Request Declined ❌</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Request Update ❌</h3>
               <p className="text-sm text-gray-700 dark:text-gray-300">
-                The ride provider declined your request. You can request again if seats are still available.
+                {rideDriverName} rejected your request. You can send a new request if seats are still available.
               </p>
+            </div>
+          )}
+
+          {loading && (
+            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-sm text-blue-800 dark:text-blue-200 font-medium">Your request is sending, please wait...</p>
             </div>
           )}
 
@@ -884,7 +891,7 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
                 disabled={!existingChecked || !pickupPoint || loading || !!disabledReason}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition shadow-sm min-w-[140px] ${(!existingChecked || !pickupPoint || loading || disabledReason) ? 'bg-slate-500/60 text-slate-100 cursor-not-allowed' : 'bg-[#3F51B5] text-white hover:brightness-105'}`}
               >
-                {loading ? 'Sending...' : (disabledReason ? 'Not allowed' : (isFromUniversity ? 'Request Drop' : 'Request Pickup'))}
+                {loading ? 'Request is sending...' : (disabledReason ? 'Not allowed' : (isFromUniversity ? 'Request Drop' : 'Request Pickup'))}
               </button>
 
               {disabledReason && (

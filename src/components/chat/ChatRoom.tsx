@@ -9,11 +9,21 @@ import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverT
 import { createNotification } from '@/firebase/firestore/notifications';
 
 export default function ChatRoom({ chatId, university }: { chatId: string, university: string }) {
-  const { messages, loading, sendMessage, setTyping, accessible, resolvedChatId } = useChat(chatId, university);
+  const {
+    messages,
+    loading,
+    sendMessage,
+    setTyping,
+    accessible,
+    resolvedChatId,
+    resolvedRecipientId: chatResolvedRecipientId,
+    resolvedRideId: chatResolvedRideId,
+  } = useChat(chatId, university);
   const { user } = useUser();
   const firestore = useFirestore();
   const activeChatId = resolvedChatId || chatId;
   const [meta, setMeta] = useState<any>(null);
+  const [resolvedOtherUser, setResolvedOtherUser] = useState<any>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -143,7 +153,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
   const [incomingCall, setIncomingCall] = useState<any | null>(null);
 
-  const resolvedRecipientId = user?.uid
+  const derivedRecipientId = user?.uid
     ? (
         (meta?.passengerId && meta.passengerId !== user.uid && meta.passengerId) ||
         ((meta?.providerId || meta?.driverId) && (meta?.providerId || meta?.driverId) !== user.uid && (meta?.providerId || meta?.driverId)) ||
@@ -152,6 +162,25 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           : null)
       )
     : null;
+  const resolvedRecipientId = chatResolvedRecipientId || derivedRecipientId || null;
+  const messageDerivedRecipientId = React.useMemo(() => {
+    if (!user?.uid || !Array.isArray(messages)) return null;
+    const firstIncoming = messages.find((item: any) => item?.senderId && item.senderId !== user.uid);
+    return firstIncoming?.senderId || null;
+  }, [messages, user?.uid]);
+  const chatIdDerivedRecipientId = React.useMemo(() => {
+    if (!activeChatId || !user?.uid) return null;
+    const separatorIndex = activeChatId.indexOf('_');
+    if (separatorIndex <= 0) return null;
+    const candidateId = activeChatId.slice(separatorIndex + 1);
+    if (!candidateId || candidateId === user.uid) return null;
+    return candidateId;
+  }, [activeChatId, user?.uid]);
+  const effectiveRecipientId =
+    resolvedRecipientId ||
+    messageDerivedRecipientId ||
+    chatIdDerivedRecipientId ||
+    null;
 
   const resolvedSenderName =
     user?.displayName ||
@@ -159,7 +188,60 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     meta?.currentUserDetails?.name ||
     null;
 
-  const resolvedRideId = meta?.rideId || meta?.bookingId || chatId;
+  const resolvedRideId = chatResolvedRideId || meta?.rideId || meta?.bookingId || chatId;
+
+  useEffect(() => {
+    let mounted = true;
+    const hydrateOtherUser = async () => {
+      if (!firestore || !effectiveRecipientId) {
+        if (mounted) setResolvedOtherUser(null);
+        return;
+      }
+
+      const tryUniversities = [university, meta?.university, 'fast', 'ned', 'karachi'].filter(Boolean);
+      for (const uni of tryUniversities) {
+        try {
+          const userSnap = await getDoc(doc(firestore, 'universities', String(uni), 'users', effectiveRecipientId));
+          if (userSnap.exists()) {
+            if (mounted) setResolvedOtherUser(userSnap.data());
+            return;
+          }
+        } catch (_) {
+          // try next university
+        }
+      }
+    };
+
+    hydrateOtherUser();
+    return () => { mounted = false; };
+  }, [firestore, effectiveRecipientId, university, meta?.university]);
+
+  const effectiveMeta = React.useMemo(() => {
+    if (!meta) return meta;
+    const next = { ...meta } as any;
+
+    if (resolvedOtherUser && user?.uid) {
+      if (meta?.passengerId === user.uid) {
+        if (!next.providerDetails) next.providerDetails = resolvedOtherUser;
+        if (!next.driverDetails) next.driverDetails = resolvedOtherUser;
+      } else {
+        if (!next.passengerDetails) next.passengerDetails = resolvedOtherUser;
+      }
+    }
+
+    const fallbackIncomingSenderName = Array.isArray(messages)
+      ? (messages.find((item: any) => item?.senderId && item.senderId !== user?.uid && item?.senderName)?.senderName || null)
+      : null;
+
+    if (!next.otherUserName) {
+      next.otherUserName =
+        resolvedOtherUser?.fullName ||
+        resolvedOtherUser?.name ||
+        fallbackIncomingSenderName ||
+        undefined;
+    }
+    return next;
+  }, [meta, resolvedOtherUser, user?.uid, messages]);
 
   // Listen for incoming call signals on `universities/{university}/calls/{chatId}`
   useEffect(() => {
@@ -457,6 +539,9 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             calleeId = meta.passengerId === user.uid ? meta.providerId : meta.passengerId;
           }
         } catch (_) {}
+        if (!calleeId && effectiveRecipientId) {
+          calleeId = effectiveRecipientId;
+        }
         
         if (!calleeId) {
           setCallError('Unable to start call: chat participant not found');
@@ -850,7 +935,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   if (accessible === false) {
     return (
       <div className="flex flex-col h-[40vh] items-center justify-center text-center p-6">
-        <ChatHeader meta={meta} university={university} />
+        <ChatHeader meta={effectiveMeta} university={university} />
         <div className="text-sm text-muted-foreground">Chat unavailable. Ensure you are a participant and the chat exists.</div>
         <div className="text-xs text-slate-400 mt-4">
           <div>Debug info:</div>
@@ -864,7 +949,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
   return (
     <div className="flex flex-col h-[70vh] sm:h-[75vh] md:h-[70vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-700/50">
-      <ChatHeader meta={meta} university={university} onStartCall={(mode) => startCall(mode)} onHangup={() => hangup()} calling={inCall} />
+      <ChatHeader meta={effectiveMeta} university={university} onStartCall={(mode) => startCall(mode)} onHangup={() => hangup()} calling={inCall} />
 
       {callError && (
         <div className="px-3 sm:px-4 py-2 bg-red-500/10 text-red-200 border-b border-red-500/30 text-xs sm:text-sm">
@@ -982,27 +1067,27 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           ) : (
             messages.map((m) => {
               // Determine the sender's real name and verification status
-              const isCurrentUserPassenger = meta?.passengerId === user?.uid;
+              const isCurrentUserPassenger = effectiveMeta?.passengerId === user?.uid;
               
               // For received messages (not own), get the OTHER person's details
               let senderDetails: any = null;
               if (m.senderId !== user?.uid) {
                 // Sender is NOT current user - determine which details to show
-                if (m.senderId === meta?.passengerId) {
+                if (m.senderId === effectiveMeta?.passengerId) {
                   // Sender is the passenger
-                  senderDetails = meta?.passengerDetails;
-                } else if (m.senderId === meta?.providerId || m.senderId === meta?.driverId) {
+                  senderDetails = effectiveMeta?.passengerDetails;
+                } else if (m.senderId === effectiveMeta?.providerId || m.senderId === effectiveMeta?.driverId) {
                   // Sender is the provider/driver
-                  senderDetails = meta?.providerDetails || meta?.driverDetails;
+                  senderDetails = effectiveMeta?.providerDetails || effectiveMeta?.driverDetails;
                 } else {
                   // Fallback: use opposite of current user
                   senderDetails = isCurrentUserPassenger 
-                    ? (meta?.providerDetails || meta?.driverDetails)
-                    : meta?.passengerDetails;
+                    ? (effectiveMeta?.providerDetails || effectiveMeta?.driverDetails)
+                    : effectiveMeta?.passengerDetails;
                 }
               }
               
-              const senderName = senderDetails?.fullName || senderDetails?.name || null;
+              const senderName = senderDetails?.fullName || senderDetails?.name || m?.senderName || effectiveMeta?.otherUserName || null;
               const senderVerified = !!(senderDetails?.universityEmailVerified && senderDetails?.idVerified) || senderDetails?.isVerified || false;
               const initials = senderName?.split(' ').map((n: string) => n[0]).slice(0, 2).join('') || '?';
               
@@ -1066,6 +1151,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             type: 'text',
             content: text,
             recipientId: resolvedRecipientId || undefined,
+            recipientId: effectiveRecipientId || undefined,
             rideId: resolvedRideId,
             senderName: resolvedSenderName || undefined,
           })} 
@@ -1073,18 +1159,18 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           onSendMedia={async (mediaUrl, type) => await sendMessage({
             type,
             mediaUrl,
-            recipientId: resolvedRecipientId || undefined,
+            recipientId: effectiveRecipientId || undefined,
             rideId: resolvedRideId,
             senderName: resolvedSenderName || undefined,
           })}
           onSendVoice={async (mediaUrl) => await sendMessage({
             type: 'voice',
             mediaUrl,
-            recipientId: resolvedRecipientId || undefined,
+            recipientId: effectiveRecipientId || undefined,
             rideId: resolvedRideId,
             senderName: resolvedSenderName || undefined,
           })}
-          disabled={meta?.status !== 'active' || accessible !== true} 
+          disabled={effectiveMeta?.status !== 'active' || accessible !== true} 
         />
       </div>
     </div>

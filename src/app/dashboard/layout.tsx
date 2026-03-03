@@ -101,7 +101,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }
 
         const profile = userDoc.data();
-        const emailVerified = Boolean(profile?.universityEmailVerified ?? profile?.emailVerified);
+        const emailVerified = Boolean(profile?.universityEmailVerified);
 
         if (!emailVerified) {
           console.log('[Dashboard] Unverified user detected, redirecting to verification');

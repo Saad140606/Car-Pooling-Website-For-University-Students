@@ -3,7 +3,7 @@
  * 
  * Centralized logic for determining user verification status.
  * A user is VERIFIED if and only if:
- * - emailVerified === true (OR universityEmailVerified === true)
+ * - universityEmailVerified === true
  * - idVerified === true
  */
 
@@ -15,7 +15,7 @@
 export function isUserVerified(user: any): boolean {
   if (!user) return false;
   
-  const hasEmailVerification = user.emailVerified === true || user.universityEmailVerified === true;
+  const hasEmailVerification = user.universityEmailVerified === true;
   const hasIdVerification = user.idVerified === true;
   
   return hasEmailVerification && hasIdVerification;
@@ -45,7 +45,7 @@ export function getVerificationState(user: any): {
     return { emailVerified: false, idVerified: false, isVerified: false };
   }
 
-  const emailVerified = user.emailVerified === true || user.universityEmailVerified === true;
+  const emailVerified = user.universityEmailVerified === true;
   const idVerified = user.idVerified === true;
 
   return {

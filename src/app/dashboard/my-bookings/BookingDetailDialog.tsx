@@ -20,6 +20,12 @@ interface BookingDetailDialogProps {
 export function BookingDetailDialog({ open, onOpenChange, booking }: BookingDetailDialogProps) {
   const ride = booking?.ride || {};
   const driver = booking?.driverDetails || booking?.ride?.driverInfo || { fullName: 'Driver' };
+  const driverContactNumber =
+    driver?.contactNumber ||
+    driver?.phone ||
+    booking?.driverDetails?.contactNumber ||
+    booking?.driverDetails?.phone ||
+    null;
   
   const formatTimestamp = (timestamp: any) => {
     if (!timestamp) return 'Time TBD';
@@ -93,6 +99,11 @@ export function BookingDetailDialog({ open, onOpenChange, booking }: BookingDeta
             <div className="min-w-0">
               <p className="text-xs text-slate-400">Driver</p>
               <p className="text-sm font-semibold text-white break-words">{driver.fullName || 'Ride Provider'}</p>
+              {driverContactNumber && (
+                <p className="text-xs text-slate-300 mt-1">
+                  Contact: <a href={`tel:${driverContactNumber}`} className="text-primary hover:underline">{driverContactNumber}</a>
+                </p>
+              )}
             </div>
           </div>
 

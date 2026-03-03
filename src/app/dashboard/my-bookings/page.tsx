@@ -17,8 +17,8 @@ import { UserNameWithBadge } from '@/components/UserNameWithBadge';
 import { isUserVerified } from '@/lib/verificationUtils';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { MapPin, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { MapPin, Clock, Users, CheckCircle2, AlertCircle, Star } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -54,21 +54,7 @@ function formatDate(ts: any, defaultValue = '') {
   try {
     if (!ts) return defaultValue;
 
-    let milliseconds: number | null = null;
-    if (typeof ts === 'number') {
-      milliseconds = ts;
-    } else if (typeof ts === 'string') {
-      const parsed = Date.parse(ts);
-      milliseconds = Number.isNaN(parsed) ? null : parsed;
-    } else if (ts instanceof Date) {
-      milliseconds = ts.getTime();
-    } else if (typeof ts === 'object') {
-      if (typeof ts.seconds === 'number') {
-        milliseconds = ts.seconds * 1000;
-      } else if (typeof ts.toMillis === 'function') {
-        milliseconds = ts.toMillis();
-      }
-    }
+    const milliseconds = parseTimestampToMs(ts, { silent: true });
 
     if (milliseconds === null) return defaultValue;
     const date = new Date(milliseconds);
@@ -107,8 +93,12 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
   const [isCompleting, setIsCompleting] = React.useState(false);
   const [cancelReason, setCancelReason] = React.useState('');
+  const [completionDecision, setCompletionDecision] = React.useState<'completed' | 'issue' | null>(null);
+  const [completionRating, setCompletionRating] = React.useState<number>(0);
+  const [completionFeedback, setCompletionFeedback] = React.useState<string>('');
   const [showRoutePickup, setShowRoutePickup] = React.useState(false);
-  const [showCompletionCancel, setShowCompletionCancel] = React.useState(false);
+  const [showPassengerCompletionDialog, setShowPassengerCompletionDialog] = React.useState(false);
+  const [showConfirmRideDialog, setShowConfirmRideDialog] = React.useState(false);
   const initialStatus = String(booking.status || 'pending');
   const [confirmationProcessed, setConfirmationProcessed] = React.useState(initialStatus.toUpperCase() === 'CONFIRMED');
   const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
@@ -139,6 +129,25 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const hasSubmittedPassengerCompletion =
     !!safeGet(booking, 'passengerCompletion') ||
     !!passengerCompletionFromRide;
+  const isConfirmedByRideState = React.useMemo(() => {
+    if (!user?.uid) return false;
+    const confirmedPassengers = Array.isArray((ride as any)?.confirmedPassengers)
+      ? (ride as any).confirmedPassengers
+      : [];
+
+    return confirmedPassengers.some((p: any) => {
+      if (typeof p === 'string') return p === user.uid;
+      return p?.userId === user.uid;
+    });
+  }, [ride, user?.uid]);
+  const isEffectivelyConfirmed = normalizedStatus === 'CONFIRMED' || confirmationProcessed || isConfirmedByRideState;
+
+  React.useEffect(() => {
+    if (isConfirmedByRideState) {
+      setConfirmationProcessed(true);
+      setLocalBookingStatus('CONFIRMED');
+    }
+  }, [isConfirmedByRideState]);
 
   // CRITICAL: Client-side lifecycle monitor for deterministic completion window
   const lifecycleState = useRideLifecycleMonitor({
@@ -148,11 +157,22 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
     // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
   });
   const shouldShowPassengerCompletionForm =
-    lifecycleState.lifecycleStatus === 'COMPLETION_WINDOW' &&
     lifecycleState.shouldShowCompletionUI &&
     lifecycleState.minutesUntilCompletion !== null &&
     lifecycleState.minutesUntilCompletion <= 0 &&
     !hasSubmittedPassengerCompletion;
+
+  React.useEffect(() => {
+    if (shouldShowPassengerCompletionForm) {
+      setShowPassengerCompletionDialog(true);
+      return;
+    }
+    setShowPassengerCompletionDialog(false);
+    setCompletionDecision(null);
+    setCompletionRating(0);
+    setCompletionFeedback('');
+    setCancelReason('');
+  }, [shouldShowPassengerCompletionForm]);
 
   // Safe ride status check
   const checkRideStatus = React.useCallback(async () => {
@@ -174,14 +194,14 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         return;
       }
 
-      const departureTime = new Date(
-        departureTimeData.seconds ? departureTimeData.seconds * 1000 : departureTimeData
-      );
-      
-      if (isNaN(departureTime.getTime())) {
+      const departureTimeMs = parseTimestampToMs(departureTimeData, { silent: true });
+
+      if (departureTimeMs === null) {
         console.debug('[BookingCard] Invalid departure time');
         return;
       }
+
+      const departureTime = new Date(departureTimeMs);
 
       if (departureTime <= new Date()) {
         setRideStatus('expired');
@@ -218,7 +238,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
 
   const handleConfirmRide = async () => {
     // ONE-CLICK PROTECTION: Prevent duplicate confirmations
-    if (confirmationProcessed || normalizedStatus === 'CONFIRMED') {
+    if (isEffectivelyConfirmed) {
       toast({
         title: 'Already Confirmed',
         description: 'This ride has already been confirmed.'
@@ -313,6 +333,10 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
 
   const handlePassengerComplete = async () => {
     if (!user) return;
+    if (completionRating < 1) {
+      toast({ variant: 'destructive', title: 'Rating Required', description: 'Please add a rating before submitting.' });
+      return;
+    }
     setIsCompleting(true);
     try {
       const idToken = await user.getIdToken();
@@ -326,6 +350,8 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
           university,
           rideId: ride?.id || booking.rideId,
           action: 'passenger_complete',
+          rating: completionRating,
+          feedback: completionFeedback.trim() || null,
         }),
       });
 
@@ -336,6 +362,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       }
 
       toast({ title: 'Completion Confirmed', description: 'Thanks for confirming your ride.' });
+      setShowPassengerCompletionDialog(false);
+      setCompletionDecision(null);
+      setCompletionRating(0);
+      setCompletionFeedback('');
+      setCancelReason('');
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to confirm completion.' });
     } finally {
@@ -347,6 +378,10 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
     if (!user) return;
     if (!cancelReason.trim()) {
       toast({ variant: 'destructive', title: 'Reason Required', description: 'Please provide a cancellation reason.' });
+      return;
+    }
+    if (completionRating < 1) {
+      toast({ variant: 'destructive', title: 'Rating Required', description: 'Please add a rating before submitting.' });
       return;
     }
 
@@ -364,6 +399,8 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
           rideId: ride?.id || booking.rideId,
           action: 'passenger_cancel',
           reason: cancelReason,
+          rating: completionRating,
+          feedback: completionFeedback.trim() || null,
         }),
       });
 
@@ -374,7 +411,10 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       }
 
       toast({ title: 'Cancellation Submitted', description: 'Your cancellation has been recorded.' });
-      setShowCompletionCancel(false);
+      setShowPassengerCompletionDialog(false);
+      setCompletionDecision(null);
+      setCompletionRating(0);
+      setCompletionFeedback('');
       setCancelReason('');
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to submit cancellation.' });
@@ -470,10 +510,12 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
     const updateTimer = () => {
       try {
         const now = new Date();
-        const departureData = departureSource;
-        const departure = new Date(
-          departureData?.seconds ? departureData.seconds * 1000 : departureData
-        );
+        const departureMs = parseTimestampToMs(departureSource, { silent: true });
+        if (departureMs === null) {
+          setDepartureTimer('Invalid time');
+          return;
+        }
+        const departure = new Date(departureMs);
 
         if (isNaN(departure.getTime())) {
           setDepartureTimer('Invalid time');
@@ -505,6 +547,12 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
 
   const driverName = safeGet(driver, 'fullName', 'Ride Provider');
   const driverVerified = !!(safeGet(driver, 'universityEmailVerified') && safeGet(driver, 'idVerified')) || safeGet(driver, 'isVerified') || false;
+  const driverContactNumber =
+    safeGet(driver, 'contactNumber') ||
+    safeGet(driver, 'phone') ||
+    safeGet(booking, 'driverDetails.contactNumber') ||
+    safeGet(booking, 'driverDetails.phone') ||
+    '';
   const driverInitials = driverName.split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase();
   const rideFrom = safeGet(ride, 'from', 'Unknown');
   const rideTo = safeGet(ride, 'to', 'Unknown');
@@ -652,6 +700,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                   </Badge>
                 )}
               </div>
+              {driverContactNumber && (
+                <div className="mt-1.5 text-[11px] text-slate-300">
+                  Contact: <a href={`tel:${driverContactNumber}`} className="text-primary hover:underline">{driverContactNumber}</a>
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right flex-shrink-0">
@@ -662,90 +715,139 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       </CardHeader>
 
       <CardContent className="pb-2.5 space-y-2 md:px-4 md:pb-2 md:space-y-1.5 lg:px-3.5 lg:pb-1.5">
-        {/* ========================================
-            COMPLETION WINDOW - PASSENGER UI (PROMINENT)
-            ======================================== */}
-        {shouldShowPassengerCompletionForm && (
-          <div className="mb-4 p-4 rounded-lg border-2 border-emerald-500 bg-gradient-to-br from-emerald-900/40 to-emerald-950/60 animate-pulse-slow" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="h-6 w-6 text-emerald-400" />
-              <h3 className="font-bold text-lg text-white">🎉 Complete Your Ride</h3>
-            </div>
-            <p className="text-sm text-slate-300 mb-4">
-              Did this ride complete successfully? Please confirm or report any issues.
-            </p>
-            <div className="flex gap-2">
-              <Button
-                onClick={handlePassengerComplete}
-                disabled={isCompleting}
-                className="flex-1 h-12 text-base font-bold bg-emerald-600 hover:bg-emerald-500"
-              >
-                {isCompleting ? 'Submitting...' : '✓ Ride Completed'}
-              </Button>
-              <Dialog open={showCompletionCancel} onOpenChange={setShowCompletionCancel}>
-                <DialogTrigger asChild>
-                  <Button 
-                    variant="outline" 
-                    className="flex-1 h-12 text-base font-bold border-red-600 text-red-400 hover:bg-red-900/20"
-                    disabled={isCompleting}
-                  >
-                    ✗ Report Issue
-                  </Button>
-                </DialogTrigger>
-                <DialogContent
-                  className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-slate-700"
-                  onClick={(e) => { e.stopPropagation(); }}
-                  onPointerDown={(e) => { e.stopPropagation(); }}
+        <Dialog
+          open={showPassengerCompletionDialog}
+          onOpenChange={(open) => {
+            if (!open && shouldShowPassengerCompletionForm) {
+              return;
+            }
+            setShowPassengerCompletionDialog(open);
+          }}
+        >
+          <DialogContent
+            className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-emerald-700"
+            onClick={(e) => { e.stopPropagation(); }}
+            onPointerDown={(e) => { e.stopPropagation(); }}
+            onEscapeKeyDown={(e) => {
+              if (shouldShowPassengerCompletionForm) e.preventDefault();
+            }}
+            onInteractOutside={(e) => {
+              if (shouldShowPassengerCompletionForm) e.preventDefault();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-white flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                Complete Your Ride
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-slate-300">
+                Fill the completion form below.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={completionDecision === 'completed' ? 'default' : 'outline'}
+                  className={completionDecision === 'completed' ? 'h-11 bg-emerald-600 hover:bg-emerald-500' : 'h-11 border-emerald-600 text-emerald-300 hover:bg-emerald-900/20'}
+                  onClick={() => {
+                    setCompletionDecision('completed');
+                    setCancelReason('');
+                  }}
+                  disabled={isCompleting}
                 >
-                  <DialogHeader>
-                    <DialogTitle className="text-white">Report Ride Issue</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-3">
-                    <p className="text-sm text-slate-300">Please select the reason for cancellation:</p>
-                    <div className="space-y-2">
-                      {['Driver did not arrive', 'Late arrival', 'Ride cancelled by driver', 'Route changed', 'Safety concern', 'Other'].map((reason) => (
-                        <button
-                          key={reason}
-                          onClick={() => setCancelReason(reason)}
-                          className={`w-full p-3 rounded-lg border text-left transition-all ${
-                            cancelReason === reason
-                              ? 'border-emerald-500 bg-emerald-900/30 text-white'
-                              : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600'
-                          }`}
-                        >
-                          {reason}
-                        </button>
-                      ))}
-                    </div>
-                    {cancelReason === 'Other' && (
-                      <textarea
-                        className="w-full min-h-[90px] rounded-md border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-100 placeholder-slate-500"
-                        value={cancelReason === 'Other' ? '' : cancelReason}
-                        onChange={(e) => setCancelReason(e.target.value)}
-                        placeholder="Please explain the issue..."
-                      />
-                    )}
-                  </div>
-                  <DialogFooter className="gap-2">
-                    <DialogClose asChild>
-                      <Button variant="ghost" className="text-slate-300">Close</Button>
-                    </DialogClose>
-                    <Button 
-                      onClick={handlePassengerCancel} 
-                      disabled={isCompleting || !cancelReason || cancelReason.trim().length === 0} 
-                      className="bg-red-600 hover:bg-red-500"
+                  ✓ Ride Completed
+                </Button>
+                <Button
+                  type="button"
+                  variant={completionDecision === 'issue' ? 'destructive' : 'outline'}
+                  className={completionDecision === 'issue' ? 'h-11' : 'h-11 border-red-600 text-red-400 hover:bg-red-900/20'}
+                  onClick={() => setCompletionDecision('issue')}
+                  disabled={isCompleting}
+                >
+                  ✗ Report Issue
+                </Button>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-sm text-slate-300">Rating</p>
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      className="p-1"
+                      onClick={() => setCompletionRating(star)}
+                      disabled={isCompleting}
                     >
-                      {isCompleting ? 'Submitting...' : 'Submit Report'}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                      <Star className={`h-5 w-5 ${completionRating >= star ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
+                    </button>
+                  ))}
+                  <span className="text-xs text-slate-400 ml-2">{completionRating > 0 ? `${completionRating}/5` : 'Select rating'}</span>
+                </div>
+              </div>
+
+              {completionDecision === 'issue' && (
+                <div className="space-y-2">
+                  <p className="text-sm text-slate-300">Issue reason</p>
+                  <div className="space-y-2">
+                    {['Driver did not arrive', 'Late arrival', 'Ride cancelled by driver', 'Route changed', 'Safety concern', 'Other'].map((reason) => (
+                      <button
+                        key={reason}
+                        onClick={() => setCancelReason(reason)}
+                        className={`w-full p-3 rounded-lg border text-left transition-all ${
+                          cancelReason === reason
+                            ? 'border-emerald-500 bg-emerald-900/30 text-white'
+                            : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600'
+                        }`}
+                        disabled={isCompleting}
+                      >
+                        {reason}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <p className="text-sm text-slate-300">Feedback</p>
+                <textarea
+                  className="w-full min-h-[90px] rounded-md border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-100 placeholder-slate-500"
+                  value={completionFeedback}
+                  onChange={(e) => setCompletionFeedback(e.target.value)}
+                  placeholder="Share your feedback..."
+                  disabled={isCompleting}
+                />
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button
+                  onClick={() => {
+                    if (completionDecision === 'issue') {
+                      void handlePassengerCancel();
+                      return;
+                    }
+                    void handlePassengerComplete();
+                  }}
+                  disabled={
+                    isCompleting ||
+                    !completionDecision ||
+                    completionRating < 1 ||
+                    (completionDecision === 'issue' && cancelReason.trim().length === 0)
+                  }
+                  className={completionDecision === 'issue' ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}
+                >
+                  {isCompleting
+                    ? 'Submitting...'
+                    : completionDecision === 'issue'
+                      ? 'Submit Issue Report'
+                      : 'Submit Completion'}
+                </Button>
+              </DialogFooter>
             </div>
-            <p className="text-xs text-slate-400 mt-3 text-center">
-              This helps maintain ride quality and safety for all users
-            </p>
-          </div>
-        )}
+          </DialogContent>
+        </Dialog>
 
         {/* Route */}
         <div className="space-y-2 text-xs">
@@ -824,7 +926,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         </div>
 
         {/* ACCEPTED STATUS - Show Confirm button */}
-        {normalizedStatus === 'ACCEPTED' && !confirmationProcessed && (
+        {normalizedStatus === 'ACCEPTED' && !isEffectivelyConfirmed && (
           <>
             <div className={`grid gap-2 w-full ${chatId ? 'grid-cols-2' : 'grid-cols-1'}`}>
               {chatId && (
@@ -841,8 +943,8 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
               </Button>
             </div>
             <Button
-              onClick={handleConfirmRide}
-              disabled={confirming || confirmationProcessed || rideStatus !== 'available'}
+              onClick={() => setShowConfirmRideDialog(true)}
+              disabled={confirming || isEffectivelyConfirmed || rideStatus !== 'available'}
               size="sm"
               className="w-full h-10 md:h-9 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 shadow-lg shadow-emerald-500/20"
             >
@@ -872,7 +974,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         )}
 
         {/* CONFIRMED STATUS - Show Confirmed badge and Cancel button */}
-        {(normalizedStatus === 'CONFIRMED' || confirmationProcessed) && (
+        {isEffectivelyConfirmed && (
           <div className="w-full space-y-2">
             <div className="flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-green-600/20 border border-green-600/50 text-green-200 text-sm font-medium">
               <CheckCircle2 className="h-4 w-4" />
@@ -896,14 +998,14 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         )}
 
         {/* RIDE FULL - Show message */}
-        {rideStatus === 'full' && !confirmationProcessed && (
+        {rideStatus === 'full' && !isEffectivelyConfirmed && (
           <div className="w-full text-center py-2 px-3 rounded-md bg-amber-600/20 border border-amber-600/50 text-amber-200 text-xs font-medium">
             All Seats Filled
           </div>
         )}
 
         {/* RIDE EXPIRED - Show message */}
-        {rideStatus === 'expired' && !confirmationProcessed && (
+        {rideStatus === 'expired' && !isEffectivelyConfirmed && (
           <div className="w-full text-center py-2 px-3 rounded-md bg-red-600/20 border border-red-600/50 text-red-200 text-xs font-medium">
             Ride Has Expired
           </div>
@@ -911,6 +1013,35 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
 
         {!(normalizedStatus === 'ACCEPTED' && !confirmationProcessed) && null}
       </CardFooter>
+
+      <Dialog open={showConfirmRideDialog} onOpenChange={setShowConfirmRideDialog}>
+        <DialogContent
+          onClick={(e) => { e.stopPropagation(); }}
+          onPointerDown={(e) => { e.stopPropagation(); }}
+          className="max-w-md"
+        >
+          <DialogHeader>
+            <DialogTitle>Confirm this ride?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-slate-300">
+            <p>Are you sure you want to confirm this ride seat now?</p>
+            <p className="text-amber-300">Important: If you confirm and cancel later, it increases your cancellation rate and repeated late cancellations may lead to account restrictions.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowConfirmRideDialog(false)}>Not now</Button>
+            <Button
+              onClick={() => {
+                setShowConfirmRideDialog(false);
+                void handleConfirmRide();
+              }}
+              disabled={confirming || isEffectivelyConfirmed || rideStatus !== 'available'}
+              className="bg-emerald-600 hover:bg-emerald-500"
+            >
+              {confirming ? 'Confirming...' : 'Yes, Confirm Ride'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showRoutePickup} onOpenChange={setShowRoutePickup}>
         <DialogContent
@@ -988,6 +1119,7 @@ export default function MyBookingsPage() {
   const [requestBookings, setRequestBookings] = React.useState<BookingType[]>([]);
   const [requestBackfillLoading, setRequestBackfillLoading] = React.useState(false);
   const [requestBackfillInitialized, setRequestBackfillInitialized] = React.useState(false);
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
   const normalizedUniversity = React.useMemo(
     () => String(userData?.university || '').trim().toLowerCase(),
     [userData?.university]
@@ -1111,7 +1243,7 @@ export default function MyBookingsPage() {
     if (departureMs === null) return true;
 
     const fourHoursInMs = 4 * 60 * 60 * 1000;
-    return Date.now() - departureMs <= fourHoursInMs;
+    return nowMs - departureMs <= fourHoursInMs;
   });
   
   const cancelledCount = allBookings.filter((b) => {
@@ -1138,6 +1270,14 @@ export default function MyBookingsPage() {
       setPageError(queryError.message);
     }
   }, [queryError]);
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const handleRetry = () => {
     setRetryKey((prev) => prev + 1);

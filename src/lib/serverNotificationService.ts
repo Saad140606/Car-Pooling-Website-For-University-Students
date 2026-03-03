@@ -236,18 +236,18 @@ export async function notifyRequestRejected(
   passengerId: string,
   rideId: string,
   bookingId: string,
-  ride: { from: string; to: string }
+  ride: { from: string; to: string; driverName?: string }
 ): Promise<void> {
   await writeNotification(db, university, {
     userId: passengerId,
     type: 'ride_rejected',
-    title: 'Request Declined',
-    message: `Your request for ${ride.from} → ${ride.to} was not accepted. Find another ride.`,
+    title: 'Request Rejected',
+    message: `${ride.driverName || 'The driver'} rejected your request for ${ride.from} → ${ride.to}.`,
     relatedRideId: rideId,
     relatedBookingId: bookingId,
     priority: 'normal',
     actionUrl: '/dashboard/rides',
-    metadata: { rideFrom: ride.from, rideTo: ride.to },
+    metadata: { rideFrom: ride.from, rideTo: ride.to, senderName: ride.driverName },
   });
 }
 

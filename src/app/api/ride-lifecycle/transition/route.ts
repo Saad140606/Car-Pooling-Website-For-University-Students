@@ -63,7 +63,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { university, rideId, action, reason, passengerId, review } = body;
+    const { university, rideId, action, reason, passengerId, review, rating, feedback } = body;
+    const normalizedRating = Number.isFinite(Number(rating)) ? Math.max(1, Math.min(5, Number(rating))) : null;
+    const normalizedFeedback = typeof feedback === 'string' ? feedback.trim() : '';
 
     const validUniversity = validateUniversity(university);
     if (!validUniversity) {
@@ -228,6 +230,8 @@ export async function POST(req: NextRequest) {
             await bookingSnap.docs[0].ref.update({
               passengerCompletion: 'completed',
               passengerCompletionAt: admin.firestore.FieldValue.serverTimestamp(),
+              ...(normalizedRating !== null && { passengerRating: normalizedRating }),
+              ...(normalizedFeedback.length > 0 && { passengerFeedback: normalizedFeedback }),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
           }
@@ -264,6 +268,8 @@ export async function POST(req: NextRequest) {
               passengerCompletion: 'cancelled',
               passengerCompletionAt: admin.firestore.FieldValue.serverTimestamp(),
               completionReason: reason,
+              ...(normalizedRating !== null && { passengerRating: normalizedRating }),
+              ...(normalizedFeedback.length > 0 && { passengerFeedback: normalizedFeedback }),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
           }

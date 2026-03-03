@@ -3,6 +3,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { useUser } from '@/firebase';
 import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
+import { parseTimestampToMs } from '@/lib/timestampUtils';
 
 /**
  * CRITICAL: Client-side Ride Lifecycle Monitor
@@ -54,27 +55,12 @@ export function useRideLifecycleMonitor({
   const invalidDepartureLoggedRef = useRef<Set<string>>(new Set());
 
   const parseDepartureMs = useCallback((input: any): number => {
-    if (!input) return NaN;
+    const parsed = parseTimestampToMs(input, { silent: true });
+    if (parsed !== null) return parsed;
 
-    if (input instanceof Date) {
-      return input.getTime();
-    }
-
-    if (typeof input?.toDate === 'function') {
-      const dateValue = input.toDate();
-      return dateValue instanceof Date ? dateValue.getTime() : NaN;
-    }
-
-    if (typeof input?.seconds === 'number') {
-      return input.seconds * 1000;
-    }
-
-    if (typeof input === 'number') {
-      return input;
-    }
-
-    if (typeof input === 'string') {
-      return new Date(input).getTime();
+    if (input && typeof input === 'object' && typeof input._seconds === 'number') {
+      const nanos = typeof input._nanoseconds === 'number' ? input._nanoseconds : 0;
+      return input._seconds * 1000 + nanos / 1_000_000;
     }
 
     return NaN;
@@ -94,7 +80,9 @@ export function useRideLifecycleMonitor({
     }
 
     // Parse departure time
-    const departureMs = parseDepartureMs(ride.departureTime) || parseDepartureMs(ride.time);
+    const primaryDepartureMs = parseDepartureMs(ride.departureTime);
+    const fallbackDepartureMs = parseDepartureMs(ride.time);
+    const departureMs = Number.isFinite(primaryDepartureMs) ? primaryDepartureMs : fallbackDepartureMs;
 
     if (isNaN(departureMs)) {
       const rideKey = String(ride?.id || 'unknown-ride');
@@ -209,7 +197,9 @@ export function useRideLifecycleMonitor({
     const newState = calculateLifecycleState();
     setState(newState);
 
-    const departureMs = parseDepartureMs(ride?.departureTime) || parseDepartureMs(ride?.time);
+    const primaryDepartureMs = parseDepartureMs(ride?.departureTime);
+    const fallbackDepartureMs = parseDepartureMs(ride?.time);
+    const departureMs = Number.isFinite(primaryDepartureMs) ? primaryDepartureMs : fallbackDepartureMs;
     const isPastDeparture = !isNaN(departureMs) && now >= departureMs;
 
     // Trigger backend lifecycle sync for any post-departure ride so

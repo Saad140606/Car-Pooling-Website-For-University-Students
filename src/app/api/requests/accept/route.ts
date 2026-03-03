@@ -148,8 +148,10 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      const normalizedRequestStatus = String(request.status || '').toUpperCase();
+
       // ===== IDEMPOTENCY CHECK: If already ACCEPTED, return success =====
-      if (request.status === 'ACCEPTED') {
+      if (normalizedRequestStatus === 'ACCEPTED') {
         tx.set(bookingRef, bookingPayload, { merge: true });
         return { 
           passengerId: request.passengerId, 
@@ -160,7 +162,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Validate request status - only PENDING can be accepted
-      if (request.status !== 'PENDING') {
+      if (normalizedRequestStatus !== 'PENDING') {
         throw new Error('Only PENDING requests can be accepted');
       }
 
@@ -260,37 +262,42 @@ export async function POST(req: NextRequest) {
       return { passengerId, rideId, timerType };
     });
 
-    // ===== FIRE-AND-FORGET SIDE EFFECTS =====
-    // Keep API response fast; these do not affect correctness of seat reservation.
+    // ===== SIDE EFFECTS =====
+    // Await notification/lifecycle updates to ensure documents are actually written.
     if (!result.idempotent) {
-      void (async () => {
-        try {
-          const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
-          const rideData = rideSnap.data() as any;
+      try {
+        const rideSnap = await adminDb.doc(`universities/${validUniversity}/rides/${rideId}`).get();
+        const actorSnap = await adminDb.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
+        const rideData = rideSnap.data() as any;
+        const actorData = actorSnap.data() as any;
 
-          await notifyRequestAccepted(
-            adminDb,
-            validUniversity,
-            result.passengerId,
-            rideId,
-            requestId,
-            {
-              from: rideData?.pickupLocation || rideData?.from || 'Starting point',
-              to: rideData?.dropoffLocation || rideData?.to || 'Destination',
-              departureTime: rideData?.departureTime,
-              driverName: rideData?.driverName || 'Driver'
-            }
-          );
-        } catch (notifError) {
-          console.error('[AcceptRequest] Notification error (non-critical):', notifError);
-        }
+        await notifyRequestAccepted(
+          adminDb,
+          validUniversity,
+          result.passengerId,
+          rideId,
+          requestId,
+          {
+            from: rideData?.pickupLocation || rideData?.from || 'Starting point',
+            to: rideData?.dropoffLocation || rideData?.to || 'Destination',
+            departureTime: rideData?.departureTime,
+            driverName:
+              actorData?.fullName ||
+              actorData?.name ||
+              rideData?.driverInfo?.fullName ||
+              rideData?.driverName ||
+              'Driver'
+          }
+        );
+      } catch (notifError) {
+        console.error('[AcceptRequest] Notification error (non-critical):', notifError);
+      }
 
-        try {
-          await handleAcceptRequest(adminDb, validUniversity, rideId, requestId, authenticatedUserId);
-        } catch (lifecycleErr) {
-          console.warn('[AcceptRequest] Lifecycle update failed (non-critical):', lifecycleErr);
-        }
-      })();
+      try {
+        await handleAcceptRequest(adminDb, validUniversity, rideId, requestId, authenticatedUserId);
+      } catch (lifecycleErr) {
+        console.warn('[AcceptRequest] Lifecycle update failed (non-critical):', lifecycleErr);
+      }
     }
 
     return successResponse({ ok: true, data: result });

@@ -1,5 +1,4 @@
 import React, { useState, useRef } from 'react';
-import MediaUploader from './MediaUploader';
 import VoiceRecorder from './VoiceRecorder';
 import { Send, Smile } from 'lucide-react';
 
@@ -48,11 +47,6 @@ export default function MessageInput({ onSend, onTyping, onSendMedia, onSendVoic
     <div className="relative">
       {/* Main input area */}
       <div className="flex items-end gap-2 p-2 rounded-2xl bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-md border border-slate-700/50 shadow-xl">
-        {/* Left actions */}
-        <div className="flex items-center gap-1 pb-2">
-          <MediaUploader onUploaded={async (url, type) => { await onSendMedia(url, type); }} />
-        </div>
-        
         {/* Text input */}
         <textarea
           ref={inputRef}
@@ -84,7 +78,7 @@ export default function MessageInput({ onSend, onTyping, onSendMedia, onSendVoic
                 console.error('Failed to send voice:', err);
                 alert(err?.message || 'Failed to send voice message');
               }
-            }} />
+            }} disabled={disabled} />
           )}
         </div>
       </div>

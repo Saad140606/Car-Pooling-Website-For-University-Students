@@ -33,6 +33,7 @@ export default function ChatHeader({ meta, university, onStartCall, onHangup, ca
     'User';
   
   const initials = otherUserName.split(' ').map((n: string) => n[0]).slice(0, 2).join('');
+  const otherUserContact = isCurrentUserPassenger ? providerContact : passengerContact;
 
   useEffect(() => {
     let mounted = true;
@@ -44,9 +45,20 @@ export default function ChatHeader({ meta, university, onStartCall, onHangup, ca
         const fetchUserContact = async (uid: string) => {
           try {
             const fastSnap = await getDoc(doc(firestore, 'universities', 'fast', 'users', uid));
-            if (fastSnap.exists()) return (fastSnap.data() as any).contactNumber || null;
+            if (fastSnap.exists()) {
+              const data = fastSnap.data() as any;
+              return data.contactNumber || data.phone || null;
+            }
             const nedSnap = await getDoc(doc(firestore, 'universities', 'ned', 'users', uid));
-            if (nedSnap.exists()) return (nedSnap.data() as any).contactNumber || null;
+            if (nedSnap.exists()) {
+              const data = nedSnap.data() as any;
+              return data.contactNumber || data.phone || null;
+            }
+            const khiSnap = await getDoc(doc(firestore, 'universities', 'karachi', 'users', uid));
+            if (khiSnap.exists()) {
+              const data = khiSnap.data() as any;
+              return data.contactNumber || data.phone || null;
+            }
           } catch (_) { /* ignore */ }
           return null;
         };
@@ -126,7 +138,7 @@ export default function ChatHeader({ meta, university, onStartCall, onHangup, ca
   }, [showVideoPreview]);
 
   const phoneClick = () => {
-    const num = providerContact || passengerContact || meta?.contactNumber || meta?.phone;
+    const num = otherUserContact || meta?.contactNumber || meta?.phone;
     if (num) {
       window.location.href = `tel:${num}`;
     } else {
@@ -226,14 +238,14 @@ export default function ChatHeader({ meta, university, onStartCall, onHangup, ca
                   <div className="text-white font-mono text-xs break-all bg-slate-700/50 p-2 rounded">{meta.rideId}</div>
                 </div>
               )}
-              {(providerContact || passengerContact) && (
+              {otherUserContact && (
                 <div>
                   <div className="text-slate-400 mb-1">Contact</div>
                   <a 
-                    href={`tel:${providerContact || passengerContact}`}
+                    href={`tel:${otherUserContact}`}
                     className="text-primary hover:underline"
                   >
-                    {providerContact || passengerContact}
+                    {otherUserContact}
                   </a>
                 </div>
               )}

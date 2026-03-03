@@ -31,28 +31,26 @@ export function initializeFirebaseClient() {
     // Configure Firestore settings
     if (firestore) {
       try {
-        // Enable offline persistence for better resilience
-        // This helps with network timeouts
-        const settings = {
-          cacheSizeBytes: 50 * 1024 * 1024, // 50MB cache
-        };
-        
-        // Try to enable persistence (fails gracefully if not supported)
-        import('firebase/firestore').then((m: any) => {
-          try {
-            if (typeof m.enableIndexedDbPersistence === 'function') {
-              m.enableIndexedDbPersistence(firestore!).catch((err: any) => {
-                if (err?.code === 'failed-precondition') {
-                  console.warn('[Firebase] Multiple tabs open, persistence disabled');
-                } else if (err?.code === 'unimplemented') {
-                  console.warn('[Firebase] Browser does not support persistence');
-                }
-              });
+        const enablePersistence = process.env.NEXT_PUBLIC_FIRESTORE_ENABLE_PERSISTENCE === 'true';
+
+        // Keep IndexedDB persistence opt-in to avoid client clock-skew warnings in some environments.
+        if (enablePersistence) {
+          import('firebase/firestore').then((m: any) => {
+            try {
+              if (typeof m.enableIndexedDbPersistence === 'function') {
+                m.enableIndexedDbPersistence(firestore!).catch((err: any) => {
+                  if (err?.code === 'failed-precondition') {
+                    console.warn('[Firebase] Multiple tabs open, persistence disabled');
+                  } else if (err?.code === 'unimplemented') {
+                    console.warn('[Firebase] Browser does not support persistence');
+                  }
+                });
+              }
+            } catch (error) {
+              console.debug('[Firebase] Persistence setup skipped:', error);
             }
-          } catch (error) {
-            console.debug('[Firebase] Persistence setup skipped:', error);
-          }
-        }).catch(() => {});
+          }).catch(() => {});
+        }
       } catch (error) {
         console.debug('[Firebase] Could not configure persistence:', error);
       }

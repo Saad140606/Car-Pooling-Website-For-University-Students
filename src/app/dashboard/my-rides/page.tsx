@@ -231,33 +231,31 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
           throw new Error('Ride ID not found');
         }
         
-        try {
-          const res = await fetch('/api/requests/cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              university,
-              rideId,
-              requestId: booking.id,
-              cancelledBy: booking.driverId || user?.uid,
-              reason: 'Driver rejected request'
-            })
-          });
-
-          if (!res.ok) {
-            console.log('[handleBooking] Cancel API failed with status:', res.status, 'using fallback...');
-            throw new Error(`Cancel API failed: ${res.status}`);
-          }
-          
-          console.log('[handleBooking] Rejection processed via API');
-        } catch (apiError) {
-          console.log('[handleBooking] API rejection failed, using direct update:', apiError);
-          // Fallback: update directly
-          await runTransaction(firestore, async (transaction) => {
-            const requestRef = doc(firestore, `universities/${university}/rides`, rideId, 'requests', booking.id);
-            transaction.update(requestRef, { status: 'rejected' });
-          });
+        const idToken = await user?.getIdToken(true);
+        if (!idToken) {
+          throw new Error('Authentication token unavailable. Please sign in again.');
         }
+
+        const res = await fetch('/api/requests/reject', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            university,
+            rideId,
+            requestId: booking.id,
+            reason: 'Driver rejected request'
+          })
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || `Reject API failed: ${res.status}`);
+        }
+        
+        console.log('[handleBooking] Rejection processed via API');
       }
 
       onProcessed?.(booking.id, newStatus);
@@ -676,7 +674,6 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
       // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
     });
     const shouldShowCompletionForm =
-      lifecycleState.lifecycleStatus === 'COMPLETION_WINDOW' &&
       lifecycleState.shouldShowCompletionUI &&
       completionParticipantCount > 0 &&
       lifecycleState.minutesUntilCompletion !== null &&
@@ -1235,15 +1232,15 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     return (
         <>
         <Card 
-          className="p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative"
+          className="p-2.5 sm:p-3 bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 shadow-md shadow-primary/5 relative"
         >
             <CardHeader 
-              className="p-0 mb-2 cursor-pointer hover:opacity-80 transition-opacity"
+              className="p-0 mb-1.5 md:mb-2 cursor-pointer hover:opacity-80 transition-opacity"
               onClick={() => setShowRideDetail(true)}
             >
               <div className="flex justify-between items-start gap-2 min-w-0">
                   <div className="min-w-0 flex-1">
-                    <div className="space-y-0.5 mb-2">
+                    <div className="space-y-0.5 mb-1.5 md:mb-2">
                       <div className="flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-green-500 flex-shrink-0" />
                         <div className="min-w-0">
@@ -1259,7 +1256,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
+                    <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/10">
                       <div className="text-[0.7rem] text-slate-300">
                         {formatTimestamp(ride.departureTime, { format: 'short', fallback: 'Time TBD' })}
                       </div>
@@ -1274,7 +1271,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             </CardHeader>
             <CardContent className="p-0">
 
-              <div className="mb-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-2.5 space-y-1.5" onClick={(e) => e.stopPropagation()}>
                 <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
                 <div className="w-full">
                   <Button
@@ -1292,7 +1289,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 
               {/* Confirmed Passengers: passengers who clicked Confirm Ride */}
               {confirmedBookings.length > 0 && (
-                <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+                <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2 relative">
                     <CheckCircle2 className="h-5 w-5 text-green-400" />
                     <h4 className="font-bold text-sm text-white">Confirmed Passengers</h4>
@@ -1301,6 +1298,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
                     )}
                   </div>
+                  <div className="space-y-2 md:max-h-56 md:overflow-y-auto md:pr-1">
                   {confirmedBookings.map((b) => (
                     <div 
                       key={b.id}
@@ -1309,16 +1307,16 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                         setSelectedPassenger(b);
                         setShowPassengerDetail(true);
                       }}
-                      className="group relative p-4 bg-gradient-to-br from-green-900/20 via-green-800/10 to-slate-900/50 rounded-xl border border-green-700/40 hover:border-green-500/60 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-green-500/10 hover:-translate-y-0.5"
+                      className="group relative p-2.5 md:p-3 bg-gradient-to-br from-green-900/20 via-green-800/10 to-slate-900/50 rounded-lg border border-green-700/40 hover:border-green-500/60 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-green-500/10 hover:-translate-y-0.5"
                     >
                       {/* Gradient overlay on hover */}
                       <div className="absolute inset-0 bg-gradient-to-r from-green-500/0 via-green-500/5 to-green-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
                       
-                      <div className="relative z-10 flex items-start justify-between gap-4">
+                      <div className="relative z-10 flex items-start justify-between gap-2.5">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500/30 to-emerald-500/20 flex items-center justify-center flex-shrink-0">
-                              <CheckCircle2 className="h-5 w-5 text-green-400" />
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-green-500/30 to-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                              <CheckCircle2 className="h-4 w-4 text-green-400" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <UserNameWithBadge 
@@ -1329,9 +1327,9 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                               />
                             </div>
                           </div>
-                          <div className="space-y-2 text-xs ml-10">
+                          <div className="space-y-1.5 text-xs ml-9">
                             <div className="flex items-start gap-2">
-                              <MapPin className="h-4 w-4 text-green-400 flex-shrink-0 mt-0.5" />
+                              <MapPin className="h-3.5 w-3.5 text-green-400 flex-shrink-0 mt-0.5" />
                               <span className="text-green-200/90 font-medium line-clamp-2">
                                 {formatPickupLabel(b as any, resolvedPickupNames)}
                               </span>
@@ -1346,11 +1344,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                               })) || 'Time TBD'}</span>
                             </div>
                           </div>
-                          <p className="text-xs text-slate-500 mt-2 ml-10">Click for contact info</p>
+                          <p className="text-[11px] text-slate-500 mt-1.5 ml-9">Click for contact info</p>
                         </div>
                         <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                           {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105">Call</a>
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-2.5 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105">Call</a>
                           ) : null}
                           {((b as any).chatId || b.id) ? (
                             <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
@@ -1359,12 +1357,13 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
               )}
 
               {/* Pending Confirmation: accepted but not yet confirmed */}
               {pendingAcceptedBookings.length > 0 && (
-                <div className="mt-4 space-y-3" onClick={(e) => { e.stopPropagation(); }}>
+                <div className="mt-3 space-y-2" onClick={(e) => { e.stopPropagation(); }}>
                   <div className="flex items-center gap-2 relative">
                     <Clock className="h-5 w-5 text-amber-400" />
                     <h4 className="font-bold text-sm text-white">Pending Confirmation</h4>
@@ -1373,6 +1372,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       <NotificationBadge count={getUnreadForRide(ride.id)} dot className="ml-auto" position="inline" />
                     )}
                   </div>
+                  <div className="space-y-2 md:max-h-56 md:overflow-y-auto md:pr-1">
                   {pendingAcceptedBookings.map((b: any) => (
                     <div 
                       key={b.id} 
@@ -1381,15 +1381,15 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                         setSelectedPassenger(b);
                         setShowPassengerDetail(true);
                       }}
-                      className="group relative p-4 bg-gradient-to-br from-amber-900/20 via-amber-800/10 to-slate-900/50 rounded-xl border border-amber-700/40 hover:border-amber-500/60 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 hover:-translate-y-0.5"
+                      className="group relative p-2.5 md:p-3 bg-gradient-to-br from-amber-900/20 via-amber-800/10 to-slate-900/50 rounded-lg border border-amber-700/40 hover:border-amber-500/60 transition-all duration-300 cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 hover:-translate-y-0.5"
                     >
                       {/* Gradient overlay on hover */}
                       <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/5 to-amber-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
                       
-                      <div className="relative z-10 flex items-start justify-between gap-3">
+                      <div className="relative z-10 flex items-start justify-between gap-2.5">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2.5 mb-3">
-                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center flex-shrink-0">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/20 flex items-center justify-center flex-shrink-0">
                               <Clock className="h-4 w-4 text-amber-400" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -1402,16 +1402,16 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                               <p className="text-xs text-amber-400/80 mt-1">Waiting for confirmation</p>
                             </div>
                           </div>
-                          <div className="space-y-2.5">
+                          <div className="space-y-1.5">
                             <div className="flex items-start gap-2">
-                              <MapPin className="h-4 w-4 text-amber-400/80 flex-shrink-0 mt-0.5" />
-                              <span className="text-sm text-slate-300 line-clamp-2">
+                              <MapPin className="h-3.5 w-3.5 text-amber-400/80 flex-shrink-0 mt-0.5" />
+                              <span className="text-xs text-slate-300 line-clamp-2">
                                 {formatPickupLabel(b as any, resolvedPickupNames)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Clock className="h-4 w-4 text-slate-400 flex-shrink-0" />
-                              <span className="text-sm text-slate-400">
+                              <Clock className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
+                              <span className="text-xs text-slate-400">
                                 {formatTimestamp(b.ride?.departureTime ?? ride.departureTime, { format: 'short', fallback: 'Time TBD' })}
                               </span>
                             </div>
@@ -1419,7 +1419,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                         </div>
                         <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                           {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-3 py-2 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105 text-center" onClick={(e) => e.stopPropagation()}>Call</a>
+                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-2.5 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105 text-center" onClick={(e) => e.stopPropagation()}>Call</a>
                           ) : null}
                           {((b as any).chatId || b.id) ? (
                             <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
@@ -1428,6 +1428,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -1649,6 +1650,7 @@ function getTimestampMs(ts: any): number | null {
 export default function MyRidesPage() {
   const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
 
   // CRITICAL: Log when user data is still loading or missing
   React.useEffect(() => {
@@ -1668,6 +1670,14 @@ export default function MyRidesPage() {
       });
     }
   }, [userLoading, user, userData]);
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // ── PERF: Add orderBy and limit to my-rides query ──
   const ridesQuery = (user && firestore && userData && userData.university) ? query(
@@ -1720,11 +1730,11 @@ export default function MyRidesPage() {
     });
   }, [user, firestore, userData, ridesQuery, ridesLoading, ridesError, rides, ridesRaw]);
 
-  // Filter out rides that are 12+ hours past departure (should be auto-deleted)
+  // Filter out rides that are 4+ hours past departure
   const filteredRides = React.useMemo(() => {
     if (!rides) return [];
-    const twelveHoursMs = 12 * 60 * 60 * 1000;
-    const now = Date.now();
+    const fourHoursMs = 4 * 60 * 60 * 1000;
+    const now = nowMs;
     
     const filtered = rides.filter((ride) => {
       // Get timestamp in milliseconds (handles Timestamp, Date, number, etc.)
@@ -1737,7 +1747,7 @@ export default function MyRidesPage() {
         return true;
       }
       
-      const isExpired = (now - departureMs) >= twelveHoursMs;
+      const isExpired = (now - departureMs) >= fourHoursMs;
       if (isExpired) {
         console.debug(`[My Rides] Filtering out expired ride ${ride.id}: departure was ${Math.round((now - departureMs) / 1000 / 60)} minutes ago`);
       }
@@ -1750,7 +1760,7 @@ export default function MyRidesPage() {
     }
     
     return filtered;
-  }, [rides]);
+  }, [rides, nowMs]);
 
   // Update ride status to "inactive" if departure time has passed
   const ridesWithStatus = React.useMemo(() => {

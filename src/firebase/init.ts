@@ -28,20 +28,23 @@ function initializeFirebase(): { firebaseApp?: ReturnType<typeof initializeApp>;
     let fs: ReturnType<typeof getFirestore>;
     try {
       fs = getFirestore(app);
-      // Try enabling persistence via dynamic import if supported
-      import('firebase/firestore').then((m: any) => {
-        try {
-          if (typeof m.enableIndexedDbPersistence === 'function') {
-            m.enableIndexedDbPersistence(fs).catch((err: any) => {
-              if (err?.code === 'failed-precondition') {
-                console.warn('[Firebase] Multiple tabs open, persistence disabled');
-              } else if (err?.code === 'unimplemented') {
-                console.warn('[Firebase] Browser does not support persistence');
-              }
-            });
-          }
-        } catch (_) {}
-      }).catch(() => {});
+      const enablePersistence = process.env.NEXT_PUBLIC_FIRESTORE_ENABLE_PERSISTENCE === 'true';
+      if (enablePersistence) {
+        // Try enabling persistence via dynamic import if supported
+        import('firebase/firestore').then((m: any) => {
+          try {
+            if (typeof m.enableIndexedDbPersistence === 'function') {
+              m.enableIndexedDbPersistence(fs).catch((err: any) => {
+                if (err?.code === 'failed-precondition') {
+                  console.warn('[Firebase] Multiple tabs open, persistence disabled');
+                } else if (err?.code === 'unimplemented') {
+                  console.warn('[Firebase] Browser does not support persistence');
+                }
+              });
+            }
+          } catch (_) {}
+        }).catch(() => {});
+      }
     } catch (e) {
       // If any error, fall back to getFirestore
       fs = getFirestore(app);

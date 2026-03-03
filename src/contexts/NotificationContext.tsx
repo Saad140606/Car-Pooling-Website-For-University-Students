@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useFirestore, useUser } from '@/firebase';
+import { getSelectedUniversity } from '@/lib/university';
 import type { Notification, NotificationCount, NotificationType } from '@/types/notification';
 import { 
   subscribeToNotifications, 
@@ -99,8 +100,15 @@ function getSoundForType(type: string): 'notification' | 'ringtone' | 'none' {
 }
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useUser();
+  const { user, data: userData } = useUser();
   const firestore = useFirestore();
+    const resolvedUniversity = React.useMemo(() => {
+      const fromProfile = String((userData as any)?.university || '').trim().toLowerCase();
+      if (fromProfile) return fromProfile;
+      const selected = String(getSelectedUniversity() || '').trim().toLowerCase();
+      return selected || null;
+    }, [userData]);
+
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [premiumNotifications, setPremiumNotifications] = useState<PremiumNotificationProps[]>([]);
   const [loading, setLoading] = useState(true);
@@ -131,11 +139,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   // Initialize Firestore notifications
   useEffect(() => {
-    if (!firestore || !user?.uid || !user?.university) {
+    if (!firestore || !user?.uid || !resolvedUniversity) {
       console.log('[NotificationProvider] Missing prerequisites:', {
         hasFirestore: !!firestore,
         hasUser: !!user?.uid,
-        hasUniversity: !!user?.university
+        hasUniversity: !!resolvedUniversity
       });
       setNotifications([]);
       setLoading(false);
@@ -144,7 +152,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     console.log('[NotificationProvider] Initializing notifications for user:', {
       userId: user.uid,
-      university: user.university
+      university: resolvedUniversity
     });
 
     setLoading(true);
@@ -154,7 +162,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     try {
       unsubscribe = subscribeToNotifications(
         firestore,
-        user.university,
+        resolvedUniversity,
         user.uid,
         (updatedNotifications) => {
           console.log('[NotificationProvider] Received notification update:', {
@@ -225,7 +233,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       console.log('[NotificationProvider] Cleaning up notification subscription');
       unsubscribe();
     };
-  }, [firestore, user?.uid, user?.university]);
+  }, [firestore, user?.uid, resolvedUniversity]);
 
   // Initialize FCM listener for push notifications
   useEffect(() => {
@@ -318,24 +326,24 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   };
 
   const markAsRead = useCallback(async (notificationId: string) => {
-    if (!firestore || !user?.university) return;
-    await markNotificationAsRead(firestore, user.university, notificationId);
-  }, [firestore, user?.university]);
+    if (!firestore || !resolvedUniversity) return;
+    await markNotificationAsRead(firestore, resolvedUniversity, notificationId);
+  }, [firestore, resolvedUniversity]);
 
   const markAllAsRead = useCallback(async () => {
-    if (!firestore || !user?.university || !user?.uid) return;
-    await markAllNotificationsAsRead(firestore, user.university, user.uid);
-  }, [firestore, user?.university, user?.uid]);
+    if (!firestore || !resolvedUniversity || !user?.uid) return;
+    await markAllNotificationsAsRead(firestore, resolvedUniversity, user.uid);
+  }, [firestore, resolvedUniversity, user?.uid]);
 
   const markChatAsRead = useCallback(async (chatId: string) => {
-    if (!firestore || !user?.university || !user?.uid) return;
-    await markChatNotificationsAsRead(firestore, user.university, user.uid, chatId);
-  }, [firestore, user?.university, user?.uid]);
+    if (!firestore || !resolvedUniversity || !user?.uid) return;
+    await markChatNotificationsAsRead(firestore, resolvedUniversity, user.uid, chatId);
+  }, [firestore, resolvedUniversity, user?.uid]);
 
   const markRideAsRead = useCallback(async (rideId: string) => {
-    if (!firestore || !user?.university || !user?.uid) return;
-    await markRideNotificationsAsRead(firestore, user.university, user.uid, rideId);
-  }, [firestore, user?.university, user?.uid]);
+    if (!firestore || !resolvedUniversity || !user?.uid) return;
+    await markRideNotificationsAsRead(firestore, resolvedUniversity, user.uid, rideId);
+  }, [firestore, resolvedUniversity, user?.uid]);
 
   const getUnreadForChat = useCallback((chatId: string) => {
     return notifications.filter(n => !n.isRead && n.type === 'chat' && n.relatedChatId === chatId).length;

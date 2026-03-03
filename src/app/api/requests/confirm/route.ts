@@ -161,26 +161,43 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Ensure passenger has no OTHER CONFIRMED rides
-      const confirmedSnap = await db.collectionGroup('requests')
+      const reservedSeats = (ride.reservedSeats ?? 0) as number;
+      const availableSeats = (ride.availableSeats ?? 0) as number;
+      const nowMs = now.toMillis();
+
+      // Ensure passenger has no OTHER currently active CONFIRMED rides.
+      // Past-departure confirmed rides must not block new confirmations.
+      const confirmedActiveQuery = db.collectionGroup('requests')
         .where('passengerId', '==', authenticatedUserId)
         .where('status', '==', 'CONFIRMED')
-        .limit(1)
-        .get();
-      
-      if (!confirmedSnap.empty) {
-        // Check if the only confirmed ride is this one (idempotent case)
-        const confirmedDoc = confirmedSnap.docs[0];
-        if (confirmedDoc.id !== requestId) {
+        .limit(25);
+      const confirmedSnap = await tx.get(confirmedActiveQuery);
+
+      for (const confirmedDoc of confirmedSnap.docs) {
+        const confirmedRideRef = confirmedDoc.ref.parent.parent;
+        if (!confirmedRideRef) continue;
+
+        const isSameRequest =
+          confirmedDoc.id === requestId &&
+          confirmedRideRef.id === rideId;
+        if (isSameRequest) continue;
+
+        const confirmedRideSnap = await tx.get(confirmedRideRef);
+        if (!confirmedRideSnap.exists) continue;
+
+        const confirmedRide = confirmedRideSnap.data() as any;
+        const confirmedDepartureMs = toMillisSafe(
+          confirmedRide?.departureTime ??
+          (confirmedDoc.data() as any)?.rideData?.departureTime
+        );
+
+        if (confirmedDepartureMs === null || nowMs < confirmedDepartureMs) {
           throw new Error('You already have a confirmed ride. Please cancel it first.');
         }
       }
 
-      const reservedSeats = (ride.reservedSeats ?? 0) as number;
-      const availableSeats = (ride.availableSeats ?? 0) as number;
-
       const departureMs = toMillisSafe(ride.departureTime);
-      if (departureMs !== null && Date.now() >= departureMs) {
+      if (departureMs !== null && nowMs >= departureMs) {
         throw new Error('Ride already started. You cannot confirm this ride now.');
       }
       

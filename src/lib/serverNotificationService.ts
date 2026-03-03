@@ -13,12 +13,22 @@
  * Architecture:
  *   API Route  →  serverNotificationService (Admin SDK)  →  Firestore doc created
  *   Client     →  NotificationContext listens via onSnapshot  →  UI updates
- *   FCM        →  Cloud Function trigger on doc creation  →  push notification
+ *   FCM        →  direct admin.messaging send from API path  →  push notification
  */
 
 import admin from 'firebase-admin';
 
 type Firestore = admin.firestore.Firestore;
+
+interface PushDispatchPayload {
+  type: ServerNotificationType;
+  title: string;
+  message: string;
+  relatedRideId: string;
+  relatedBookingId?: string;
+  relatedChatId?: string;
+  actionUrl?: string;
+}
 
 // ============================================================================
 // TYPES
@@ -87,6 +97,72 @@ function isDuplicate(userId: string, type: string, relatedId: string): boolean {
   return false;
 }
 
+async function resolveUserPushToken(db: Firestore, userId: string): Promise<string | null> {
+  try {
+    const tokenDoc = await db.doc(`fcm_tokens/${userId}`).get();
+    const tokenValue = tokenDoc.exists ? tokenDoc.data()?.token : null;
+    if (typeof tokenValue === 'string' && tokenValue.trim()) {
+      return tokenValue.trim();
+    }
+
+    const userDoc = await db.doc(`users/${userId}`).get();
+    const fallbackToken = userDoc.exists ? userDoc.data()?.fcmToken : null;
+    if (typeof fallbackToken === 'string' && fallbackToken.trim()) {
+      return fallbackToken.trim();
+    }
+  } catch (error) {
+    console.warn('[ServerNotif] Failed to resolve push token:', { userId, error });
+  }
+
+  return null;
+}
+
+async function sendPushToUser(
+  db: Firestore,
+  userId: string,
+  payload: PushDispatchPayload
+): Promise<void> {
+  try {
+    const token = await resolveUserPushToken(db, userId);
+    if (!token) return;
+
+    const messaging = admin.messaging();
+    await messaging.send({
+      token,
+      notification: {
+        title: payload.title,
+        body: payload.message,
+      },
+      data: {
+        type: String(payload.type || 'system'),
+        title: payload.title,
+        body: payload.message,
+        relatedRideId: payload.relatedRideId || '',
+        relatedBookingId: payload.relatedBookingId || '',
+        relatedChatId: payload.relatedChatId || '',
+        actionUrl: payload.actionUrl || '',
+      },
+      webpush: {
+        headers: {
+          Urgency: 'high',
+        },
+        fcmOptions: {
+          link: payload.actionUrl || '/dashboard/notifications',
+        },
+      },
+    });
+  } catch (error: any) {
+    const code = String(error?.code || '');
+    if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+      try {
+        await db.doc(`fcm_tokens/${userId}`).delete();
+      } catch {}
+      return;
+    }
+    console.warn('[ServerNotif] Push send failed:', { userId, error: error?.message || error });
+  }
+}
+
 // ============================================================================
 // CORE: Write a single notification document
 // ============================================================================
@@ -126,6 +202,16 @@ async function writeNotification(
       title: payload.title,
     });
 
+    await sendPushToUser(db, payload.userId, {
+      type: payload.type,
+      title: payload.title,
+      message: payload.message,
+      relatedRideId: payload.relatedRideId,
+      relatedBookingId: payload.relatedBookingId,
+      relatedChatId: payload.relatedChatId,
+      actionUrl: payload.actionUrl,
+    });
+
     return ref.id;
   } catch (error: any) {
     console.error('[ServerNotif] ❌ Failed to create notification:', {
@@ -147,6 +233,7 @@ async function writeNotifications(
 
   const batch = db.batch();
   let count = 0;
+  const committedPayloads: ServerNotificationPayload[] = [];
 
   for (const payload of payloads) {
     if (isDuplicate(payload.userId, payload.type, payload.relatedRideId)) {
@@ -168,12 +255,27 @@ async function writeNotifications(
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       metadata: payload.metadata || {},
     });
+    committedPayloads.push(payload);
     count++;
   }
 
   if (count > 0) {
     await batch.commit();
     console.log(`[ServerNotif] ✅ Batch created ${count} notifications`);
+
+    await Promise.all(
+      committedPayloads.map(async (payload) => {
+        await sendPushToUser(db, payload.userId, {
+          type: payload.type,
+          title: payload.title,
+          message: payload.message,
+          relatedRideId: payload.relatedRideId,
+          relatedBookingId: payload.relatedBookingId,
+          relatedChatId: payload.relatedChatId,
+          actionUrl: payload.actionUrl,
+        });
+      })
+    );
   }
 }
 

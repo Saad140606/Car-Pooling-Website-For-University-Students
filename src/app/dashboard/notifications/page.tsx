@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useUser } from '@/firebase/auth/use-user';
 import { useFirestore } from '@/firebase/provider';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
@@ -17,6 +17,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import type { Notification } from '@/types/notification';
+import { useNotifications } from '@/contexts/NotificationContext';
+import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 
 const NOTIFICATION_ICONS = {
   ride_requested: MapPin,
@@ -53,8 +55,10 @@ interface NotificationWithId extends Notification {
 export default function NotificationsPage() {
   const firestore = useFirestore();
   const { user, data: userData, loading: userLoading } = useUser();
+  const { unreadCount: contextUnreadCount, markAllAsRead } = useNotifications();
+  const { markNotificationsAsViewed } = useActivityIndicator();
 
-  const university = userData?.university;
+  const university = String(userData?.university || '').trim().toLowerCase();
 
   // Query notifications
   const q =
@@ -74,6 +78,21 @@ export default function NotificationsPage() {
   );
 
   const unreadCount = useMemo(() => allNotifications.filter((n) => !n.isRead).length, [allNotifications]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    if (contextUnreadCount.total <= 0) {
+      markNotificationsAsViewed();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      markAllAsRead().catch(() => {});
+      markNotificationsAsViewed();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [user?.uid, contextUnreadCount.total, markAllAsRead, markNotificationsAsViewed]);
 
   const formatTime = (timestamp: any) => {
     if (!timestamp) return 'Just now';

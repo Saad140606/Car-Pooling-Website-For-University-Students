@@ -30,7 +30,7 @@ export default function ChatHeader({ meta, university, onStartCall, onHangup, ca
     effectiveOtherUser?.fullName ||
     effectiveOtherUser?.name ||
     meta?.otherUserName ||
-    'User';
+    (isCurrentUserPassenger ? 'Ride Provider' : 'Passenger');
   
   const initials = otherUserName.split(' ').map((n: string) => n[0]).slice(0, 2).join('');
   const otherUserContact = isCurrentUserPassenger ? providerContact : passengerContact;

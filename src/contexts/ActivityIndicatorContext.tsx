@@ -11,6 +11,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useUser, useFirestore } from '@/firebase';
 import { activityIndicatorManager } from '@/lib/activityIndicatorService';
+import { getSelectedUniversity } from '@/lib/university';
 import type { ActivityIndicatorState } from '@/types/activityIndicator';
 
 interface ActivityIndicatorContextType {
@@ -50,7 +51,7 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
   useEffect(() => {
     if (!initialized || !firestore) return;
 
-    const university = user?.university || userData?.university;
+    const university = String(user?.university || userData?.university || getSelectedUniversity() || '').trim().toLowerCase();
 
     if (user?.uid && university) {
       try {

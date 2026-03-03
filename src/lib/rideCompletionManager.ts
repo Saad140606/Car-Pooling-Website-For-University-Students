@@ -37,6 +37,9 @@ import type {
   CompletionLocalCache,
 } from '@/types/rideCompletion';
 import { toSafeDate } from '@/types/rideCompletion';
+import { parseTimestampToMs } from '@/lib/timestampUtils';
+
+const COMPLETION_TRIGGER_DELAY_MS = 5 * 60 * 1000;
 
 const LOCAL_CACHE_KEY = 'campus_rides_completion_cache';
 const WORKFLOW_FORM_PREFIX = 'campus_rides_wf_';
@@ -66,6 +69,36 @@ class RideCompletionManager {
     const code = 'code' in error ? String((error as any).code || '') : '';
     const message = 'message' in error ? String((error as any).message || '') : '';
     return code === 'permission-denied' || message.includes('Missing or insufficient permissions');
+  }
+
+  private getDepartureTimestampMs(rideData: any, bookingData?: any): number | null {
+    const departureCandidate =
+      rideData?.departureTime ??
+      bookingData?.departureTime ??
+      bookingData?.ride?.departureTime;
+
+    const parsedMs = parseTimestampToMs(departureCandidate, { silent: true });
+    if (parsedMs !== null) return parsedMs;
+
+    const safeDate = toSafeDate(departureCandidate);
+    if (!safeDate) return null;
+
+    const ms = safeDate.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  private canTriggerWorkflow(rideData: any, bookingData?: any): boolean {
+    if (!rideData || typeof rideData !== 'object') return false;
+
+    const normalizedStatus = String(rideData?.status || '').trim().toLowerCase();
+    if (['cancelled', 'canceled', 'rejected', 'expired'].includes(normalizedStatus)) {
+      return false;
+    }
+
+    const departureMs = this.getDepartureTimestampMs(rideData, bookingData);
+    if (departureMs === null) return false;
+
+    return Date.now() >= departureMs + COMPLETION_TRIGGER_DELAY_MS;
   }
 
   // ============================================================================
@@ -285,7 +318,7 @@ class RideCompletionManager {
           const rideRef = doc(this.firestore!, 'universities', this.university!, 'rides', booking.rideId);
           const rideSnap = await getDoc(rideRef);
           if (rideSnap.exists()) {
-            this.evaluateRide(booking.rideId, rideSnap.data(), 'passenger');
+            this.evaluateRide(booking.rideId, rideSnap.data(), 'passenger', booking);
           }
         } catch {}
       }
@@ -298,14 +331,11 @@ class RideCompletionManager {
   // EVALUATE RIDE FOR WORKFLOW TRIGGER
   // ============================================================================
 
-  private evaluateRide(rideId: string, rideData: any, role: 'provider' | 'passenger') {
+  private evaluateRide(rideId: string, rideData: any, role: 'provider' | 'passenger', bookingData?: any) {
     const key = `${rideId}-${role}`;
     if (this.processedKeys.has(key)) return;
 
-    // Strict lifecycle gate: show only when completed and form is pending in Firestore.
-    if (rideData.status !== 'completed') return;
-    if (rideData.postRideFormRequired !== true) return;
-    if (rideData.postRideFormSubmitted === true) return;
+    if (!this.canTriggerWorkflow(rideData, bookingData)) return;
 
     this.buildWorkflowFromRide(rideId, role).catch(err => {
       console.error('[CompletionManager] Failed to build workflow:', err);
@@ -358,13 +388,11 @@ class RideCompletionManager {
       if (!rideSnap.exists()) return;
 
       const rideData = rideSnap.data();
-      const departureTime = toSafeDate(rideData.departureTime);
-      if (!departureTime) return;
+      const departureMs = this.getDepartureTimestampMs(rideData);
+      if (departureMs === null) return;
+      if (!this.canTriggerWorkflow(rideData)) return;
 
-      // Verify strict post-ride form trigger condition from Firestore state.
-      if (rideData.status !== 'completed') return;
-      if (rideData.postRideFormRequired !== true) return;
-      if (rideData.postRideFormSubmitted === true) return;
+      const departureTime = new Date(departureMs);
 
       // Verify role
       const driverId = rideData.driverId || rideData.createdBy;

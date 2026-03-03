@@ -1650,6 +1650,7 @@ function getTimestampMs(ts: any): number | null {
 export default function MyRidesPage() {
   const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
+  const normalizedUniversity = String(userData?.university || '').trim().toLowerCase();
   const [nowMs, setNowMs] = React.useState(() => Date.now());
 
   // CRITICAL: Log when user data is still loading or missing
@@ -1863,7 +1864,7 @@ export default function MyRidesPage() {
             return bTime - aTime; // descending order
           })
           .map((ride: RideType) => (
-            <MyRideCard key={ride.id} ride={ride} university={userData!.university} />
+            <MyRideCard key={ride.id} ride={ride} university={normalizedUniversity} />
           ))}
         </div>
       </div>

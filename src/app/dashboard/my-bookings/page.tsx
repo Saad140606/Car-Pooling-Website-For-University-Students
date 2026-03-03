@@ -18,7 +18,7 @@ import { isUserVerified } from '@/lib/verificationUtils';
 import { Booking as BookingType } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { MapPin, Clock, Users, CheckCircle2, AlertCircle, Star } from 'lucide-react';
+import { MapPin, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -26,8 +26,6 @@ import { ErrorState, EmptyState, LoadingState } from '@/components/StateComponen
 import { safeGet } from '@/lib/safeApi';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 import { BookingDetailDialog } from './BookingDetailDialog';
-import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
-import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
 import { decodePolyline } from '@/lib/route';
 import { parseTimestampToMs } from '@/lib/timestampUtils';
 
@@ -91,17 +89,15 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const [confirming, setConfirming] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
-  const [isCompleting, setIsCompleting] = React.useState(false);
-  const [cancelReason, setCancelReason] = React.useState('');
-  const [completionDecision, setCompletionDecision] = React.useState<'completed' | 'issue' | null>(null);
-  const [completionRating, setCompletionRating] = React.useState<number>(0);
-  const [completionFeedback, setCompletionFeedback] = React.useState<string>('');
   const [showRoutePickup, setShowRoutePickup] = React.useState(false);
-  const [showPassengerCompletionDialog, setShowPassengerCompletionDialog] = React.useState(false);
   const [showConfirmRideDialog, setShowConfirmRideDialog] = React.useState(false);
   const initialStatus = String(booking.status || 'pending');
   const [confirmationProcessed, setConfirmationProcessed] = React.useState(initialStatus.toUpperCase() === 'CONFIRMED');
   const [rideStatus, setRideStatus] = React.useState<'available' | 'full' | 'expired'>('available');
+  const [seatsLeft, setSeatsLeft] = React.useState<number | null>(() => {
+    const initialSeats = safeGet(ride, 'availableSeats');
+    return typeof initialSeats === 'number' ? Math.max(0, initialSeats) : null;
+  });
   const [departureTimer, setDepartureTimer] = React.useState<string>('');
   const [statusError, setStatusError] = React.useState<string | null>(null);
   const [localBookingStatus, setLocalBookingStatus] = React.useState<string>(initialStatus);
@@ -116,19 +112,6 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const { toast } = useToast();
   const actionFeedback = useActionFeedback();
   const { getUnreadForRide } = useNotifications();
-  const passengerCompletionFromRide = React.useMemo(() => {
-    const confirmedPassengers = Array.isArray((ride as any)?.confirmedPassengers)
-      ? (ride as any).confirmedPassengers
-      : [];
-    const matched = confirmedPassengers.find((p: any) => {
-      if (typeof p === 'string') return p === user?.uid;
-      return p?.userId === user?.uid;
-    });
-    return typeof matched === 'object' ? matched?.passengerCompletion : null;
-  }, [ride, user?.uid]);
-  const hasSubmittedPassengerCompletion =
-    !!safeGet(booking, 'passengerCompletion') ||
-    !!passengerCompletionFromRide;
   const isConfirmedByRideState = React.useMemo(() => {
     if (!user?.uid) return false;
     const confirmedPassengers = Array.isArray((ride as any)?.confirmedPassengers)
@@ -148,31 +131,6 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       setLocalBookingStatus('CONFIRMED');
     }
   }, [isConfirmedByRideState]);
-
-  // CRITICAL: Client-side lifecycle monitor for deterministic completion window
-  const lifecycleState = useRideLifecycleMonitor({
-    ride,
-    booking,
-    university,
-    // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
-  });
-  const shouldShowPassengerCompletionForm =
-    lifecycleState.shouldShowCompletionUI &&
-    lifecycleState.minutesUntilCompletion !== null &&
-    lifecycleState.minutesUntilCompletion <= 0 &&
-    !hasSubmittedPassengerCompletion;
-
-  React.useEffect(() => {
-    if (shouldShowPassengerCompletionForm) {
-      setShowPassengerCompletionDialog(true);
-      return;
-    }
-    setShowPassengerCompletionDialog(false);
-    setCompletionDecision(null);
-    setCompletionRating(0);
-    setCompletionFeedback('');
-    setCancelReason('');
-  }, [shouldShowPassengerCompletionForm]);
 
   // Safe ride status check
   const checkRideStatus = React.useCallback(async () => {
@@ -221,7 +179,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       const rideData = rideSnap.data();
       const confirmedBookings = safeGet(rideData, 'confirmedPassengers.length', 0);
       const totalSeats = safeGet(rideData, 'seats', 4);
-      const seatsAvailable = totalSeats - confirmedBookings;
+      const seatsAvailable = typeof rideData?.availableSeats === 'number'
+        ? Math.max(0, rideData.availableSeats)
+        : Math.max(0, totalSeats - confirmedBookings);
+
+      setSeatsLeft(seatsAvailable);
 
       setRideStatus(seatsAvailable > 0 ? 'available' : 'full');
     } catch (err) {
@@ -328,98 +290,6 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
     } finally {
       actionFeedback.clear();
       setConfirming(false);
-    }
-  };
-
-  const handlePassengerComplete = async () => {
-    if (!user) return;
-    if (completionRating < 1) {
-      toast({ variant: 'destructive', title: 'Rating Required', description: 'Please add a rating before submitting.' });
-      return;
-    }
-    setIsCompleting(true);
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/ride-lifecycle/transition', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          university,
-          rideId: ride?.id || booking.rideId,
-          action: 'passenger_complete',
-          rating: completionRating,
-          feedback: completionFeedback.trim() || null,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        toast({ variant: 'destructive', title: 'Completion Failed', description: data.error || 'Failed to complete ride.' });
-        return;
-      }
-
-      toast({ title: 'Completion Confirmed', description: 'Thanks for confirming your ride.' });
-      setShowPassengerCompletionDialog(false);
-      setCompletionDecision(null);
-      setCompletionRating(0);
-      setCompletionFeedback('');
-      setCancelReason('');
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to confirm completion.' });
-    } finally {
-      setIsCompleting(false);
-    }
-  };
-
-  const handlePassengerCancel = async () => {
-    if (!user) return;
-    if (!cancelReason.trim()) {
-      toast({ variant: 'destructive', title: 'Reason Required', description: 'Please provide a cancellation reason.' });
-      return;
-    }
-    if (completionRating < 1) {
-      toast({ variant: 'destructive', title: 'Rating Required', description: 'Please add a rating before submitting.' });
-      return;
-    }
-
-    setIsCompleting(true);
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/ride-lifecycle/transition', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          university,
-          rideId: ride?.id || booking.rideId,
-          action: 'passenger_cancel',
-          reason: cancelReason,
-          rating: completionRating,
-          feedback: completionFeedback.trim() || null,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        toast({ variant: 'destructive', title: 'Cancellation Failed', description: data.error || 'Failed to cancel completion.' });
-        return;
-      }
-
-      toast({ title: 'Cancellation Submitted', description: 'Your cancellation has been recorded.' });
-      setShowPassengerCompletionDialog(false);
-      setCompletionDecision(null);
-      setCompletionRating(0);
-      setCompletionFeedback('');
-      setCancelReason('');
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to submit cancellation.' });
-    } finally {
-      setIsCompleting(false);
     }
   };
 
@@ -715,140 +585,6 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       </CardHeader>
 
       <CardContent className="pb-2.5 space-y-2 md:px-4 md:pb-2 md:space-y-1.5 lg:px-3.5 lg:pb-1.5">
-        <Dialog
-          open={showPassengerCompletionDialog}
-          onOpenChange={(open) => {
-            if (!open && shouldShowPassengerCompletionForm) {
-              return;
-            }
-            setShowPassengerCompletionDialog(open);
-          }}
-        >
-          <DialogContent
-            className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-emerald-700"
-            onClick={(e) => { e.stopPropagation(); }}
-            onPointerDown={(e) => { e.stopPropagation(); }}
-            onEscapeKeyDown={(e) => {
-              if (shouldShowPassengerCompletionForm) e.preventDefault();
-            }}
-            onInteractOutside={(e) => {
-              if (shouldShowPassengerCompletionForm) e.preventDefault();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle className="text-white flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                Complete Your Ride
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <p className="text-sm text-slate-300">
-                Fill the completion form below.
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant={completionDecision === 'completed' ? 'default' : 'outline'}
-                  className={completionDecision === 'completed' ? 'h-11 bg-emerald-600 hover:bg-emerald-500' : 'h-11 border-emerald-600 text-emerald-300 hover:bg-emerald-900/20'}
-                  onClick={() => {
-                    setCompletionDecision('completed');
-                    setCancelReason('');
-                  }}
-                  disabled={isCompleting}
-                >
-                  ✓ Ride Completed
-                </Button>
-                <Button
-                  type="button"
-                  variant={completionDecision === 'issue' ? 'destructive' : 'outline'}
-                  className={completionDecision === 'issue' ? 'h-11' : 'h-11 border-red-600 text-red-400 hover:bg-red-900/20'}
-                  onClick={() => setCompletionDecision('issue')}
-                  disabled={isCompleting}
-                >
-                  ✗ Report Issue
-                </Button>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-sm text-slate-300">Rating</p>
-                <div className="flex items-center gap-1">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      className="p-1"
-                      onClick={() => setCompletionRating(star)}
-                      disabled={isCompleting}
-                    >
-                      <Star className={`h-5 w-5 ${completionRating >= star ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
-                    </button>
-                  ))}
-                  <span className="text-xs text-slate-400 ml-2">{completionRating > 0 ? `${completionRating}/5` : 'Select rating'}</span>
-                </div>
-              </div>
-
-              {completionDecision === 'issue' && (
-                <div className="space-y-2">
-                  <p className="text-sm text-slate-300">Issue reason</p>
-                  <div className="space-y-2">
-                    {['Driver did not arrive', 'Late arrival', 'Ride cancelled by driver', 'Route changed', 'Safety concern', 'Other'].map((reason) => (
-                      <button
-                        key={reason}
-                        onClick={() => setCancelReason(reason)}
-                        className={`w-full p-3 rounded-lg border text-left transition-all ${
-                          cancelReason === reason
-                            ? 'border-emerald-500 bg-emerald-900/30 text-white'
-                            : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600'
-                        }`}
-                        disabled={isCompleting}
-                      >
-                        {reason}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <p className="text-sm text-slate-300">Feedback</p>
-                <textarea
-                  className="w-full min-h-[90px] rounded-md border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-100 placeholder-slate-500"
-                  value={completionFeedback}
-                  onChange={(e) => setCompletionFeedback(e.target.value)}
-                  placeholder="Share your feedback..."
-                  disabled={isCompleting}
-                />
-              </div>
-
-              <DialogFooter className="gap-2">
-                <Button
-                  onClick={() => {
-                    if (completionDecision === 'issue') {
-                      void handlePassengerCancel();
-                      return;
-                    }
-                    void handlePassengerComplete();
-                  }}
-                  disabled={
-                    isCompleting ||
-                    !completionDecision ||
-                    completionRating < 1 ||
-                    (completionDecision === 'issue' && cancelReason.trim().length === 0)
-                  }
-                  className={completionDecision === 'issue' ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}
-                >
-                  {isCompleting
-                    ? 'Submitting...'
-                    : completionDecision === 'issue'
-                      ? 'Submit Issue Report'
-                      : 'Submit Completion'}
-                </Button>
-              </DialogFooter>
-            </div>
-          </DialogContent>
-        </Dialog>
-
         {/* Route */}
         <div className="space-y-2 text-xs">
           <div className="space-y-0.5">
@@ -894,6 +630,13 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
           <div className="text-xs">
             <span className="text-slate-400 font-medium">Time remaining:</span>
             <div className="text-blue-400 font-mono">{departureTimer}</div>
+          </div>
+        )}
+
+        {seatsLeft !== null && (
+          <div className="text-xs">
+            <span className="text-slate-400 font-medium">Seats left:</span>
+            <div className="text-emerald-300 font-semibold">{seatsLeft}</div>
           </div>
         )}
 

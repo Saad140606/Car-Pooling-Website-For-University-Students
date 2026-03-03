@@ -21,9 +21,11 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   } = useChat(chatId, university);
   const { user } = useUser();
   const firestore = useFirestore();
+  const normalizedUniversity = String(university || '').trim().toLowerCase();
   const activeChatId = resolvedChatId || chatId;
   const [meta, setMeta] = useState<any>(null);
   const [resolvedOtherUser, setResolvedOtherUser] = useState<any>(null);
+  const [fallbackRecipientId, setFallbackRecipientId] = useState<string | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -142,14 +144,51 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   }, [remoteStream]);
 
   useEffect(() => {
-    if (!firestore) return;
-    const cref = doc(firestore, `universities/${university}/chats`, activeChatId);
-    getDoc(cref).then(s => { if (s.exists()) setMeta(s.data()); }).catch((err) => {
-      // Surface meta fetch errors for debugging (do not show sensitive details in production)
-      try { console.error('ChatRoom: failed to fetch chat meta', err); } catch (e) {}
-      setMetaError(String(err?.message || err));
-    });
-  }, [firestore, activeChatId, university]);
+    if (!firestore || !normalizedUniversity) return;
+    let mounted = true;
+
+    const loadMeta = async () => {
+      const cref = doc(firestore, `universities/${normalizedUniversity}/chats`, activeChatId);
+      try {
+        const snap = await getDoc(cref);
+        if (snap.exists() && mounted) {
+          setMeta(snap.data());
+          setMetaError(null);
+          return;
+        }
+      } catch (err) {
+        setMetaError(String((err as any)?.message || err));
+      }
+
+      try {
+        const separatorIndex = activeChatId.indexOf('_');
+        if (separatorIndex > 0) {
+          const rideId = activeChatId.slice(0, separatorIndex);
+          const reqRef = doc(firestore, `universities/${normalizedUniversity}/rides/${rideId}/requests`, activeChatId);
+          const reqSnap = await getDoc(reqRef);
+          if (reqSnap.exists() && mounted) {
+            const requestData = reqSnap.data() as any;
+            setMeta((prev: any) => ({
+              ...(prev || {}),
+              bookingId: activeChatId,
+              rideId,
+              passengerId: requestData?.passengerId || null,
+              providerId: requestData?.driverId || requestData?.providerId || null,
+              passengerDetails: requestData?.passengerDetails || null,
+              status: 'active',
+            }));
+          }
+        }
+      } catch (_) {
+        // best effort only
+      }
+    };
+
+    loadMeta();
+    return () => {
+      mounted = false;
+    };
+  }, [firestore, activeChatId, normalizedUniversity]);
 
   const [incomingCall, setIncomingCall] = useState<any | null>(null);
 
@@ -178,6 +217,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   }, [activeChatId, user?.uid]);
   const effectiveRecipientId =
     resolvedRecipientId ||
+    fallbackRecipientId ||
     messageDerivedRecipientId ||
     chatIdDerivedRecipientId ||
     null;
@@ -198,7 +238,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
         return;
       }
 
-      const tryUniversities = [university, meta?.university, 'fast', 'ned', 'karachi'].filter(Boolean);
+      const tryUniversities = [normalizedUniversity, meta?.university, 'fast', 'ned', 'karachi'].filter(Boolean);
       for (const uni of tryUniversities) {
         try {
           const userSnap = await getDoc(doc(firestore, 'universities', String(uni), 'users', effectiveRecipientId));
@@ -214,7 +254,37 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     hydrateOtherUser();
     return () => { mounted = false; };
-  }, [firestore, effectiveRecipientId, university, meta?.university]);
+  }, [firestore, effectiveRecipientId, normalizedUniversity, meta?.university]);
+
+  useEffect(() => {
+    let mounted = true;
+    const resolveFallbackRecipient = async () => {
+      if (!firestore || !normalizedUniversity || !user?.uid || effectiveRecipientId) return;
+
+      try {
+        const separatorIndex = activeChatId.indexOf('_');
+        if (separatorIndex > 0) {
+          const rideId = activeChatId.slice(0, separatorIndex);
+          const reqRef = doc(firestore, `universities/${normalizedUniversity}/rides/${rideId}/requests`, activeChatId);
+          const reqSnap = await getDoc(reqRef);
+          if (reqSnap.exists()) {
+            const requestData = reqSnap.data() as any;
+            const candidateId = requestData?.passengerId === user.uid
+              ? (requestData?.driverId || requestData?.providerId || null)
+              : requestData?.passengerId || null;
+            if (mounted && candidateId) setFallbackRecipientId(String(candidateId));
+          }
+        }
+      } catch (_) {
+        // best effort
+      }
+    };
+
+    resolveFallbackRecipient();
+    return () => {
+      mounted = false;
+    };
+  }, [firestore, normalizedUniversity, user?.uid, activeChatId, effectiveRecipientId]);
 
   const effectiveMeta = React.useMemo(() => {
     if (!meta) return meta;
@@ -246,7 +316,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
   // Listen for incoming call signals on `universities/{university}/calls/{chatId}`
   useEffect(() => {
     if (!firestore) return;
-    const cdoc = doc(firestore, `universities/${university}/calls`, activeChatId);
+    const cdoc = doc(firestore, `universities/${normalizedUniversity}/calls`, activeChatId);
     callDocRef.current = cdoc;
     const unsub = onSnapshot(cdoc, async (snap) => {
       if (!snap.exists()) {
@@ -268,7 +338,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     });
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firestore, university, activeChatId, inCall]);
+  }, [firestore, normalizedUniversity, activeChatId, inCall]);
 
   const handleMediaError = (error: any) => {
     const name = error?.name || '';
@@ -360,7 +430,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
     setCallMode(mode);
     setIsConnecting(true);
     setCallError(null);
-    const cdoc = doc(firestore, `universities/${university}/calls`, activeChatId);
+    const cdoc = doc(firestore, `universities/${normalizedUniversity}/calls`, activeChatId);
     callDocRef.current = cdoc;
 
     const pc = new RTCPeerConnection({ 
@@ -573,7 +643,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           if (calleeId) {
             await createNotification(
               firestore,
-              university,
+              normalizedUniversity,
               calleeId,
               'call_incoming',
               {
@@ -691,7 +761,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
   const answerCall = async () => {
     if (!firestore || !user) return;
-    const cdoc = doc(firestore, `universities/${university}/calls`, activeChatId);
+    const cdoc = doc(firestore, `universities/${normalizedUniversity}/calls`, activeChatId);
     
     try {
       const snap = await getDoc(cdoc);
@@ -1150,7 +1220,6 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
           onSend={async (text) => await sendMessage({
             type: 'text',
             content: text,
-            recipientId: resolvedRecipientId || undefined,
             recipientId: effectiveRecipientId || undefined,
             rideId: resolvedRideId,
             senderName: resolvedSenderName || undefined,
@@ -1170,7 +1239,7 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
             rideId: resolvedRideId,
             senderName: resolvedSenderName || undefined,
           })}
-          disabled={effectiveMeta?.status !== 'active' || accessible !== true} 
+          disabled={accessible !== true || (typeof effectiveMeta?.status === 'string' && effectiveMeta.status !== 'active')} 
         />
       </div>
     </div>

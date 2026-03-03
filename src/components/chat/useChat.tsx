@@ -36,6 +36,7 @@ async function markMessagesAsSeen(firestore: any, universityId: string, chatId: 
 export function useChat(chatId?: string | null, universityId?: string | null) {
   const firestore = useFirestore();
   const { user } = useUser();
+  const normalizedUniversityId = String(universityId || '').trim().toLowerCase();
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [accessible, setAccessible] = useState<boolean | null>(null);
@@ -57,7 +58,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
 
     (async () => {
       try {
-        if (!universityId) throw new Error('universityId required for chat subscription');
+        if (!normalizedUniversityId) throw new Error('universityId required for chat subscription');
         const normalizeParticipants = (chatData: any): string[] => {
           const participants = new Set<string>();
           if (chatData?.passengerId && typeof chatData.passengerId === 'string') participants.add(chatData.passengerId);
@@ -79,7 +80,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           if (!chatId) return null;
           try {
             const byBookingQuery = query(
-              collection(firestore, `universities/${universityId}/chats`),
+              collection(firestore, `universities/${normalizedUniversityId}/chats`),
               where('bookingId', '==', chatId)
             );
             const byBookingSnap = await getDocs(byBookingQuery);
@@ -99,7 +100,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
         const bootstrapChatFromBooking = async (): Promise<{ id: string; data: any } | null> => {
           if (!chatId || !user?.uid) return null;
           try {
-            const bookingRef = doc(firestore, `universities/${universityId}/bookings`, chatId);
+            const bookingRef = doc(firestore, `universities/${normalizedUniversityId}/bookings`, chatId);
             const bookingSnap = await getDoc(bookingRef);
             if (!bookingSnap.exists()) return null;
             const bookingData = bookingSnap.data() as any;
@@ -119,7 +120,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
               updatedAt: serverTimestamp(),
             };
 
-            const newChatRef = chatRef(firestore, universityId, chatId);
+            const newChatRef = chatRef(firestore, normalizedUniversityId, chatId);
             await setDoc(newChatRef, payload, { merge: true });
             return { id: chatId, data: payload };
           } catch (bootstrapErr) {
@@ -136,7 +137,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
             const rideId = chatId.slice(0, separatorIndex);
             if (!rideId) return null;
 
-            const requestRef = doc(firestore, `universities/${universityId}/rides/${rideId}/requests`, chatId);
+            const requestRef = doc(firestore, `universities/${normalizedUniversityId}/rides/${rideId}/requests`, chatId);
             const requestSnap = await getDoc(requestRef);
             if (!requestSnap.exists()) return null;
             const requestData = requestSnap.data() as any;
@@ -158,7 +159,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
               updatedAt: serverTimestamp(),
             };
 
-            const newChatRef = chatRef(firestore, universityId, chatId);
+            const newChatRef = chatRef(firestore, normalizedUniversityId, chatId);
             await setDoc(newChatRef, payload, { merge: true });
             return { id: chatId, data: payload };
           } catch (bootstrapErr) {
@@ -171,7 +172,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
         let data: any = null;
 
         try {
-          const cref = chatRef(firestore, universityId, targetChatId);
+          const cref = chatRef(firestore, normalizedUniversityId, targetChatId);
           const snap = await getDoc(cref);
           if (snap.exists()) {
             data = snap.data() as any;
@@ -268,7 +269,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
           let allowedViaRequest = false;
           try {
             if (data?.bookingId && typeof data.bookingId === 'string') {
-              const bookingRef = doc(firestore, `universities/${universityId}/bookings`, data.bookingId);
+              const bookingRef = doc(firestore, `universities/${normalizedUniversityId}/bookings`, data.bookingId);
               const bSnap = await getDoc(bookingRef);
               if (bSnap.exists()) {
                 const bData = bSnap.data() as any;
@@ -283,7 +284,7 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
                 const separatorIndex = data.bookingId.indexOf('_');
                 if (separatorIndex > 0) {
                   const rideId = data.bookingId.slice(0, separatorIndex);
-                  const reqRef = doc(firestore, `universities/${universityId}/rides/${rideId}/requests`, data.bookingId);
+                  const reqRef = doc(firestore, `universities/${normalizedUniversityId}/rides/${rideId}/requests`, data.bookingId);
                   const reqSnap = await getDoc(reqRef);
                   if (reqSnap.exists()) {
                     const reqData = reqSnap.data() as any;
@@ -313,14 +314,14 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
 
         // Safe to subscribe
         if (mounted) setAccessible(true);
-        unsubRef.current = subscribeMessages(firestore, universityId as string, targetChatId, (items) => {
+        unsubRef.current = subscribeMessages(firestore, normalizedUniversityId, targetChatId, (items) => {
           if (!mounted) return;
           setMessages(items as any[]);
           setLoading(false);
           
           // Mark messages as seen by current user
           if (user?.uid) {
-            markMessagesAsSeen(firestore, universityId as string, targetChatId, user.uid, items);
+            markMessagesAsSeen(firestore, normalizedUniversityId, targetChatId, user.uid, items);
           }
         });
       } catch (err: any) {
@@ -333,17 +334,17 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
     })();
 
     return () => { mounted = false; unsubRef.current?.(); unsubRef.current = null; };
-  }, [firestore, chatId, universityId, user?.uid]);
+  }, [firestore, chatId, normalizedUniversityId, user?.uid]);
 
   const sendMessage = useCallback(async (payload: { type?: string; content?: string; mediaUrl?: string; recipientId?: string; rideId?: string; senderName?: string }) => {
     const activeChatId = resolvedChatId || chatId;
-    if (!firestore || !activeChatId || !user || accessible === false || !universityId) return null;
+    if (!firestore || !activeChatId || !user || accessible === false || !normalizedUniversityId) return null;
 
     const recipientId = payload.recipientId || resolvedRecipientId || undefined;
     const rideId = payload.rideId || resolvedRideId || undefined;
     const senderName = payload.senderName || user.displayName || undefined;
 
-    return sendMsg(firestore, universityId, activeChatId, {
+    return sendMsg(firestore, normalizedUniversityId, activeChatId, {
       senderId: user.uid,
       type: payload.type || 'text',
       content: payload.content || '',
@@ -352,16 +353,16 @@ export function useChat(chatId?: string | null, universityId?: string | null) {
       rideId,
       senderName
     });
-  }, [firestore, chatId, resolvedChatId, user, accessible, universityId, resolvedRecipientId, resolvedRideId]);
+  }, [firestore, chatId, resolvedChatId, user, accessible, normalizedUniversityId, resolvedRecipientId, resolvedRideId]);
 
   const setTyping = useCallback(async (isTyping: boolean) => {
     const activeChatId = resolvedChatId || chatId;
-    if (!firestore || !activeChatId || !user || !universityId) return;
+    if (!firestore || !activeChatId || !user || !normalizedUniversityId) return;
     try {
-      const cref = doc(firestore, `universities/${universityId}/chats`, activeChatId);
+      const cref = doc(firestore, `universities/${normalizedUniversityId}/chats`, activeChatId);
       await updateDoc(cref, { typing: { userId: user.uid, isTyping, at: serverTimestamp() } });
     } catch (_) {}
-  }, [firestore, chatId, resolvedChatId, user, universityId]);
+  }, [firestore, chatId, resolvedChatId, user, normalizedUniversityId]);
 
   return {
     messages,

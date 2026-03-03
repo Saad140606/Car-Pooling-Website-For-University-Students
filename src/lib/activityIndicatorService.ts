@@ -145,7 +145,7 @@ class ActivityIndicatorManager {
 
     this.firestore = firestore;
     this.userId = userId;
-    this.university = university;
+    this.university = String(university || '').trim().toLowerCase();
 
     // Start listening for unread events + source notifications
     this.setupListeners();
@@ -218,25 +218,45 @@ class ActivityIndicatorManager {
       notificationsRef,
       where('userId', '==', this.userId),
       where('isRead', '==', false),
-      orderBy('createdAt', 'desc'),
       limit(200)
     );
 
     const unsubscribe = onSnapshot(
       notificationsQuery,
       async (snapshot) => {
+        const derivedState: ActivityIndicatorState = {
+          bookings: false,
+          rides: false,
+          analytics: false,
+          chat: false,
+          notifications: snapshot.docs.length > 0,
+        };
+
         for (const notificationDoc of snapshot.docs) {
           const notification = notificationDoc.data();
+          const mappedSection = mapNotificationToSection(notification);
+          if (mappedSection && mappedSection in derivedState) {
+            derivedState[mappedSection] = true;
+          }
+
           const baseEventId = `notification:${notificationDoc.id}`;
           const detectedAt = notification?.createdAt || serverTimestamp();
 
           await this.ensureUnreadEvent(baseEventId, 'notifications', detectedAt, notificationDoc.id);
 
-          const mappedSection = mapNotificationToSection(notification);
           if (mappedSection && mappedSection !== 'notifications') {
             await this.ensureUnreadEvent(baseEventId, mappedSection, detectedAt, notificationDoc.id);
           }
         }
+
+        this.state = {
+          bookings: this.state.bookings || derivedState.bookings,
+          rides: this.state.rides || derivedState.rides,
+          analytics: this.state.analytics || derivedState.analytics,
+          chat: this.state.chat || derivedState.chat,
+          notifications: this.state.notifications || derivedState.notifications,
+        };
+        this.notifyCallbacks();
       },
       (error) => {
         console.error('[ActivityIndicator] Notification bridge listener error:', error);

@@ -54,6 +54,13 @@ export function useRideLifecycleMonitor({
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const invalidDepartureLoggedRef = useRef<Set<string>>(new Set());
 
+  const departureSource =
+    ride?.departureTime ??
+    ride?.time ??
+    booking?.departureTime ??
+    booking?.ride?.departureTime ??
+    null;
+
   const parseDepartureMs = useCallback((input: any): number => {
     const parsed = parseTimestampToMs(input, { silent: true });
     if (parsed !== null) return parsed;
@@ -70,7 +77,7 @@ export function useRideLifecycleMonitor({
    * Calculate if ride needs completion based on time
    */
   const calculateLifecycleState = useCallback((): RideLifecycleState => {
-    if (!ride || !ride.departureTime) {
+    if (!ride || !departureSource) {
       return {
         needsCompletion: false,
         lifecycleStatus: null,
@@ -80,8 +87,8 @@ export function useRideLifecycleMonitor({
     }
 
     // Parse departure time
-    const primaryDepartureMs = parseDepartureMs(ride.departureTime);
-    const fallbackDepartureMs = parseDepartureMs(ride.time);
+    const primaryDepartureMs = parseDepartureMs(departureSource);
+    const fallbackDepartureMs = parseDepartureMs(ride?.departureTime) || parseDepartureMs(ride?.time);
     const departureMs = Number.isFinite(primaryDepartureMs) ? primaryDepartureMs : fallbackDepartureMs;
 
     if (isNaN(departureMs)) {
@@ -90,8 +97,8 @@ export function useRideLifecycleMonitor({
         invalidDepartureLoggedRef.current.add(rideKey);
         console.warn('[LifecycleMonitor] Invalid departure time payload, skipping lifecycle calculation', {
           rideId: ride?.id,
-          departureTime: ride?.departureTime,
-          time: ride?.time,
+          departureTime: ride?.departureTime || booking?.departureTime,
+          time: ride?.time || booking?.ride?.departureTime,
         });
       }
       return {
@@ -147,7 +154,7 @@ export function useRideLifecycleMonitor({
       minutesUntilCompletion,
       shouldShowCompletionUI,
     };
-  }, [ride, booking, completionDelayMinutes, user?.uid, parseDepartureMs]);
+  }, [ride, booking, completionDelayMinutes, user?.uid, parseDepartureMs, departureSource]);
 
   /**
    * Trigger backend to update lifecycle status if needed
@@ -197,8 +204,8 @@ export function useRideLifecycleMonitor({
     const newState = calculateLifecycleState();
     setState(newState);
 
-    const primaryDepartureMs = parseDepartureMs(ride?.departureTime);
-    const fallbackDepartureMs = parseDepartureMs(ride?.time);
+    const primaryDepartureMs = parseDepartureMs(departureSource);
+    const fallbackDepartureMs = parseDepartureMs(ride?.departureTime) || parseDepartureMs(ride?.time);
     const departureMs = Number.isFinite(primaryDepartureMs) ? primaryDepartureMs : fallbackDepartureMs;
     const isPastDeparture = !isNaN(departureMs) && now >= departureMs;
 
@@ -215,7 +222,7 @@ export function useRideLifecycleMonitor({
       minutesUntilCompletion: newState.minutesUntilCompletion,
       shouldShowUI: newState.shouldShowCompletionUI,
     });
-  }, [calculateLifecycleState, triggerBackendCheck, ride, parseDepartureMs]);
+  }, [calculateLifecycleState, triggerBackendCheck, ride, parseDepartureMs, departureSource]);
 
   /**
    * Set up periodic checking
@@ -248,7 +255,7 @@ export function useRideLifecycleMonitor({
    */
   useEffect(() => {
     checkLifecycle();
-  }, [ride?.lifecycleStatus, ride?.departureTime, booking?.status, checkLifecycle]);
+  }, [ride?.lifecycleStatus, ride?.departureTime, booking?.status, booking?.departureTime, checkLifecycle]);
 
   return state;
 }

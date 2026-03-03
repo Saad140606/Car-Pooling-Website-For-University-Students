@@ -514,10 +514,53 @@ export default function AnalyticsPage() {
   const [activeView, setActiveView] = useState<'driver' | 'passenger'>('driver');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  const analyticsCacheKey = useMemo(() => {
+    if (!user?.uid || !userData?.university) return null;
+    return `analytics_cache:${user.uid}:${String(userData.university).trim().toLowerCase()}`;
+  }, [user?.uid, userData?.university]);
+
+  const prerequisitesReady = Boolean(firestore && user?.uid && userData?.university);
+
+  useEffect(() => {
+    if (!analyticsCacheKey || typeof window === 'undefined') return;
+
+    try {
+      const raw = window.sessionStorage.getItem(analyticsCacheKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        analytics?: CombinedAnalytics;
+        rideHistory?: RideHistoryEntry[];
+        activeView?: 'driver' | 'passenger';
+        lastUpdated?: string;
+      };
+
+      if (parsed?.analytics) {
+        setAnalytics(parsed.analytics);
+      }
+      if (Array.isArray(parsed?.rideHistory)) {
+        setRideHistory(parsed.rideHistory);
+      }
+      if (parsed?.activeView === 'driver' || parsed?.activeView === 'passenger') {
+        setActiveView(parsed.activeView);
+      }
+      if (parsed?.lastUpdated) {
+        const parsedDate = new Date(parsed.lastUpdated);
+        if (!Number.isNaN(parsedDate.getTime())) {
+          setLastUpdated(parsedDate);
+        }
+      }
+
+      if (parsed?.analytics) {
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.debug('[Analytics] Failed to hydrate cache:', error);
+    }
+  }, [analyticsCacheKey]);
+
   // Fetch analytics data
   const fetchAnalytics = useCallback(async () => {
     if (!firestore || !user || !userData?.university) {
-      setIsLoading(false);
       return;
     }
 
@@ -633,18 +676,31 @@ export default function AnalyticsPage() {
       }
 
       setLastUpdated(new Date());
+
+      if (analyticsCacheKey && typeof window !== 'undefined') {
+        window.sessionStorage.setItem(
+          analyticsCacheKey,
+          JSON.stringify({
+            analytics: analyticsData,
+            rideHistory: history,
+            activeView: analyticsData.userRole === 'passenger' ? 'passenger' : activeView,
+            lastUpdated: new Date().toISOString(),
+          })
+        );
+      }
     } catch (err) {
       console.error('[Analytics] Error fetching data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load analytics data');
     } finally {
       setIsLoading(false);
     }
-  }, [firestore, user, userData?.university]);
+  }, [firestore, user, userData?.university, analyticsCacheKey, activeView]);
 
   // Initial fetch
   useEffect(() => {
+    if (!prerequisitesReady) return;
     fetchAnalytics();
-  }, [fetchAnalytics]);
+  }, [fetchAnalytics, prerequisitesReady]);
 
   // Determine current metrics based on view
   const currentMetrics = useMemo(() => {
@@ -653,7 +709,7 @@ export default function AnalyticsPage() {
   }, [analytics, activeView]);
 
   // Loading state
-  if (userLoading || isLoading) {
+  if (userLoading || (!prerequisitesReady && !analytics) || isLoading) {
     return (
       <div className="min-h-[100dvh] p-2 sm:p-4 md:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
@@ -686,7 +742,7 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] px-2 py-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 pb-28 sm:pb-10 overflow-x-hidden">
+    <div className="min-h-[100dvh] px-2 py-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 pb-28 sm:pb-10 overflow-x-hidden touch-pan-y">
       <div className="max-w-7xl mx-auto w-full">
         {/* Page Header */}
         <motion.div

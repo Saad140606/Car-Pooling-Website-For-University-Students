@@ -29,8 +29,14 @@ export default function ChatHeader({ meta, university, onStartCall, onHangup, ca
   const otherUserName =
     effectiveOtherUser?.fullName ||
     effectiveOtherUser?.name ||
+    meta?.passengerDetails?.fullName ||
+    meta?.passengerDetails?.name ||
+    meta?.providerDetails?.fullName ||
+    meta?.providerDetails?.name ||
+    meta?.driverDetails?.fullName ||
+    meta?.driverDetails?.name ||
     meta?.otherUserName ||
-    (isCurrentUserPassenger ? 'Ride Provider' : 'Passenger');
+    (isCurrentUserPassenger ? 'Ride Provider' : 'User');
   
   const initials = otherUserName.split(' ').map((n: string) => n[0]).slice(0, 2).join('');
   const otherUserContact = isCurrentUserPassenger ? providerContact : passengerContact;

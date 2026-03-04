@@ -235,6 +235,95 @@ function isPassengerPreDepartureCancellation(request: RawRequestData): boolean {
   return (request as any).isLateCancellation === false;
 }
 
+function isLastMinuteCancellation(payload: any): boolean {
+  if (payload?.lastMinuteCancellation === true) return true;
+  const cancelledAt = toDate(payload?.cancelledAt);
+  const departureTime =
+    toDate(payload?.rideDepartureTime)
+    || toDate(payload?.departureTime)
+    || toDate(payload?.rideData?.departureTime);
+
+  if (!cancelledAt || !departureTime) return false;
+  const diffMinutes = (departureTime.getTime() - cancelledAt.getTime()) / (60 * 1000);
+  return diffMinutes >= 0 && diffMinutes <= 30;
+}
+
+function getDriverCancellationUnitsFromRide(ride: RawRideData): number {
+  if (!isDriverPreDepartureCancellation(ride)) return 0;
+
+  const confirmedCount = Number((ride as any)?.cancelledConfirmedPassengersCount
+    ?? (Array.isArray((ride as any)?.confirmedPassengers) ? (ride as any).confirmedPassengers.length : 0));
+  if (confirmedCount < 1) return 0;
+
+  const multiplier = isLastMinuteCancellation(ride) ? 2 : 1;
+  const explicitUnits = Number((ride as any)?.cancellationPenaltyUnits);
+  if (Number.isFinite(explicitUnits) && explicitUnits > 0) {
+    return explicitUnits;
+  }
+
+  return multiplier;
+}
+
+function isDriverPassengerRemovalCancellation(request: RawRequestData): boolean {
+  const status = String((request as any)?.status || '').toLowerCase();
+  if (!status.includes('cancel')) return false;
+
+  const cancelledBy = String((request as any)?.cancelledBy || '').toLowerCase();
+  if (cancelledBy !== 'driver' && cancelledBy !== String((request as any)?.driverId || '').toLowerCase()) {
+    return false;
+  }
+
+  const scope = String((request as any)?.cancellationScope || '').toLowerCase();
+  if (scope === 'ride_cancelled_by_driver') return false;
+
+  const reason = String((request as any)?.cancellationReason || '').toLowerCase();
+  if (reason.includes('driver cancelled the ride')) return false;
+
+  return (request as any)?.isLateCancellation === true;
+}
+
+function getDriverPassengerRemovalUnits(request: RawRequestData, rideById: Map<string, RawRideData>): number {
+  if (!isDriverPassengerRemovalCancellation(request)) return 0;
+
+  const ride = request.rideId ? rideById.get(request.rideId) : undefined;
+  const seats = Math.max(
+    1,
+    Number((request as any)?.rideTotalSeats || (request as any)?.totalSeats || (request as any)?.rideData?.seats || ride?.totalSeats || 4)
+  );
+
+  const multiplier = isLastMinuteCancellation(request) ? 2 : 1;
+  const explicitUnits = Number((request as any)?.cancellationPenaltyUnits);
+  if (Number.isFinite(explicitUnits) && explicitUnits > 0) {
+    return explicitUnits;
+  }
+
+  return (1 / seats) * multiplier;
+}
+
+function isPassengerConfirmedCancellationBooking(booking: RawBookingData & { rideData?: RawRideData }): boolean {
+  const status = String((booking as any)?.status || '').toLowerCase();
+  if (!status.includes('cancel')) return false;
+
+  const cancelledBy = String((booking as any)?.cancelledBy || '').toLowerCase();
+  if (cancelledBy !== 'passenger' && cancelledBy !== String((booking as any)?.passengerId || '').toLowerCase()) {
+    return false;
+  }
+
+  return (booking as any)?.isLateCancellation === true;
+}
+
+function getPassengerCancellationUnits(booking: RawBookingData & { rideData?: RawRideData }): number {
+  if (!isPassengerConfirmedCancellationBooking(booking)) return 0;
+
+  const multiplier = isLastMinuteCancellation(booking) ? 2 : 1;
+  const explicitUnits = Number((booking as any)?.cancellationPenaltyUnits);
+  if (Number.isFinite(explicitUnits) && explicitUnits > 0) {
+    return explicitUnits;
+  }
+
+  return multiplier;
+}
+
 export async function fetchUserAnalyticsData(
   firestore: Firestore,
   userId: string,
@@ -518,6 +607,10 @@ function computeDriverMetrics(
   receivedRequests: RawRequestData[]
 ): DriverMetrics {
   const commonMetrics = computeCommonMetrics(rides, [], true);
+  const rideById = new Map<string, RawRideData>();
+  rides.forEach((ride) => {
+    if (ride.id) rideById.set(ride.id, ride);
+  });
 
   // Completed rides must be explicitly completed by lifecycle/form actions
   const completedRides = rides.filter(r => 
@@ -551,16 +644,46 @@ function computeDriverMetrics(
     const lifecycleStatus = String((r as any).lifecycleStatus || '').toLowerCase();
     return status === 'completed' || lifecycleStatus === 'completed';
   });
-  const driverCancelledBeforeDeparture = rides.filter((ride) => isDriverPreDepartureCancellation(ride));
-  const rideCompletionBase = statusCompletedRides.length + driverCancelledBeforeDeparture.length;
+  const wholeRideCancellationUnits = rides.reduce((sum, ride) => sum + getDriverCancellationUnitsFromRide(ride), 0);
+  const passengerRemovalCancellationUnits = receivedRequests.reduce(
+    (sum, request) => sum + getDriverPassengerRemovalUnits(request, rideById),
+    0
+  );
+  const terminalFailureRideUnits = rides.filter((ride) => {
+    const status = String(ride.status || '').toLowerCase();
+    const lifecycleStatus = String((ride as any).lifecycleStatus || '').toLowerCase();
+    return status === 'failed' || status === 'expired' || status === 'rejected' || status === 'declined'
+      || lifecycleStatus === 'failed' || lifecycleStatus === 'expired';
+  }).length;
+  const weightedCancellationUnits = wholeRideCancellationUnits + passengerRemovalCancellationUnits + terminalFailureRideUnits;
+  const rideCompletionBase = statusCompletedRides.length + weightedCancellationUnits;
   const rideCompletionRate = rideCompletionBase > 0
     ? Math.round((statusCompletedRides.length / rideCompletionBase) * 100)
     : 100;
 
   // Cancellation rate: role-specific and pre-departure only
   const cancellationRate = rideCompletionBase > 0
-    ? Math.round((driverCancelledBeforeDeparture.length / rideCompletionBase) * 100)
+    ? Math.round((weightedCancellationUnits / rideCompletionBase) * 100)
     : 0;
+
+  const nonCompletedRides = rides.filter((ride) => {
+    const status = String(ride.status || '').toLowerCase();
+    const lifecycleStatus = String((ride as any).lifecycleStatus || '').toLowerCase();
+    return !(
+      status === 'completed' ||
+      lifecycleStatus === 'completed' ||
+      status.includes('cancel') ||
+      lifecycleStatus.includes('cancel') ||
+      status === 'failed' ||
+      status === 'expired' ||
+      status === 'rejected' ||
+      status === 'declined' ||
+      lifecycleStatus === 'failed' ||
+      lifecycleStatus === 'expired'
+    );
+  }).length;
+
+  const weightedTotalRides = statusCompletedRides.length + weightedCancellationUnits + nonCompletedRides;
 
   // Peak ride hours
   const hourCounts = new Array(24).fill(0);
@@ -660,6 +783,10 @@ function computeDriverMetrics(
 
   return {
     ...commonMetrics,
+    totalRides: Math.round(weightedTotalRides * 100) / 100,
+    completedRides: statusCompletedRides.length,
+    cancelledRides: Math.round(weightedCancellationUnits * 100) / 100,
+    pendingRides: nonCompletedRides,
     role: 'driver',
     totalPassengersServed,
     totalSeatsOffered,
@@ -688,8 +815,27 @@ function computePassengerMetrics(
 
   // Completion outcome must come from passenger completion form submission.
   const formCompletedBookings = bookings.filter((booking) => getBookingCompletionOutcome(booking).completion === 'completed');
-  const formCancelledBookings = bookings.filter((booking) => getBookingCompletionOutcome(booking).completion === 'cancelled');
-  const passengerCancelledBeforeDeparture = requests.filter((request) => isPassengerPreDepartureCancellation(request));
+  const bookingCancellationUnits = bookings.reduce((sum, booking) => sum + getPassengerCancellationUnits(booking), 0);
+
+  const bookingIds = new Set(bookings.map((booking) => String(booking.id || '')));
+  const requestFallbackCancellationUnits = requests.reduce((sum, request) => {
+    const reqId = String(request?.id || '');
+    if (!reqId || bookingIds.has(reqId)) return sum;
+
+    const status = String(request?.status || '').toLowerCase();
+    if (!status.includes('cancel')) return sum;
+
+    const cancelledBy = String((request as any)?.cancelledBy || '').toLowerCase();
+    if (cancelledBy !== 'passenger' && cancelledBy !== String(request?.passengerId || '').toLowerCase()) return sum;
+    if ((request as any)?.isLateCancellation !== true) return sum;
+
+    const multiplier = isLastMinuteCancellation(request) ? 2 : 1;
+    const explicitUnits = Number((request as any)?.cancellationPenaltyUnits);
+    const units = Number.isFinite(explicitUnits) && explicitUnits > 0 ? explicitUnits : multiplier;
+    return sum + units;
+  }, 0);
+
+  const weightedCancellationUnits = bookingCancellationUnits + requestFallbackCancellationUnits;
 
   const totalRidesTaken = formCompletedBookings.length;
 
@@ -709,15 +855,6 @@ function computePassengerMetrics(
   const requestToConfirmRate = ridesRequested > 0
     ? Math.round((ridesConfirmed / ridesRequested) * 100)
     : 0;
-
-  // Cancellation rate from completion-form outcomes only.
-  const cancellationBase = formCompletedBookings.length + passengerCancelledBeforeDeparture.length;
-  const cancellationRate = cancellationBase > 0
-    ? Math.round((passengerCancelledBeforeDeparture.length / cancellationBase) * 100)
-    : 0;
-  const rideCompletionRate = cancellationBase > 0
-    ? Math.round((formCompletedBookings.length / cancellationBase) * 100)
-    : 100;
 
   // Preferred pickup times
   const hourCounts = new Array(24).fill(0);
@@ -749,14 +886,44 @@ function computePassengerMetrics(
   const weeklyActivity = computeWeeklyActivity(bookings);
   const rideActivityHeatmap = computeHeatmapData(bookings);
 
-  const pendingFromOutcomes = Math.max(0, bookings.length - formCompletedBookings.length - passengerCancelledBeforeDeparture.length);
+  const nonCompletedBookings = bookings.filter((booking) => {
+    const completion = getBookingCompletionOutcome(booking).completion;
+    if (completion === 'completed' || completion === 'cancelled') return false;
+    const status = String(booking?.status || '').toLowerCase();
+    return !(
+      status.includes('cancel') ||
+      status === 'completed' ||
+      status === 'failed' ||
+      status === 'expired' ||
+      status === 'rejected' ||
+      status === 'declined'
+    );
+  }).length;
+
+  const terminalFailureBookingUnits = bookings.filter((booking) => {
+    const completion = getBookingCompletionOutcome(booking).completion;
+    if (completion === 'completed' || completion === 'cancelled') return false;
+    const status = String(booking?.status || '').toLowerCase();
+    return status === 'failed' || status === 'expired' || status === 'rejected' || status === 'declined';
+  }).length;
+
+  const weightedCancellationUnitsWithFailures = weightedCancellationUnits + terminalFailureBookingUnits;
+  const cancellationBaseWithFailures = formCompletedBookings.length + weightedCancellationUnitsWithFailures;
+  const cancellationRate = cancellationBaseWithFailures > 0
+    ? Math.round((weightedCancellationUnitsWithFailures / cancellationBaseWithFailures) * 100)
+    : 0;
+  const rideCompletionRate = cancellationBaseWithFailures > 0
+    ? Math.round((formCompletedBookings.length / cancellationBaseWithFailures) * 100)
+    : 100;
+
+  const weightedTotalRides = formCompletedBookings.length + weightedCancellationUnitsWithFailures + nonCompletedBookings;
 
   return {
     ...commonMetrics,
-    totalRides: bookings.length,
+    totalRides: Math.round(weightedTotalRides * 100) / 100,
     completedRides: formCompletedBookings.length,
-    cancelledRides: passengerCancelledBeforeDeparture.length,
-    pendingRides: pendingFromOutcomes,
+    cancelledRides: Math.round(weightedCancellationUnitsWithFailures * 100) / 100,
+    pendingRides: nonCompletedBookings,
     role: 'passenger',
     totalRidesTaken,
     rideCompletionRate,

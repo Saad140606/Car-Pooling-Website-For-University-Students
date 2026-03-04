@@ -95,6 +95,17 @@ class RideCompletionManager {
       return false;
     }
 
+    if (bookingData) {
+      const bookingStatus = String(bookingData?.status || '').trim().toUpperCase();
+      if (bookingStatus !== 'CONFIRMED') {
+        return false;
+      }
+      const bookingCompletion = String(bookingData?.passengerCompletion || '').trim().toLowerCase();
+      if (bookingCompletion === 'completed' || bookingCompletion === 'cancelled') {
+        return false;
+      }
+    }
+
     const departureMs = this.getDepartureTimestampMs(rideData, bookingData);
     if (departureMs === null) return false;
 
@@ -306,7 +317,7 @@ class RideCompletionManager {
     const passengerBookingsQ = query(
       bookingsRef,
       where('passengerId', '==', this.userId),
-      where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+      where('status', 'in', ['CONFIRMED', 'confirmed'])
     );
 
     this.passengerListener = onSnapshot(passengerBookingsQ, async (snapshot) => {
@@ -388,6 +399,13 @@ class RideCompletionManager {
       if (!rideSnap.exists()) return;
 
       const rideData = rideSnap.data();
+      const ridePostRideStatus = (rideData?.postRideStatus || {}) as any;
+
+      if (role === 'provider' && (ridePostRideStatus?.driverConfirmed === true || rideData?.postRideFormSubmitted === true)) {
+        this.processedKeys.add(key);
+        return;
+      }
+
       const departureMs = this.getDepartureTimestampMs(rideData);
       if (departureMs === null) return;
       if (!this.canTriggerWorkflow(rideData)) return;
@@ -405,13 +423,13 @@ class RideCompletionManager {
             bookingsRef,
             where('rideId', '==', rideId),
             where('passengerId', '==', this.userId),
-            where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+            where('status', 'in', ['CONFIRMED', 'confirmed'])
           )
         : query(
             bookingsRef,
             where('rideId', '==', rideId),
             where('driverId', '==', this.userId),
-            where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
+            where('status', 'in', ['CONFIRMED', 'confirmed'])
           );
       const bookingsSnap = await getDocs(bookingsQ);
 
@@ -420,6 +438,17 @@ class RideCompletionManager {
         const b = bDoc.data();
         // For passenger role, verify this booking belongs to the user
         if (role === 'passenger' && b.passengerId !== this.userId) continue;
+
+        const normalizedBookingStatus = String(b?.status || '').trim().toUpperCase();
+        if (normalizedBookingStatus !== 'CONFIRMED') continue;
+
+        if (role === 'passenger') {
+          const completionStatus = String(b?.passengerCompletion || '').trim().toLowerCase();
+          if (completionStatus === 'completed' || completionStatus === 'cancelled') {
+            this.processedKeys.add(key);
+            continue;
+          }
+        }
 
         confirmedPassengers.push({
           id: b.passengerId,

@@ -17,13 +17,6 @@ function toDateValue(value: any): Date | null {
 }
 
 function isRateThresholdExceeded(userData: any): boolean {
-  const totalParticipations = Number(userData?.totalParticipations ?? 0);
-  const totalCancellations = Number(userData?.totalCancellations ?? 0);
-  const hasLegacyThreshold = Number.isFinite(totalParticipations)
-    && Number.isFinite(totalCancellations)
-    && totalParticipations >= 3
-    && (totalCancellations * 100) >= (35 * totalParticipations);
-
   const driverPolicy = userData?.driverCancellationPolicy;
   const hasDriverThreshold = Number(driverPolicy?.totalRidesWindow) >= 3
     && Number(driverPolicy?.cancellationRate) >= 35;
@@ -32,7 +25,7 @@ function isRateThresholdExceeded(userData: any): boolean {
   const hasPassengerThreshold = Number(passengerPolicy?.totalRidesWindow) >= 3
     && Number(passengerPolicy?.cancellationRate) >= 35;
 
-  return hasLegacyThreshold || hasDriverThreshold || hasPassengerThreshold;
+  return hasDriverThreshold || hasPassengerThreshold;
 }
 
 export function getActiveRideLock(userData: any, now: Date = new Date()): ActiveRideLock | null {

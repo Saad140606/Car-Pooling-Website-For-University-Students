@@ -44,26 +44,10 @@ const SECTION_NOTIFICATION_TYPE_MAP: Record<ActivitySection, string[] | null> = 
   rides: [
     'ride_request',
     'booking',
-    'ride_confirmed',
-    'request_confirmed',
-    'request_cancelled',
-    'passenger_cancelled',
-    'passenger_cancelled_booking',
-    'request_auto_cancelled',
-    'ride_status',
-    'lifecycle_passenger_cancelled',
   ],
   bookings: [
     'ride_accepted',
     'request_accepted',
-    'ride_rejected',
-    'request_rejected',
-    'ride_started',
-    'ride_cancelled',
-    'confirm_reminder',
-    'confirm_urgent_reminder',
-    'ride_expired',
-    'request_expired',
   ],
   analytics: ['ride_completed', 'completion_window'],
   chat: ['chat'],
@@ -84,14 +68,6 @@ function mapNotificationToSection(notification: any): ActivitySection | null {
   if ([
     'ride_accepted',
     'request_accepted',
-    'ride_rejected',
-    'request_rejected',
-    'ride_started',
-    'ride_cancelled',
-    'confirm_reminder',
-    'confirm_urgent_reminder',
-    'ride_expired',
-    'request_expired',
   ].includes(type)) {
     return 'bookings';
   }
@@ -99,14 +75,6 @@ function mapNotificationToSection(notification: any): ActivitySection | null {
   if ([
     'ride_request',
     'booking',
-    'ride_status',
-    'request_cancelled',
-    'passenger_cancelled',
-    'passenger_cancelled_booking',
-    'lifecycle_passenger_cancelled',
-    'ride_confirmed',
-    'request_confirmed',
-    'request_auto_cancelled',
   ].includes(type)) {
     return 'rides';
   }

@@ -31,11 +31,14 @@ export class FCMTokenManager {
     console.log('[FCMTokenManager] Initializing for user:', userId);
 
     try {
-      // Request notification permission if not already granted
-      if ('Notification' in window && Notification.permission === 'default') {
-        console.log('[FCMTokenManager] Requesting notification permission...');
-        const permission = await Notification.requestPermission();
-        console.log('[FCMTokenManager] Permission result:', permission);
+      if (!('Notification' in window)) {
+        console.warn('[FCMTokenManager] Notification API not supported in this browser.');
+        return;
+      }
+
+      if (Notification.permission !== 'granted') {
+        console.log('[FCMTokenManager] Notification permission not granted yet. Skipping token registration.');
+        return;
       }
 
       // Get and register the initial token

@@ -278,7 +278,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
     : analytics.earningsPerRide.slice(0, 5);
   
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 overflow-x-hidden">
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         {/* Total Earnings */}
@@ -365,7 +365,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
       </div>
       
       {/* Rating Distribution */}
-      <Card className="bg-gray-800/50 border-gray-700">
+      <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-yellow-400" />
@@ -382,7 +382,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
               
               return (
                 <div key={star} className="flex items-center gap-3">
-                  <div className="flex items-center gap-1 w-16">
+                  <div className="flex items-center gap-1 min-w-[44px] flex-shrink-0">
                     <span className="text-sm text-gray-400">{star}</span>
                     <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
                   </div>
@@ -394,7 +394,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
                       className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400"
                     />
                   </div>
-                  <span className="text-sm text-gray-400 w-12 text-right">
+                  <span className="text-sm text-gray-400 min-w-[28px] text-right flex-shrink-0">
                     {count}
                   </span>
                 </div>
@@ -405,7 +405,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
       </Card>
       
       {/* Recent Rides */}
-      <Card className="bg-gray-800/50 border-gray-700">
+      <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <CardTitle className="text-lg flex items-center gap-2">

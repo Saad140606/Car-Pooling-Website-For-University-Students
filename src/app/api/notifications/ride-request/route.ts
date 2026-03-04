@@ -43,8 +43,12 @@ export async function POST(req: NextRequest) {
       return errorResponse('Invalid university parameter', 400);
     }
 
-    if (!isValidDocId(rideId) || !isValidDocId(driverId)) {
-      return errorResponse('Invalid ride or driver ID', 400);
+    if (!isValidDocId(rideId)) {
+      return errorResponse('Invalid ride ID', 400);
+    }
+
+    if (driverId && !isValidDocId(driverId)) {
+      return errorResponse('Invalid driver ID', 400);
     }
 
     const rideRef = adminDb.doc(`universities/${validUniversity}/rides/${rideId}`);
@@ -55,7 +59,11 @@ export async function POST(req: NextRequest) {
 
     const rideData = rideSnap.data() as any;
     const actualDriverId = rideData?.driverId || rideData?.createdBy;
-    if (!actualDriverId || actualDriverId !== driverId) {
+    if (!actualDriverId) {
+      return errorResponse('Driver not found for ride', 400);
+    }
+
+    if (driverId && actualDriverId !== driverId) {
       return errorResponse('Driver mismatch for ride', 400);
     }
 
@@ -63,13 +71,21 @@ export async function POST(req: NextRequest) {
     const requestRef = adminDb.doc(`universities/${validUniversity}/rides/${rideId}/requests/${requestId}`);
     const requestSnap = await requestRef.get();
     if (!requestSnap.exists) {
-      return errorResponse('Request not found for current user', 403);
+      const fallbackQuery = await adminDb
+        .collection(`universities/${validUniversity}/rides/${rideId}/requests`)
+        .where('passengerId', '==', authenticatedUserId)
+        .limit(1)
+        .get();
+
+      if (fallbackQuery.empty) {
+        return errorResponse('Request not found for current user', 403);
+      }
     }
 
     await notifyNewRideRequest(
       adminDb,
       validUniversity,
-      driverId,
+      actualDriverId,
       rideId,
       passengerName || 'A student',
       from || rideData?.from || rideData?.pickupLocation || 'Starting point',

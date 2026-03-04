@@ -25,7 +25,6 @@ import { getUniversityShortLabel } from '@/lib/universities';
 import { getSelectedUniversity, isValidUniversity } from '@/lib/university';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
-import { notifyNewRideRequest } from '@/lib/rideNotificationService';
 import { parseTimestamp, parseTimestampToMs, isRideExpired } from '@/lib/timestampUtils';
 import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
 
@@ -610,49 +609,34 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
         transaction.set(requestRef, requestPayload);
       });
 
-      // Non-blocking notifications: UI should not wait for notification delivery.
+      // Non-blocking notification dispatch (server path is authoritative and rule-safe).
       void (async () => {
+        const providerId = ride.driverId || ride.createdBy || null;
+        if (!providerId) return;
         try {
-          await notifyNewRideRequest(
-            firestore,
-            userData.university,
-            ride.driverId,
-            ride.id,
-            { uid: user.uid, fullName: userData?.fullName || 'A student' },
-            {
+          const notifRes = await fetch('/api/notifications/ride-request', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              university: userData.university,
+              rideId: ride.id,
+              driverId: providerId,
+              passengerName: userData?.fullName || user.displayName || 'A student',
               from: ride.from || 'Unknown',
               to: ride.to || 'Unknown',
               pickupPoint: pickupPlaceName || `${pickupPoint.lat.toFixed(5)}, ${pickupPoint.lng.toFixed(5)}`,
               dropoffPoint: ride.to || 'Unknown',
-            }
-          );
-        } catch (notifError) {
-          console.debug('[RideRequest] Client notification failed, trying server fallback:', notifError);
-          try {
-            const fallbackRes = await fetch('/api/notifications/ride-request', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`,
-              },
-              body: JSON.stringify({
-                university: userData.university,
-                rideId: ride.id,
-                driverId: ride.driverId,
-                passengerName: userData?.fullName || user.displayName || 'A student',
-                from: ride.from || 'Unknown',
-                to: ride.to || 'Unknown',
-                pickupPoint: pickupPlaceName || `${pickupPoint.lat.toFixed(5)}, ${pickupPoint.lng.toFixed(5)}`,
-                dropoffPoint: ride.to || 'Unknown',
-              }),
-            });
+            }),
+          });
 
-            if (!fallbackRes.ok) {
-              console.debug('[RideRequest] Server notification fallback failed with status:', fallbackRes.status);
-            }
-          } catch (fallbackError) {
-            console.debug('[RideRequest] Server notification fallback error (non-critical):', fallbackError);
+          if (!notifRes.ok) {
+            console.debug('[RideRequest] Notification API failed with status:', notifRes.status);
           }
+        } catch (notifError) {
+          console.debug('[RideRequest] Notification API error (non-critical):', notifError);
         }
       })();
 
@@ -1189,7 +1173,21 @@ function RidesPageInner() {
       // Search query matching
       const q = searchQuery.trim().toLowerCase();
       if (q) {
-        const hay = (`${ride.from || ''} ${ride.to || ''} ${ride.driverInfo?.fullName || ''} ${String(ride.price || '')} ${ride.transportMode || ''}`).toLowerCase();
+        const stopNames = Array.isArray(ride.stops)
+          ? ride.stops.map((stop: any) => stop?.name || '').filter(Boolean).join(' ')
+          : '';
+        const waypointNames = Array.isArray(ride.waypoints)
+          ? ride.waypoints
+              .map((waypoint: any) => {
+                if (typeof waypoint === 'string') return waypoint;
+                if (waypoint && typeof waypoint === 'object') return waypoint.name || '';
+                return '';
+              })
+              .filter(Boolean)
+              .join(' ')
+          : '';
+
+        const hay = (`${ride.from || ''} ${ride.to || ''} ${ride.driverInfo?.fullName || ''} ${String(ride.price || '')} ${ride.transportMode || ''} ${stopNames} ${waypointNames}`).toLowerCase();
         if (!hay.includes(q)) return false;
       }
 

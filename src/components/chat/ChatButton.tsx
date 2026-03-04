@@ -9,7 +9,7 @@ import { useNotifications } from '@/contexts/NotificationContext';
 import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 import { MessageCircle } from 'lucide-react';
 
-export default function ChatButton({ chatId, university, label = 'Chat', disabled = false, className = '' }: { chatId: string, university: string, label?: string, disabled?: boolean, className?: string }) {
+export default function ChatButton({ chatId, university, label = 'Chat', disabled = false, className = '', otherUserName }: { chatId: string, university: string, label?: string, disabled?: boolean, className?: string, otherUserName?: string }) {
   const { getUnreadForChat, markChatAsRead } = useNotifications();
   const { markChatAsViewed } = useActivityIndicator();
   const [open, setOpen] = React.useState(false);
@@ -37,7 +37,7 @@ export default function ChatButton({ chatId, university, label = 'Chat', disable
           <DialogTitle className="sr-only">Chat</DialogTitle>
           <DialogDescription className="sr-only">Chat conversation</DialogDescription>
         </DialogHeader>
-        <ChatRoom chatId={chatId} university={university} />
+        <ChatRoom chatId={chatId} university={university} forcedOtherUserName={otherUserName} />
       </DialogContent>
     </Dialog>
   );

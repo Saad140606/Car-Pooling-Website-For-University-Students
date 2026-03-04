@@ -26,6 +26,9 @@ export function BookingDetailDialog({ open, onOpenChange, booking }: BookingDeta
     booking?.driverDetails?.contactNumber ||
     booking?.driverDetails?.phone ||
     null;
+  const whatsappContactHref = driverContactNumber
+    ? `https://wa.me/${String(driverContactNumber).replace(/\D/g, '')}`
+    : null;
   
   const formatTimestamp = (timestamp: any) => {
     if (!timestamp) return 'Time TBD';
@@ -101,7 +104,7 @@ export function BookingDetailDialog({ open, onOpenChange, booking }: BookingDeta
               <p className="text-sm font-semibold text-white break-words">{driver.fullName || 'Ride Provider'}</p>
               {driverContactNumber && (
                 <p className="text-xs text-slate-300 mt-1">
-                  Contact: <a href={`tel:${driverContactNumber}`} className="text-primary hover:underline">{driverContactNumber}</a>
+                    Contact: <a href={whatsappContactHref || '#'} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{driverContactNumber}</a>
                 </p>
               )}
             </div>

@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import { formatRideLockMessage, RideActionRole } from '@/lib/rideActionLock';
 
 type AdminDb = FirebaseFirestore.Firestore;
+const LAST_MINUTE_WINDOW_MINUTES = 30;
 
 function toDateValue(value: any): Date | null {
   if (!value) return null;
@@ -13,29 +14,72 @@ function toDateValue(value: any): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function isDriverPreDepartureCancellation(ride: any, userId: string): boolean {
-  const cancelledBy = String(ride?.cancelledBy || '');
-  const status = String(ride?.status || ride?.legacyStatus || ride?.lifecycleStatus || '').toLowerCase();
-  const matchesCanceller = !cancelledBy || cancelledBy === userId || cancelledBy.toLowerCase() === 'driver';
-  if (!matchesCanceller || !status.includes('cancel')) return false;
-  if (ride?.cancelledBeforeDeparture === true) return true;
-
-  const cancelledAt = toDateValue(ride?.cancelledAt);
-  const departureTime = toDateValue(ride?.departureTime);
-  if (cancelledAt && departureTime) {
-    return cancelledAt.getTime() < departureTime.getTime();
-  }
-  return false;
+function toNumber(value: any, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function isPassengerPreDepartureCancellation(request: any, userId: string): boolean {
-  const cancelledBy = String(request?.cancelledBy || '');
-  const status = String(request?.status || '').toLowerCase();
-  const matchesCanceller = !cancelledBy || cancelledBy === userId || cancelledBy.toLowerCase() === 'passenger';
-  if (!matchesCanceller || !status.includes('cancel')) return false;
-  if (request?.cancelledBeforeDeparture === true) return true;
-  if (request?.isLateCancellation === false) return true;
-  return false;
+function round2(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function normalizeStatus(value: any): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isCompletedStatus(value: any): boolean {
+  const status = normalizeStatus(value);
+  return status === 'completed';
+}
+
+function isCancelledStatus(value: any): boolean {
+  const status = normalizeStatus(value);
+  return status.includes('cancel');
+}
+
+function isLastMinuteCancellation(payload: any): boolean {
+  if (payload?.lastMinuteCancellation === true) return true;
+
+  const cancelledAt = toDateValue(payload?.cancelledAt);
+  const departureTime =
+    toDateValue(payload?.departureTime)
+    || toDateValue(payload?.rideDepartureTime)
+    || toDateValue(payload?.rideData?.departureTime);
+
+  if (!cancelledAt || !departureTime) return false;
+  const diffMinutes = (departureTime.getTime() - cancelledAt.getTime()) / (60 * 1000);
+  return diffMinutes >= 0 && diffMinutes <= LAST_MINUTE_WINDOW_MINUTES;
+}
+
+function isDriverWholeRideCancellation(ride: any, userId: string): boolean {
+  const cancelledBy = String(ride?.cancelledBy || '');
+  const status = normalizeStatus(ride?.status || ride?.legacyStatus || ride?.lifecycleStatus);
+  const matchesCanceller = !cancelledBy || cancelledBy === userId || cancelledBy.toLowerCase() === 'driver';
+  return matchesCanceller && isCancelledStatus(status);
+}
+
+function isDriverPassengerRemovalCancellation(booking: any, userId: string): boolean {
+  if (!isCancelledStatus(booking?.status)) return false;
+  const cancelledBy = String(booking?.cancelledBy || '').toLowerCase();
+  const matchesCanceller = cancelledBy === 'driver' || cancelledBy === String(userId).toLowerCase();
+  if (!matchesCanceller) return false;
+
+  const scope = normalizeStatus(booking?.cancellationScope);
+  if (scope === 'ride_cancelled_by_driver') return false;
+
+  const reason = normalizeStatus(booking?.cancellationReason);
+  if (reason.includes('driver cancelled the ride')) return false;
+
+  return booking?.isLateCancellation === true;
+}
+
+function isPassengerConfirmedCancellation(booking: any, userId: string): boolean {
+  if (!isCancelledStatus(booking?.status)) return false;
+  const cancelledBy = String(booking?.cancelledBy || '').toLowerCase();
+  const matchesCanceller = cancelledBy === 'passenger' || cancelledBy === String(userId).toLowerCase();
+  if (!matchesCanceller) return false;
+  return booking?.isLateCancellation === true;
 }
 
 function getPolicyField(role: RideActionRole): 'driverCancellationPolicy' | 'passengerCancellationPolicy' {
@@ -51,17 +95,67 @@ async function countDriverWindowStats(
   university: string,
   userId: string,
   windowStart: Date
-): Promise<{ totalRides: number; cancelledRides: number }> {
-  const startTs = admin.firestore.Timestamp.fromDate(windowStart);
+): Promise<{ completedRides: number; cancelledRideUnits: number; cancelledWholeRides: number; cancelledPassengerUnits: number }> {
   const ridesSnap = await db
     .collection(`universities/${university}/rides`)
     .where('driverId', '==', userId)
-    .where('createdAt', '>=', startTs)
     .get();
 
-  const rides = ridesSnap.docs.map((doc) => doc.data());
-  const cancelledRides = rides.filter((ride) => isDriverPreDepartureCancellation(ride, userId)).length;
-  return { totalRides: rides.length, cancelledRides };
+  const rides = ridesSnap.docs.map((doc) => doc.data() as any);
+
+  let completedRides = 0;
+  let cancelledWholeRides = 0;
+  let cancelledPassengerUnits = 0;
+
+  for (const ride of rides) {
+    const completionDate =
+      toDateValue(ride?.completedAt)
+      || toDateValue(ride?.departureTime)
+      || toDateValue(ride?.createdAt);
+    if (completionDate && completionDate >= windowStart && isCompletedStatus(ride?.status || ride?.lifecycleStatus || ride?.legacyStatus)) {
+      completedRides += 1;
+    }
+
+    if (!isDriverWholeRideCancellation(ride, userId)) continue;
+    const cancelledAt = toDateValue(ride?.cancelledAt);
+    if (!cancelledAt || cancelledAt < windowStart) continue;
+
+    const confirmedCount = toNumber(
+      ride?.cancelledConfirmedPassengersCount,
+      Array.isArray(ride?.confirmedPassengers) ? ride.confirmedPassengers.length : 0,
+    );
+    if (confirmedCount < 1) continue;
+
+    const multiplier = isLastMinuteCancellation(ride) ? 2 : 1;
+    const units = toNumber(ride?.cancellationPenaltyUnits, multiplier);
+    cancelledWholeRides += units;
+  }
+
+  const bookingsSnap = await db
+    .collection(`universities/${university}/bookings`)
+    .where('driverId', '==', userId)
+    .get();
+
+  for (const bookingDoc of bookingsSnap.docs) {
+    const booking = bookingDoc.data() as any;
+    if (!isDriverPassengerRemovalCancellation(booking, userId)) continue;
+
+    const cancelledAt = toDateValue(booking?.cancelledAt);
+    if (!cancelledAt || cancelledAt < windowStart) continue;
+
+    const seats = Math.max(1, toNumber(booking?.rideTotalSeats, toNumber(booking?.totalSeats, toNumber(booking?.seats, 4))));
+    const multiplier = isLastMinuteCancellation(booking) ? 2 : 1;
+    const defaultUnits = (1 / seats) * multiplier;
+    const units = toNumber(booking?.cancellationPenaltyUnits, defaultUnits);
+    cancelledPassengerUnits += units;
+  }
+
+  return {
+    completedRides,
+    cancelledRideUnits: round2(cancelledWholeRides + cancelledPassengerUnits),
+    cancelledWholeRides: round2(cancelledWholeRides),
+    cancelledPassengerUnits: round2(cancelledPassengerUnits),
+  };
 }
 
 async function countPassengerWindowStats(
@@ -69,19 +163,44 @@ async function countPassengerWindowStats(
   university: string,
   userId: string,
   windowStart: Date
-): Promise<{ totalRides: number; cancelledRides: number }> {
-  const requestsSnap = await db.collectionGroup('requests').where('passengerId', '==', userId).get();
+): Promise<{ completedRides: number; cancelledRideUnits: number; cancelledWholeRides: number; cancelledPassengerUnits: number }> {
+  const bookingsSnap = await db
+    .collection(`universities/${university}/bookings`)
+    .where('passengerId', '==', userId)
+    .get();
 
-  const requests = requestsSnap.docs
-    .filter((doc) => doc.ref.path.includes(`/universities/${university}/`))
-    .map((doc) => doc.data())
-    .filter((request) => {
-      const createdAt = toDateValue((request as any)?.createdAt);
-      return !!createdAt && createdAt.getTime() >= windowStart.getTime();
-    });
+  let completedRides = 0;
+  let cancelledPassengerUnits = 0;
 
-  const cancelledRides = requests.filter((request) => isPassengerPreDepartureCancellation(request, userId)).length;
-  return { totalRides: requests.length, cancelledRides };
+  for (const bookingDoc of bookingsSnap.docs) {
+    const booking = bookingDoc.data() as any;
+
+    const completionDate =
+      toDateValue(booking?.completedAt)
+      || toDateValue(booking?.passengerCompletionAt)
+      || toDateValue(booking?.createdAt);
+    const completedByOutcome = normalizeStatus(booking?.passengerCompletion) === 'completed';
+    const completedByStatus = isCompletedStatus(booking?.status || booking?.lifecycleStatus);
+    if (completionDate && completionDate >= windowStart && (completedByOutcome || completedByStatus)) {
+      completedRides += 1;
+    }
+
+    if (!isPassengerConfirmedCancellation(booking, userId)) continue;
+
+    const cancelledAt = toDateValue(booking?.cancelledAt);
+    if (!cancelledAt || cancelledAt < windowStart) continue;
+
+    const multiplier = isLastMinuteCancellation(booking) ? 2 : 1;
+    const units = toNumber(booking?.cancellationPenaltyUnits, multiplier);
+    cancelledPassengerUnits += units;
+  }
+
+  return {
+    completedRides,
+    cancelledRideUnits: round2(cancelledPassengerUnits),
+    cancelledWholeRides: 0,
+    cancelledPassengerUnits: round2(cancelledPassengerUnits),
+  };
 }
 
 export interface CancellationPolicyResult {
@@ -127,12 +246,16 @@ export async function evaluateAndApplyRoleCancellationPolicy(
     windowStart = previousLockUntil;
   }
 
-  const { totalRides, cancelledRides } = role === 'driver'
+  const counts = role === 'driver'
     ? await countDriverWindowStats(db, university, userId, windowStart)
     : await countPassengerWindowStats(db, university, userId, windowStart);
 
+  const completedRides = counts.completedRides;
+  const cancelledRides = round2(counts.cancelledRideUnits);
+  const totalRides = round2(completedRides + cancelledRides);
+
   const cancellationRate = totalRides > 0
-    ? Math.round((cancelledRides / totalRides) * 100)
+    ? round2((cancelledRides / totalRides) * 100)
     : 0;
 
   const exceedsThreshold = totalRides >= minimumRides && cancellationRate >= thresholdRate;
@@ -146,9 +269,13 @@ export async function evaluateAndApplyRoleCancellationPolicy(
   const updatedPolicy: Record<string, any> = {
     windowStartAt: admin.firestore.Timestamp.fromDate(windowStart),
     strikeLevel: nextStrike,
+    completedRidesWindow: round2(completedRides),
     totalRidesWindow: totalRides,
     cancelledRidesWindow: cancelledRides,
+    cancelledWholeRidesWindow: counts.cancelledWholeRides,
+    cancelledPassengerUnitsWindow: counts.cancelledPassengerUnits,
     cancellationRate,
+    minimumRidesThreshold: minimumRides,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 

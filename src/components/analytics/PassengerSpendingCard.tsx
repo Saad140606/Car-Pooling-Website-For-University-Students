@@ -323,7 +323,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
   const maxMonthlySpending = Math.max(...sortedMonths.map(([, amount]) => amount), 1);
   
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 overflow-x-hidden">
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         {/* Total Spent */}
@@ -410,7 +410,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       </div>
 
       {/* Rating Distribution */}
-      <Card className="bg-gray-800/50 border-gray-700">
+      <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
             <Star className="w-5 h-5 text-yellow-400" />
@@ -447,7 +447,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       
       {/* Monthly Spending Chart */}
       {sortedMonths.length > 0 && (
-        <Card className="bg-gray-800/50 border-gray-700">
+        <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-blue-400" />
@@ -482,7 +482,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       
       {/* Top Routes */}
       {topRoutes.length > 0 && (
-        <Card className="bg-gray-800/50 border-gray-700">
+        <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <MapPin className="w-5 h-5 text-purple-400" />
@@ -497,20 +497,20 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.1 }}
-                  className="flex items-center justify-between p-3 bg-gray-700/30 rounded-lg"
+                  className="flex items-center justify-between gap-2 p-3 bg-gray-700/30 rounded-lg min-w-0"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-sm font-medium">
                       {index + 1}
                     </div>
-                    <div>
-                      <p className="text-sm text-white">{route.route}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-white break-words leading-snug">{route.route}</p>
                       <p className="text-xs text-gray-400">
                         {route.count} ride{route.count !== 1 ? 's' : ''}
                       </p>
                     </div>
                   </div>
-                  <p className="text-blue-400 font-medium">
+                  <p className="text-blue-400 font-medium flex-shrink-0 text-right">
                     {formatCurrency(route.total)}
                   </p>
                 </motion.div>
@@ -521,7 +521,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       )}
       
       {/* Recent Rides */}
-      <Card className="bg-gray-800/50 border-gray-700">
+      <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <CardTitle className="text-lg flex items-center gap-2">

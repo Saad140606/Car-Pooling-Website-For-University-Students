@@ -146,6 +146,44 @@ export async function POST(request: NextRequest) {
       if (postLockStatus === 'IN_PROGRESS') {
         const windowEnd = departureMs + COMPLETION_WINDOW_HOURS * 60 * 60 * 1000;
         updateData.completionWindowEnd = Timestamp.fromMillis(windowEnd);
+
+        try {
+          const driverId = rideData.driverId;
+          const confirmedPassengers = rideData.confirmedPassengers || [];
+          const rideFrom = rideData.from || 'Start';
+          const rideTo = rideData.to || 'Destination';
+
+          if (driverId) {
+            await adminDb.collection(`universities/${university}/notifications`).add({
+              userId: driverId,
+              type: 'ride_started',
+              title: 'Ride Started! 🚀',
+              message: `Your ride from ${rideFrom} → ${rideTo} has started. Drive safely!`,
+              relatedRideId: rideId,
+              isRead: false,
+              priority: 'high',
+              createdAt: now,
+            });
+          }
+
+          for (const passenger of confirmedPassengers) {
+            const passengerId = typeof passenger === 'string' ? passenger : passenger.userId;
+            if (!passengerId) continue;
+
+            await adminDb.collection(`universities/${university}/notifications`).add({
+              userId: passengerId,
+              type: 'ride_started',
+              title: 'Ride Started! 🚀',
+              message: `Your ride from ${rideFrom} → ${rideTo} has started. Have a safe trip!`,
+              relatedRideId: rideId,
+              isRead: false,
+              priority: 'high',
+              createdAt: now,
+            });
+          }
+        } catch (notifyError) {
+          console.error('[LifecycleCheck] Error sending ride started notifications:', notifyError);
+        }
       }
 
       updated = true;

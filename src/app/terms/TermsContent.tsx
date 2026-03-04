@@ -74,6 +74,18 @@ const termsSections: PolicySection[] = [
     icon: <FileCheck className="h-5 w-5 text-primary" />,
   },
   {
+    id: "cancellation-lock-policy",
+    title: "Cancellation & Account Lock Policy",
+    summary: "Frequent late cancellations are tracked. Repeated policy violations can temporarily lock ride actions.",
+    bullets: [
+      "Driver and passenger cancellation rates are monitored as trust and reliability signals",
+      "Cancellation warnings may appear before lock thresholds are reached",
+      "Policy-triggered locks can block creating, booking, or managing rides until lock expiry",
+    ],
+    icon: <AlertTriangle className="h-5 w-5 text-amber-300" />,
+    tone: "warning",
+  },
+  {
     id: "safety-guidelines",
     title: "Safety Guidelines",
     summary: "Safety is shared. Verify riders, choose trusted options, and keep communication inside the app.",
@@ -103,7 +115,7 @@ const termsSections: PolicySection[] = [
     summary: "We may pause or terminate accounts to protect community integrity without prior notice when risk is detected.",
     bullets: [
       "Violation of safety, conduct, or authenticity triggers review",
-      "Repeated cancellations, abuse, or evasion may result in removal",
+      "Repeated cancellations, policy evasion, or lock circumvention may result in suspension",
       "Appeals can be submitted through support with context",
     ],
     icon: <Gavel className="h-5 w-5 text-primary" />,
@@ -150,7 +162,7 @@ const privacySections: PolicySection[] = [
     summary: "Enable matching, safety checks, integrity monitoring, and service improvements.",
     bullets: [
       "Verify eligibility and enforce community safeguards",
-      "Surface trust signals (badges, gender filters, cancellation history)",
+      "Surface trust signals (badges, gender filters, cancellation history, lock status)",
       "Improve reliability through analytics and incident prevention",
     ],
     icon: <BarChart3 className="h-5 w-5 text-emerald-400" />,
@@ -206,6 +218,7 @@ const privacySections: PolicySection[] = [
     summary: "Data is kept only as long as necessary for safety, legal, or operational obligations.",
     bullets: [
       "Ride and incident logs retained for audit and abuse prevention",
+      "Cancellation-rate and lock-policy records may be retained for enforcement and dispute review",
       "Backups cycle out on a schedule; sensitive data minimized",
       "Retention timelines may extend for legal or dispute resolution",
     ],

@@ -55,6 +55,12 @@ function toMillisSafe(value: any): number | null {
   return null;
 }
 
+function isFailedPreconditionIndexError(error: any): boolean {
+  const code = String(error?.code ?? '').toLowerCase();
+  const message = String(error?.message ?? '').toLowerCase();
+  return code === '9' || code === 'failed-precondition' || message.includes('failed_precondition') || message.includes('requires an index');
+}
+
 export async function POST(req: NextRequest) {
   // Check if Firebase Admin is initialized
   if (!adminDb) {
@@ -136,12 +142,24 @@ export async function POST(req: NextRequest) {
         .where('passengerId', '==', authenticatedUserId)
         .where('status', '==', 'CONFIRMED')
         .limit(1);
-      const sameRideConfirmedSnap = await tx.get(sameRideConfirmedQuery);
-      if (!sameRideConfirmedSnap.empty) {
-        const confirmedDoc = sameRideConfirmedSnap.docs[0];
-        if (confirmedDoc.id !== requestId) {
-          throw new Error('You already confirmed this ride');
+      try {
+        const sameRideConfirmedSnap = await tx.get(sameRideConfirmedQuery);
+        if (!sameRideConfirmedSnap.empty) {
+          const confirmedDoc = sameRideConfirmedSnap.docs[0];
+          if (confirmedDoc.id !== requestId) {
+            throw new Error('You already confirmed this ride');
+          }
         }
+      } catch (queryError: any) {
+        if (!isFailedPreconditionIndexError(queryError)) {
+          throw queryError;
+        }
+        console.warn('[ConfirmRequest] Skipping same-ride confirmed duplicate check due to missing index', {
+          rideId,
+          requestId,
+          passengerId: authenticatedUserId,
+          message: queryError?.message,
+        });
       }
       
       // Check expiry with proper timestamp handling
@@ -171,29 +189,41 @@ export async function POST(req: NextRequest) {
         .where('passengerId', '==', authenticatedUserId)
         .where('status', '==', 'CONFIRMED')
         .limit(25);
-      const confirmedSnap = await tx.get(confirmedActiveQuery);
+      try {
+        const confirmedSnap = await tx.get(confirmedActiveQuery);
 
-      for (const confirmedDoc of confirmedSnap.docs) {
-        const confirmedRideRef = confirmedDoc.ref.parent.parent;
-        if (!confirmedRideRef) continue;
+        for (const confirmedDoc of confirmedSnap.docs) {
+          const confirmedRideRef = confirmedDoc.ref.parent.parent;
+          if (!confirmedRideRef) continue;
 
-        const isSameRequest =
-          confirmedDoc.id === requestId &&
-          confirmedRideRef.id === rideId;
-        if (isSameRequest) continue;
+          const isSameRequest =
+            confirmedDoc.id === requestId &&
+            confirmedRideRef.id === rideId;
+          if (isSameRequest) continue;
 
-        const confirmedRideSnap = await tx.get(confirmedRideRef);
-        if (!confirmedRideSnap.exists) continue;
+          const confirmedRideSnap = await tx.get(confirmedRideRef);
+          if (!confirmedRideSnap.exists) continue;
 
-        const confirmedRide = confirmedRideSnap.data() as any;
-        const confirmedDepartureMs = toMillisSafe(
-          confirmedRide?.departureTime ??
-          (confirmedDoc.data() as any)?.rideData?.departureTime
-        );
+          const confirmedRide = confirmedRideSnap.data() as any;
+          const confirmedDepartureMs = toMillisSafe(
+            confirmedRide?.departureTime ??
+            (confirmedDoc.data() as any)?.rideData?.departureTime
+          );
 
-        if (confirmedDepartureMs === null || nowMs < confirmedDepartureMs) {
-          throw new Error('You already have a confirmed ride. Please cancel it first.');
+          if (confirmedDepartureMs === null || nowMs < confirmedDepartureMs) {
+            throw new Error('You already have a confirmed ride. Please cancel it first.');
+          }
         }
+      } catch (queryError: any) {
+        if (!isFailedPreconditionIndexError(queryError)) {
+          throw queryError;
+        }
+        console.warn('[ConfirmRequest] Skipping active confirmed-ride guard due to missing index', {
+          rideId,
+          requestId,
+          passengerId: authenticatedUserId,
+          message: queryError?.message,
+        });
       }
 
       const departureMs = toMillisSafe(ride.departureTime);
@@ -259,41 +289,46 @@ export async function POST(req: NextRequest) {
     });
 
     // After confirm, auto-cancel other requests for same passenger and tripKey
+    // (best effort only; never fail confirmation response due to cleanup/index issues)
     const tripKey = result.tripKey;
     if (tripKey) {
-      const cg = await adminDb.collectionGroup('requests')
-        .where('passengerId', '==', authenticatedUserId)
-        .where('tripKey', '==', tripKey)
-        .get();
-      const batch = adminDb.batch();
-      const ridesToAdjust: Record<string, number> = {};
-      
-      cg.forEach((d) => {
-        if (d.id === requestId && d.ref.parent.parent?.id === rideId) return;
-        const data = d.data() as any;
-        if (data.status === 'PENDING' || data.status === 'ACCEPTED') {
-          batch.update(d.ref, { 
-            status: 'AUTO_CANCELLED', 
-            autoCancelledAt: admin.firestore.FieldValue.serverTimestamp() 
-          });
-          if (data.status === 'ACCEPTED') {
-            const ridePath = d.ref.parent.parent?.path;
-            if (ridePath) ridesToAdjust[ridePath] = (ridesToAdjust[ridePath] || 0) + 1;
+      try {
+        const cg = await adminDb.collectionGroup('requests')
+          .where('passengerId', '==', authenticatedUserId)
+          .where('tripKey', '==', tripKey)
+          .get();
+        const batch = adminDb.batch();
+        const ridesToAdjust: Record<string, number> = {};
+
+        cg.forEach((d) => {
+          if (d.id === requestId && d.ref.parent.parent?.id === rideId) return;
+          const data = d.data() as any;
+          if (data.status === 'PENDING' || data.status === 'ACCEPTED') {
+            batch.update(d.ref, {
+              status: 'AUTO_CANCELLED',
+              autoCancelledAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            if (data.status === 'ACCEPTED') {
+              const ridePath = d.ref.parent.parent?.path;
+              if (ridePath) ridesToAdjust[ridePath] = (ridesToAdjust[ridePath] || 0) + 1;
+            }
+          }
+        });
+
+        // Release reserved seats from affected rides
+        for (const [path, count] of Object.entries(ridesToAdjust)) {
+          const rref = adminDb.doc(path);
+          const snap = await rref.get();
+          if (snap.exists) {
+            const rs = (snap.data()?.reservedSeats ?? 0) as number;
+            batch.update(rref, { reservedSeats: Math.max(0, rs - count) });
           }
         }
-      });
-      
-      // Release reserved seats from affected rides
-      for (const [path, count] of Object.entries(ridesToAdjust)) {
-        const rref = adminDb.doc(path);
-        const snap = await rref.get();
-        if (snap.exists) {
-          const rs = (snap.data()?.reservedSeats ?? 0) as number;
-          batch.update(rref, { reservedSeats: Math.max(0, rs - count) });
-        }
+
+        await batch.commit();
+      } catch (cleanupError: any) {
+        console.warn('[ConfirmRequest] Post-confirm cleanup skipped (non-critical):', cleanupError?.message || cleanupError);
       }
-      
-      await batch.commit();
     }
 
     // ===== SEND NOTIFICATION: After successful confirmation =====

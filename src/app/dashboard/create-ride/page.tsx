@@ -27,12 +27,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useFirestore, useUser } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { useActionFeedback } from '@/hooks/useActionFeedback';
-import { Loader2, MapPin, Lock } from 'lucide-react';
+import { Loader2, MapPin, Lock, ChevronDown } from 'lucide-react';
 import { LeavingTimePicker } from '@/components/ui/leaving-time-picker';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
 import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
+import { createMapPin } from '@/components/map';
 
 const StopsViewer = dynamic(() => import('@/components/StopsViewer'), {
   ssr: false,
@@ -136,19 +137,16 @@ const MapComponent = forwardRef<MapComponentRef, {
   };
 
   // Simple SVG pin generator so we can color-code origin/destination
-  const makePinIcon = (fill: string, inner: string = '#ffffff') => {
+  const makePinIcon = (fill: string) => {
     try {
-      const pinSvg = `
-        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='40' height='56'>
-          <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='${fill}' stroke='#0b1220' stroke-width='1.2' />
-          <circle cx='12' cy='9' r='2.8' fill='${inner}' stroke='#0b1220' stroke-width='1.2' />
-        </svg>
-      `;
-      return L.divIcon({ 
-        className: '', 
-        html: pinSvg,
-        iconAnchor: [20, 50],
-        popupAnchor: [0, -50]
+      const pinUrl = createMapPin(fill);
+      return L.icon({ 
+        iconUrl: pinUrl,
+        iconRetinaUrl: pinUrl,
+        iconSize: [32, 48],
+        iconAnchor: [16, 48],
+        popupAnchor: [0, -42],
+        tooltipAnchor: [16, -32],
       });
     } catch {
       return (getImageIcon() as any) || undefined;
@@ -161,13 +159,7 @@ const MapComponent = forwardRef<MapComponentRef, {
     // Ensure marker icons are available in Next.js by pointing to public/ assets
     if (typeof window !== 'undefined') {
       try {
-          const pinSvg = `
-            <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-              <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%23E84C3D' stroke='%23ffffff' stroke-width='1.2' />
-              <circle cx='12' cy='9' r='2.5' fill='%23ffffff' />
-            </svg>
-          `;
-          const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+          const pinDataUrl = createMapPin('#E84C3D');
           L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
       } catch (e) {
         // ignore
@@ -175,19 +167,13 @@ const MapComponent = forwardRef<MapComponentRef, {
     }
     
       // Create helper to generate an SVG data URL for colored pin icons
-      const makePinDataUrl = (color: string, innerColor = '#0b1220') => {
-        const pinSvg = `
-          <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-            <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='${color}' stroke='%23ffffff' stroke-width='1.2' />
-            <circle cx='12' cy='9' r='2.5' fill='${innerColor}' />
-          </svg>
-        `;
-        return `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+      const makePinDataUrl = (color: string) => {
+        return createMapPin(color);
       };
 
       // Pre-create a couple of icon styles to use across the map (avoid black default)
-      const redPinUrl = makePinDataUrl('#E84C3D', '#ffffff');
-      const darkRedPinUrl = makePinDataUrl('#C93D33', '#ffffff');
+      const redPinUrl = makePinDataUrl('#E84C3D');
+      const darkRedPinUrl = makePinDataUrl('#C93D33');
 
       const DEFAULT_PIN_ICON = L.icon({ iconUrl: redPinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
       const ALT_PIN_ICON = L.icon({ iconUrl: darkRedPinUrl, iconSize: [34, 46], iconAnchor: [17, 46], popupAnchor: [0, -40] });
@@ -867,21 +853,37 @@ export default function CreateRidePage() {
 
   // University selection is mandatory: 'toUni' (going to uni) | 'fromUni' (leaving from uni)
   const [uniAuto, setUniAuto] = useState<'toUni' | 'fromUni'>('toUni');
+  const [campusLock, setCampusLock] = useState<'fast_national' | 'fast_city' | 'ned_main' | 'ned_city' | 'ned_lej' | 'karachi_main'>('fast_national');
   const [selectedPortalUniversity] = useState<University | null>(() => {
     const selected = getSelectedUniversity();
     return selected && isValidUniversity(selected) ? selected : null;
   });
 
   // Predefined university locations (approximate centers)
-  const FAST_UNI: LatLngLiteral = {
+  const FAST_NATIONAL_UNI: LatLngLiteral = {
     lat: 24.8569128,
     lng: 67.2646384,
     name: 'FAST National University Karachi Campus',
+  };
+  const FAST_CITY_UNI: LatLngLiteral = {
+    lat: 24.8598776,
+    lng: 67.06837,
+    name: 'FAST City Campus Karachi',
   };
   const NED_UNI: LatLngLiteral = {
     lat: 24.9302091,
     lng: 67.1148119,
     name: 'NED University of Engineering and Technology',
+  };
+  const NED_CITY_UNI: LatLngLiteral = {
+    lat: 24.8537717,
+    lng: 67.0147891,
+    name: 'NED University City Campus',
+  };
+  const NED_LEJ_UNI: LatLngLiteral = {
+    lat: 24.8880711,
+    lng: 67.0630202,
+    name: 'NED University LEJ Campus',
   };
   const KARACHI_UNI: LatLngLiteral = {
     lat: 24.9393134,
@@ -901,18 +903,44 @@ export default function CreateRidePage() {
     return 'fast';
   };
 
+  const getResolvedUniversity = (uni: string, currentCampusLock: typeof campusLock): LatLngLiteral => {
+    if (uni === 'ned') {
+      if (currentCampusLock === 'ned_city') return NED_CITY_UNI;
+      if (currentCampusLock === 'ned_lej') return NED_LEJ_UNI;
+      return NED_UNI;
+    }
+    if (uni === 'karachi') {
+      return KARACHI_UNI;
+    }
+    if (currentCampusLock === 'fast_city') return FAST_CITY_UNI;
+    return FAST_NATIONAL_UNI;
+  };
+
   const getUniversityShortName = () => {
-    const uni = getEffectiveUniversity();
-    if (uni === 'ned') return 'NED University';
-    if (uni === 'karachi') return 'University of Karachi';
-    return 'FAST University';
+    return getCurrentUniversity().name || 'University Campus';
   };
 
   const getCurrentUniversity = () => {
     const uni = getEffectiveUniversity();
-    if (uni === 'ned') return NED_UNI;
-    if (uni === 'karachi') return KARACHI_UNI;
-    return FAST_UNI;
+    return getResolvedUniversity(uni, campusLock);
+  };
+
+  const getCampusOptions = () => {
+    const uni = getEffectiveUniversity();
+    if (uni === 'fast') {
+      return [
+        { value: 'fast_national', label: 'FAST National University Karachi Campus' },
+        { value: 'fast_city', label: 'FAST City Campus Karachi' },
+      ] as const;
+    }
+    if (uni === 'ned') {
+      return [
+        { value: 'ned_main', label: 'NED University of Engineering and Technology (Main)' },
+        { value: 'ned_city', label: 'NED University City Campus' },
+        { value: 'ned_lej', label: 'NED University LEJ Campus' },
+      ] as const;
+    }
+    return [{ value: 'karachi_main', label: 'University of Karachi' }] as const;
   };
 
   const distanceInMeters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
@@ -934,10 +962,18 @@ export default function CreateRidePage() {
     return distanceInMeters(uni, point) <= UNI_MAX_RADIUS_METERS;
   };
 
-  const applyUniversitySelection = (sel: 'toUni' | 'fromUni') => {
+  const applyUniversitySelection = (
+    sel: 'toUni' | 'fromUni',
+    selectedCampusLock?: 'fast_national' | 'fast_city' | 'ned_main' | 'ned_city' | 'ned_lej' | 'karachi_main'
+  ) => {
     setUniAuto(sel);
-    const uni = getCurrentUniversity();
-    const uniShortName = getUniversityShortName();
+    const effectiveUniversity = getEffectiveUniversity();
+    const resolvedCampusLock = selectedCampusLock ?? campusLock;
+    if (selectedCampusLock) {
+      setCampusLock(selectedCampusLock);
+    }
+    const uni = getResolvedUniversity(effectiveUniversity, resolvedCampusLock);
+    const uniShortName = uni.name || getUniversityShortName();
     if (sel === 'toUni') {
       // Set destination to the student's university (exact coordinates)
       form.setValue('to', uniShortName);
@@ -975,7 +1011,7 @@ export default function CreateRidePage() {
       applyUniversitySelection(uniAuto);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userData?.university, selectedPortalUniversity, initialized]);
+  }, [userData?.university, selectedPortalUniversity, initialized, campusLock]);
 
   // Keep locked field coordinates synchronized with the currently resolved university.
   // This prevents stale coordinates (e.g., FAST) from persisting when the UI label shows another portal (e.g., Karachi).
@@ -998,7 +1034,18 @@ export default function CreateRidePage() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uniAuto, userData?.university, selectedPortalUniversity, initialized]);
+  }, [uniAuto, userData?.university, selectedPortalUniversity, initialized, campusLock]);
+
+  useEffect(() => {
+    const uni = getEffectiveUniversity();
+    if (uni === 'fast' && campusLock !== 'fast_national' && campusLock !== 'fast_city') {
+      setCampusLock('fast_national');
+    } else if (uni === 'ned' && campusLock !== 'ned_main' && campusLock !== 'ned_city' && campusLock !== 'ned_lej') {
+      setCampusLock('ned_main');
+    } else if (uni === 'karachi' && campusLock !== 'karachi_main') {
+      setCampusLock('karachi_main');
+    }
+  }, [selectedPortalUniversity, userData?.university, initialized, campusLock]);
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [durationMin, setDurationMin] = useState<number | null>(null);
   
@@ -1153,14 +1200,30 @@ export default function CreateRidePage() {
 
     // Prefer canonical university names when the clicked point lies within a university radius
     const ned = NED_UNI;
-    const fast = FAST_UNI;
+    const nedCity = NED_CITY_UNI;
+    const nedLej = NED_LEJ_UNI;
+    const fastNational = FAST_NATIONAL_UNI;
+    const fastCity = FAST_CITY_UNI;
     const karachi = KARACHI_UNI;
     const clicked = { lat, lng };
     const nearNed = distanceInMeters(clicked, { lat: ned.lat, lng: ned.lng }) <= UNI_MAX_RADIUS_METERS;
-    const nearFast = distanceInMeters(clicked, { lat: fast.lat, lng: fast.lng }) <= UNI_MAX_RADIUS_METERS;
+    const nearNedCity = distanceInMeters(clicked, { lat: nedCity.lat, lng: nedCity.lng }) <= UNI_MAX_RADIUS_METERS;
+    const nearNedLej = distanceInMeters(clicked, { lat: nedLej.lat, lng: nedLej.lng }) <= UNI_MAX_RADIUS_METERS;
+    const nearFastNational = distanceInMeters(clicked, { lat: fastNational.lat, lng: fastNational.lng }) <= UNI_MAX_RADIUS_METERS;
+    const nearFastCity = distanceInMeters(clicked, { lat: fastCity.lat, lng: fastCity.lng }) <= UNI_MAX_RADIUS_METERS;
     const nearKarachi = distanceInMeters(clicked, { lat: karachi.lat, lng: karachi.lng }) <= UNI_MAX_RADIUS_METERS;
 
-    const finalName = nearNed ? ned.name : (nearFast ? fast.name : (nearKarachi ? karachi.name : name));
+    const finalName = nearNed
+      ? ned.name
+      : nearNedCity
+        ? nedCity.name
+        : nearNedLej
+          ? nedLej.name
+      : nearFastNational
+        ? fastNational.name
+        : nearFastCity
+          ? fastCity.name
+          : (nearKarachi ? karachi.name : name);
 
     // Apply immediately and exit selection mode
     if (activeMapSelect === 'from') {
@@ -1601,6 +1664,7 @@ export default function CreateRidePage() {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [suggestLimit, setSuggestLimit] = useState<number>(20);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [campusSelectOpen, setCampusSelectOpen] = useState<'from' | 'to' | null>(null);
   const searchTimeoutRef = useRef<number | null>(null);
   
   // Cache the Firebase auth token for search suggestions to avoid repeated async calls and speed up suggestions
@@ -2243,6 +2307,39 @@ export default function CreateRidePage() {
     }
   };
 
+  const renderCampusSelector = (field: 'from' | 'to') => {
+    const isLocked = (field === 'from' && uniAuto === 'fromUni') || (field === 'to' && uniAuto === 'toUni');
+    if (!isLocked || campusSelectOpen !== field) return null;
+    
+    const options = getCampusOptions();
+    if (options.length <= 1) return null;
+    
+    return (
+      <div role="listbox" aria-label="Campus options" className="absolute left-0 right-0 bg-card border-2 border-primary/30 rounded-lg z-[5000] max-h-72 overflow-auto shadow-xl" style={{ position: 'absolute', top: 'calc(100% + 8px)' }}>
+       
+        {options.map((option) => (
+          <button
+            key={option.value}
+            role="option"
+            aria-selected={campusLock === option.value}
+            type="button"
+            className={`w-full text-left px-4 py-3 transition-colors border-b border-border/50 last:border-b-0 ${
+              campusLock === option.value
+                ? 'bg-primary/20 border-l-4 border-l-primary text-primary font-medium'
+                : 'hover:bg-primary/10 hover:border-l-4 hover:border-l-primary'
+            }`}
+            onMouseDown={() => {
+              applyUniversitySelection(uniAuto, option.value as any);
+              setCampusSelectOpen(null);
+            }}
+          >
+            <div className="text-sm">{option.label}</div>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   const renderSuggestionsFor = (field: 'from' | 'to') => {
     console.log('[RENDER] renderSuggestionsFor called:', { field, queryField: query.field, suggestionsCount: suggestions.length });
     if (query.field !== field) {
@@ -2360,41 +2457,73 @@ export default function CreateRidePage() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 relative z-[4000]">
-                <FormField control={form.control} name="from" render={({ field }: any) => (
+                <FormField control={form.control} name="from" render={({ field }: any) => {
+                  const isFromLockedWithCampuses = uniAuto === 'fromUni' && getCampusOptions().length > 1;
+                  return (
                   <FormItem className="relative z-[4500]" style={{ overflow: 'visible' }}>
                         <FormLabel>From</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Type to search locations..." {...field} value={uniAuto === 'fromUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'fromUni'} className={uniAuto === 'fromUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} onFocus={() => { if (field.value && uniAuto !== 'fromUni') setQuery({ field: 'from', text: field.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 300)} autoComplete="off" />
+                              <Input 
+                                placeholder="Type to search locations..." 
+                                {...field} 
+                                value={uniAuto === 'fromUni' ? String(getCurrentUniversity().name ?? '') : field.value} 
+                                readOnly={uniAuto === 'fromUni'} 
+                                className={`${uniAuto === 'fromUni' ? isFromLockedWithCampuses ? 'cursor-pointer opacity-100' : 'opacity-70 cursor-not-allowed' : ''}`}
+                                onClick={() => { if (isFromLockedWithCampuses) setCampusSelectOpen(campusSelectOpen === 'from' ? null : 'from'); }}
+                                onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} 
+                                onFocus={() => { if (field.value && uniAuto !== 'fromUni') setQuery({ field: 'from', text: field.value }); }} 
+                                onBlur={() => { setTimeout(() => setSuggestions([]), 300); setTimeout(() => setCampusSelectOpen(null), 200); }}
+                                autoComplete="off" 
+                              />
                               {searchLoading && query.field === 'from' && uniAuto !== 'fromUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
-                              {uniAuto === 'fromUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
+                              {uniAuto === 'fromUni' && isFromLockedWithCampuses && <ChevronDown className={`w-4 h-4 absolute right-3 top-3 text-primary transition-transform ${campusSelectOpen === 'from' ? 'rotate-180' : ''}`} />}
+                              {uniAuto === 'fromUni' && !isFromLockedWithCampuses && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
                         </FormControl>
                         <Button type="button" variant="link" size="sm" className={`p-0 h-auto absolute right-1 -bottom-6 ${uniAuto === 'fromUni' ? 'opacity-50 pointer-events-none' : 'text-accent'}`} onClick={() => handleChooseOnMap('from')} disabled={uniAuto === 'fromUni'}>
                           <MapPin className="w-3 h-3 mr-1" /> Choose on map
                         </Button>
+                        {renderCampusSelector('from')}
                         {uniAuto !== 'fromUni' && renderSuggestionsFor('from')}
                         <FormMessage />
                     </FormItem>
-                )}/>
+                  );
+                }}/>
 
-                <FormField control={form.control} name="to" render={({ field }: any) => (
+                <FormField control={form.control} name="to" render={({ field }: any) => {
+                  const isToLockedWithCampuses = uniAuto === 'toUni' && getCampusOptions().length > 1;
+                  return (
                   <FormItem className="relative z-[4500]" style={{ overflow: 'visible' }}>
                         <FormLabel>To</FormLabel>
                         <FormControl>
                             <div className='relative'>
-                              <Input placeholder="Type to search locations..." {...field} value={uniAuto === 'toUni' ? String(getCurrentUniversity().name ?? '') : field.value} readOnly={uniAuto === 'toUni'} className={uniAuto === 'toUni' ? 'opacity-70 cursor-not-allowed' : ''} onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} onFocus={() => { if (field.value && uniAuto !== 'toUni') setQuery({ field: 'to', text: field.value }); }} onBlur={() => setTimeout(() => setSuggestions([]), 300)} autoComplete="off" />
+                              <Input 
+                                placeholder="Type to search locations..." 
+                                {...field} 
+                                value={uniAuto === 'toUni' ? String(getCurrentUniversity().name ?? '') : field.value} 
+                                readOnly={uniAuto === 'toUni'} 
+                                className={`${uniAuto === 'toUni' ? isToLockedWithCampuses ? 'cursor-pointer opacity-100' : 'opacity-70 cursor-not-allowed' : ''}`}
+                                onClick={() => { if (isToLockedWithCampuses) setCampusSelectOpen(campusSelectOpen === 'to' ? null : 'to'); }}
+                                onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} 
+                                onFocus={() => { if (field.value && uniAuto !== 'toUni') setQuery({ field: 'to', text: field.value }); }} 
+                                onBlur={() => { setTimeout(() => setSuggestions([]), 300); setTimeout(() => setCampusSelectOpen(null), 200); }}
+                                autoComplete="off" 
+                              />
                               {searchLoading && query.field === 'to' && uniAuto !== 'toUni' && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3"/>}
-                              {uniAuto === 'toUni' && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
+                              {uniAuto === 'toUni' && isToLockedWithCampuses && <ChevronDown className={`w-4 h-4 absolute right-3 top-3 text-primary transition-transform ${campusSelectOpen === 'to' ? 'rotate-180' : ''}`} />}
+                              {uniAuto === 'toUni' && !isToLockedWithCampuses && <Lock className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />}
                             </div>
                         </FormControl>
                         <Button type="button" variant="link" size="sm" className={`p-0 h-auto absolute right-1 -bottom-6 ${uniAuto === 'toUni' ? 'opacity-50 pointer-events-none' : 'text-accent'}`} onClick={() => handleChooseOnMap('to')} disabled={uniAuto === 'toUni'}>
                           <MapPin className="w-3 h-3 mr-1" /> Choose on map
                         </Button>
+                        {renderCampusSelector('to')}
                         {uniAuto !== 'toUni' && renderSuggestionsFor('to')}
                         <FormMessage />
                     </FormItem>
-                )}/>
+                  );
+                }}/>
               </div>
             
               <div ref={mapContainerRef} className="h-[450px] w-full rounded-lg overflow-hidden shadow-sm relative z-0">

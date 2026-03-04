@@ -131,6 +131,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const departureTime = ride.departureTime
+      ? (ride.departureTime.toDate ? ride.departureTime.toDate() : new Date(ride.departureTime))
+      : null;
+    const isLastMinuteCancellation = !!departureTime
+      && ((departureTime.getTime() - Date.now()) / (60 * 1000)) >= 0
+      && ((departureTime.getTime() - Date.now()) / (60 * 1000)) <= 30;
+
     // ===== TRANSACTION: Cancel booking and update ride/user stats =====
     const result = await db.runTransaction(async (tx) => {
       // Re-fetch to ensure freshness in transaction
@@ -159,19 +166,30 @@ export async function POST(req: NextRequest) {
         cancelledBeforeDeparture: true,
       };
 
-      if (freshBookingSnap.exists) {
-        tx.update(bookingRef, cancellationPayload);
-      }
-      if (freshRequestSnap.exists) {
-        tx.update(requestRef, cancellationPayload);
-      }
-
       // Release seat reservation/confirmation based on status
       const freshRide = freshRideSnap.data() as any;
       const currentAvailable = freshRide.availableSeats ?? 0;
       const currentReserved = freshRide.reservedSeats ?? 0;
       const normalizedStatus = String(freshEffective?.status || '').toUpperCase();
       const passengerId = freshEffective?.passengerId;
+      const wasConfirmed = normalizedStatus === 'CONFIRMED';
+      const totalSeats = Math.max(1, Number(freshRide?.seats || freshRide?.totalSeats || 4));
+      const basePenaltyUnits = wasConfirmed
+        ? (isDriverCancel ? (1 / totalSeats) : 1)
+        : 0;
+      const cancellationPenaltyUnits = basePenaltyUnits > 0
+        ? basePenaltyUnits * (isLastMinuteCancellation ? 2 : 1)
+        : 0;
+
+      const enrichedCancellationPayload = {
+        ...cancellationPayload,
+        isLateCancellation: wasConfirmed,
+        lastMinuteCancellation: isLastMinuteCancellation,
+        rideDepartureTime: departureTime ? admin.firestore.Timestamp.fromDate(departureTime) : null,
+        cancellationPenaltyUnits: Number(cancellationPenaltyUnits.toFixed(4)),
+        cancellationPenaltyApplies: cancellationPenaltyUnits > 0,
+        cancellationScope: isDriverCancel ? 'passenger_removal' : 'booking_cancelled_by_passenger',
+      };
 
       if (normalizedStatus === 'CONFIRMED') {
         tx.update(rideRef, {
@@ -188,12 +206,18 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      if (freshBookingSnap.exists) {
+        tx.update(bookingRef, enrichedCancellationPayload);
+      }
+      if (freshRequestSnap.exists) {
+        tx.update(requestRef, enrichedCancellationPayload);
+      }
+
       // Keep lightweight history fields for backward compatibility.
-      const wasConfirmed = normalizedStatus === 'CONFIRMED';
       const userData = freshUserSnap.data() as any;
       tx.update(userRef, {
-        totalCancellations: (userData?.totalCancellations ?? 0) + 1,
-        lateCancellations: wasConfirmed
+        totalCancellations: (userData?.totalCancellations ?? 0) + (cancellationPenaltyUnits > 0 ? 1 : 0),
+        lateCancellations: cancellationPenaltyUnits > 0 && wasConfirmed
           ? (userData?.lateCancellations ?? 0) + 1
           : (userData?.lateCancellations ?? 0),
         lastCancellationAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -208,6 +232,8 @@ export async function POST(req: NextRequest) {
         passengerId: freshEffective?.passengerId || null,
         driverId: freshRide?.driverId || null,
         isLateCancellation: normalizedStatus === 'CONFIRMED',
+        lastMinuteCancellation: isLastMinuteCancellation,
+        cancellationPenaltyUnits: Number(cancellationPenaltyUnits.toFixed(4)),
       };
     });
 

@@ -10,21 +10,21 @@ if (typeof window !== 'undefined') {
     // Import Leaflet asynchronously to avoid SSR issues
     import('leaflet').then((L) => {
       try {
-        // Red/Pink custom pins matching the design in attachments
         const createCustomPin = (color: string = '#E84C3D') => `
           <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 48'>
             <defs>
               <filter id='shadow' x='-50%' y='-50%' width='200%' height='200%'>
-                <feDropShadow dx='0' dy='2' stdDeviation='2' flood-opacity='0.3' />
+                <feDropShadow dx='0' dy='3' stdDeviation='3' flood-opacity='0.35' />
               </filter>
               <linearGradient id='grad' x1='0%' y1='0%' x2='0%' y2='100%'>
                 <stop offset='0%' style='stop-color:${color};stop-opacity:1' />
-                <stop offset='100%' style='stop-color:#c93d33;stop-opacity:1' />
+                <stop offset='100%' style='stop-color:${adjustColor(color, -28)};stop-opacity:1' />
               </linearGradient>
             </defs>
             <path d='M16 2C9.9 2 5 6.9 5 13c0 10 11 33 11 33s11-23 11-33c0-6.1-4.9-11-11-11z' 
               fill='url(#grad)' stroke='#ffffff' stroke-width='1.5' filter='url(#shadow)' />
-            <circle cx='16' cy='14' r='4' fill='#ffffff' opacity='0.9' />
+            <circle cx='16' cy='14' r='5.2' fill='#ffffff' opacity='0.95' />
+            <circle cx='16' cy='14' r='2.4' fill='${adjustColor(color, -34)}' opacity='0.9' />
           </svg>
         `;
 
@@ -77,7 +77,7 @@ export const createMapPin = (color: string = '#E84C3D') => {
     <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 48'>
       <defs>
         <filter id='shadow' x='-50%' y='-50%' width='200%' height='200%'>
-          <feDropShadow dx='0' dy='2' stdDeviation='2' flood-opacity='0.3' />
+          <feDropShadow dx='0' dy='3' stdDeviation='3' flood-opacity='0.35' />
         </filter>
         <linearGradient id='grad' x1='0%' y1='0%' x2='0%' y2='100%'>
           <stop offset='0%' style='stop-color:${color};stop-opacity:1' />
@@ -86,7 +86,8 @@ export const createMapPin = (color: string = '#E84C3D') => {
       </defs>
       <path d='M16 2C9.9 2 5 6.9 5 13c0 10 11 33 11 33s11-23 11-33c0-6.1-4.9-11-11-11z' 
         fill='url(#grad)' stroke='#ffffff' stroke-width='1.5' filter='url(#shadow)' />
-      <circle cx='16' cy='14' r='4' fill='#ffffff' opacity='0.9' />
+      <circle cx='16' cy='14' r='5.2' fill='#ffffff' opacity='0.95' />
+      <circle cx='16' cy='14' r='2.4' fill='${adjustColor(color, -34)}' opacity='0.9' />
     </svg>
   `;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;

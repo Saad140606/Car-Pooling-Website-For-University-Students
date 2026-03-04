@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import L, { LatLngExpression, LatLngBoundsExpression } from 'leaflet';
+import { createMapPin } from '@/components/map';
 
 export type MapLeafletProps = {
   route?: LatLngExpression[];         // polyline positions
@@ -45,13 +46,7 @@ export default function MapLeaflet({
   // Fix default icon paths (idempotent) and align marker visuals with create-ride map
   if (typeof window !== 'undefined') {
     try {
-      const pinSvg = `
-        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-          <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='%232b2f67' stroke='%23ffffff' stroke-width='1.2' />
-          <circle cx='12' cy='9' r='2.5' fill='%23FFD166' />
-        </svg>
-      `;
-      const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
+      const pinDataUrl = createMapPin('#E84C3D');
       L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
     } catch (e) {
       // non-fatal if require fails in some build configs
@@ -160,37 +155,31 @@ export default function MapLeaflet({
     // Add initial markers (pickup pins) plus optional start/end pins
     markerLayerRef.current = L.layerGroup().addTo(map);
 
-    const pickupIcon = L.divIcon({
-      className: 'pickup-marker',
-      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="44" height="60" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
-        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#06b6d4" stroke="#0f766e" stroke-width="2" />
-        <circle cx="12" cy="9" r="3.2" fill="#ffffff" stroke="#0f766e" stroke-width="1.5" />
-      </svg>`,
-      iconAnchor: [22, 55],
-      popupAnchor: [0, -55],
-      tooltipAnchor: [0, -55],
+    const pickupIcon = L.icon({
+      iconUrl: createMapPin('#E84C3D'),
+      iconRetinaUrl: createMapPin('#E84C3D'),
+      iconSize: [32, 48],
+      iconAnchor: [16, 48],
+      popupAnchor: [0, -42],
+      tooltipAnchor: [16, -32],
     });
 
-    const startIcon = L.divIcon({
-      className: 'start-marker',
-      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="44" height="60" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
-        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#10b981" stroke="#047857" stroke-width="2" />
-        <circle cx="12" cy="9" r="3.2" fill="#ffffff" stroke="#047857" stroke-width="1.5" />
-      </svg>`,
-      iconAnchor: [22, 55],
-      popupAnchor: [0, -55],
-      tooltipAnchor: [0, -55],
+    const startIcon = L.icon({
+      iconUrl: createMapPin('#16A34A'),
+      iconRetinaUrl: createMapPin('#16A34A'),
+      iconSize: [32, 48],
+      iconAnchor: [16, 48],
+      popupAnchor: [0, -42],
+      tooltipAnchor: [16, -32],
     });
 
-    const endIcon = L.divIcon({
-      className: 'end-marker',
-      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="44" height="60" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
-        <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#ef4444" stroke="#7f1d1d" stroke-width="2" />
-        <circle cx="12" cy="9" r="3.2" fill="#ffffff" stroke="#7f1d1d" stroke-width="1.5" />
-      </svg>`,
-      iconAnchor: [22, 55],
-      popupAnchor: [0, -55],
-      tooltipAnchor: [0, -55],
+    const endIcon = L.icon({
+      iconUrl: createMapPin('#2563EB'),
+      iconRetinaUrl: createMapPin('#2563EB'),
+      iconSize: [32, 48],
+      iconAnchor: [16, 48],
+      popupAnchor: [0, -42],
+      tooltipAnchor: [16, -32],
     });
 
     // Start pin
@@ -345,12 +334,12 @@ export default function MapLeaflet({
       // Recreate pickup markers
       if (markers && markers.length) {
         const pickupIcon = L.icon({
-          iconUrl: (L.Icon.Default.prototype as any).options.iconUrl,
-          iconRetinaUrl: (L.Icon.Default.prototype as any).options.iconRetinaUrl,
-          iconSize: [32, 50],
-          iconAnchor: [16, 46],
-          popupAnchor: [0, -46],
-          tooltipAnchor: [0, -46],
+          iconUrl: createMapPin('#E84C3D'),
+          iconRetinaUrl: createMapPin('#E84C3D'),
+          iconSize: [32, 48],
+          iconAnchor: [16, 48],
+          popupAnchor: [0, -42],
+          tooltipAnchor: [16, -32],
         });
         markers.forEach((m: any) => {
           let latlng: [number, number] | null = null;
@@ -378,26 +367,22 @@ export default function MapLeaflet({
 
       // Recreate start/end pins when enabled
       if (startEndPins && route && route.length) {
-        const startIcon = L.divIcon({
-          className: '',
-          html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
-            <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#16a34a" stroke="#0b1220" stroke-width="1.2" />
-            <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
-          </svg>`,
-          iconAnchor: [20, 50],
-          popupAnchor: [0, -50],
-          tooltipAnchor: [0, -50],
+        const startIcon = L.icon({
+          iconUrl: createMapPin('#16A34A'),
+          iconRetinaUrl: createMapPin('#16A34A'),
+          iconSize: [32, 48],
+          iconAnchor: [16, 48],
+          popupAnchor: [0, -42],
+          tooltipAnchor: [16, -32],
         });
 
-        const endIcon = L.divIcon({
-          className: '',
-          html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="56">
-            <path d="M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z" fill="#2563eb" stroke="#0b1220" stroke-width="1.2" />
-            <circle cx="12" cy="9" r="2.8" fill="#ffffff" stroke="#0b1220" stroke-width="1.2" />
-          </svg>`,
-          iconAnchor: [20, 50],
-          popupAnchor: [0, -50],
-          tooltipAnchor: [0, -50],
+        const endIcon = L.icon({
+          iconUrl: createMapPin('#2563EB'),
+          iconRetinaUrl: createMapPin('#2563EB'),
+          iconSize: [32, 48],
+          iconAnchor: [16, 48],
+          popupAnchor: [0, -42],
+          tooltipAnchor: [16, -32],
         });
 
         const startLatLng = L.latLng(route[0] as any);

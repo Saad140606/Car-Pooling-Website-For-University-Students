@@ -29,6 +29,7 @@ import {
 } from '@/lib/analyticsTypes';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useActionFeedback } from '@/hooks/useActionFeedback';
 
 // Import analytics components
 import { DriverStatCards, PassengerStatCards } from '@/components/analytics/StatCards';
@@ -223,7 +224,7 @@ interface DriverAnalyticsProps {
 
 const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: DriverAnalyticsProps) {
   return (
-    <div className="space-y-5 sm:space-y-8">
+    <div className="space-y-5 sm:space-y-8 min-w-0 overflow-x-hidden">
       {/* Post-Ride Earnings & Ratings Card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -235,7 +236,9 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
           subtitle="Real earnings from completed rides"
           icon={<DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />}
         />
-        <DriverEarningsCard />
+        <div className="min-w-0 overflow-x-hidden">
+          <DriverEarningsCard />
+        </div>
       </motion.div>
 
       {/* Quick Stats Bar */}
@@ -263,6 +266,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
           totalRides={metrics.totalRides}
           completedRides={metrics.completedRides}
           cancelledRides={metrics.cancelledRides}
+          pendingRides={metrics.pendingRides}
           cancellationRate={metrics.cancellationRate}
           averageRating={metrics.averageRating}
           trustScore={metrics.trustScore}
@@ -384,7 +388,7 @@ interface PassengerAnalyticsProps {
 
 const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }: PassengerAnalyticsProps) {
   return (
-    <div className="space-y-5 sm:space-y-8">
+    <div className="space-y-5 sm:space-y-8 min-w-0 overflow-x-hidden">
       {/* Post-Ride Spending Card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -396,7 +400,9 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
           subtitle="Track your ride expenses"
           icon={<Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-blue-400" />}
         />
-        <PassengerSpendingCard />
+        <div className="min-w-0 overflow-x-hidden">
+          <PassengerSpendingCard />
+        </div>
       </motion.div>
 
       {/* Quick Stats Bar */}
@@ -424,6 +430,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
           totalRides={metrics.totalRides}
           completedRides={metrics.completedRides}
           cancelledRides={metrics.cancelledRides}
+          pendingRides={metrics.pendingRides}
           completionRate={metrics.rideCompletionRate}
           cancellationRate={metrics.cancellationRate}
           averageRating={metrics.averageRating}
@@ -474,7 +481,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4 sm:p-6"
       >
         <h3 className="text-base sm:text-lg font-semibold text-white mb-4 sm:mb-6">Booking Performance</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           <ProgressCircle
             percentage={metrics.rideCompletionRate}
             label="Completion Rate"
@@ -506,6 +513,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
 export default function AnalyticsPage() {
   const { user, data: userData, loading: userLoading } = useUser();
   const firestore = useFirestore();
+  const actionFeedback = useActionFeedback();
 
   const [analytics, setAnalytics] = useState<CombinedAnalytics | null>(null);
   const [rideHistory, setRideHistory] = useState<RideHistoryEntry[]>([]);
@@ -564,6 +572,7 @@ export default function AnalyticsPage() {
       return;
     }
 
+    actionFeedback.start('Please wait, analytics page is opening...', 'Opening Analytics...');
     setIsLoading(true);
     setError(null);
 
@@ -603,29 +612,46 @@ export default function AnalyticsPage() {
         userData.university
       );
 
-      // Sync summary metrics with post-ride analytics APIs (same source used by Earnings/Spending cards)
-      const token = await user.getIdToken(true);
-      const authHeaders = { Authorization: `Bearer ${token}` };
-
       let passengerApiAnalytics: any = null;
       let driverApiAnalytics: any = null;
 
-      await Promise.all([
-        fetch(`/api/analytics/passenger?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
-          .then(async (response) => {
-            if (!response.ok) return;
-            const data = await response.json();
-            if (data?.success) passengerApiAnalytics = data.analytics;
-          })
-          .catch(() => undefined),
-        fetch(`/api/analytics/driver?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
-          .then(async (response) => {
-            if (!response.ok) return;
-            const data = await response.json();
-            if (data?.success) driverApiAnalytics = data.analytics;
-          })
-          .catch(() => undefined),
-      ]);
+      // Sync summary metrics with post-ride analytics APIs (best-effort only)
+      try {
+        let token = '';
+        try {
+          token = await user.getIdToken(true);
+        } catch (tokenError) {
+          const tokenCode = String((tokenError as any)?.code || '');
+          if (tokenCode === 'auth/network-request-failed') {
+            console.warn('[Analytics] Token refresh failed due to network; using cached token if available');
+            token = await user.getIdToken(false);
+          } else {
+            throw tokenError;
+          }
+        }
+
+        if (token) {
+          const authHeaders = { Authorization: `Bearer ${token}` };
+          await Promise.all([
+            fetch(`/api/analytics/passenger?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
+              .then(async (response) => {
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data?.success) passengerApiAnalytics = data.analytics;
+              })
+              .catch(() => undefined),
+            fetch(`/api/analytics/driver?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
+              .then(async (response) => {
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data?.success) driverApiAnalytics = data.analytics;
+              })
+              .catch(() => undefined),
+          ]);
+        }
+      } catch (syncError) {
+        console.warn('[Analytics] API metric sync skipped:', syncError);
+      }
 
       if (analyticsData.passengerMetrics && passengerApiAnalytics) {
         analyticsData.passengerMetrics.totalSpent = Number(passengerApiAnalytics.totalSpent || analyticsData.passengerMetrics.totalSpent || 0);
@@ -693,8 +719,15 @@ export default function AnalyticsPage() {
       setError(err instanceof Error ? err.message : 'Failed to load analytics data');
     } finally {
       setIsLoading(false);
+      actionFeedback.clear();
     }
-  }, [firestore, user, userData?.university, analyticsCacheKey, activeView]);
+  }, [firestore, user, userData?.university, analyticsCacheKey, activeView, actionFeedback]);
+
+  useEffect(() => {
+    return () => {
+      actionFeedback.clear();
+    };
+  }, [actionFeedback]);
 
   // Initial fetch
   useEffect(() => {
@@ -850,7 +883,9 @@ export default function AnalyticsPage() {
                 subtitle="Your complete ride history with filters"
                 icon={<Car className="w-5 h-5 text-primary" />}
               />
-              <RideHistoryTable rides={rideHistory} />
+              <div className="min-w-0 overflow-x-auto">
+                <RideHistoryTable rides={rideHistory} />
+              </div>
             </motion.div>
           </motion.div>
         </AnimatePresence>

@@ -21,6 +21,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useFirestore } from '@/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
   ssr: false,
@@ -68,6 +70,10 @@ export default function PassengerDetailModal({
   const [isCancelling, setIsCancelling] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showMap, setShowMap] = useState(false);
+  const firestore = useFirestore();
+  const [driverCancellationRate, setDriverCancellationRate] = useState(0);
+  const [driverCompletedRidesWindow, setDriverCompletedRidesWindow] = useState(0);
+  const [driverCancelledUnitsWindow, setDriverCancelledUnitsWindow] = useState(0);
 
   const dateText = React.useMemo(() => {
     try {
@@ -86,6 +92,13 @@ export default function PassengerDetailModal({
       return '⚠ Error parsing date';
     }
   }, [rideDateTime]);
+
+  const whatsappLink = React.useMemo(() => {
+    if (!phoneNumber) return null;
+    const digitsOnly = String(phoneNumber).replace(/[^\d]/g, '');
+    if (!digitsOnly) return null;
+    return `https://wa.me/${digitsOnly}`;
+  }, [phoneNumber]);
 
   // Map computations
   const routeLatLngs = React.useMemo(() => {
@@ -156,6 +169,48 @@ export default function PassengerDetailModal({
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+  const totalSeats = Math.max(1, Number((ride as any)?.seats || (ride as any)?.totalSeats || 4));
+  const minutesUntilDeparture = React.useMemo(() => {
+    const departure = parseTimestamp(rideDateTime, { silent: true });
+    if (!departure) return null;
+    return Math.floor((departure.getTime() - Date.now()) / (60 * 1000));
+  }, [rideDateTime]);
+  const isLastMinuteCancellation = minutesUntilDeparture !== null && minutesUntilDeparture >= 0 && minutesUntilDeparture <= 30;
+  const removalPenaltyUnits = (1 / totalSeats) * (isLastMinuteCancellation ? 2 : 1);
+  const projectedCancelledUnits = driverCancelledUnitsWindow + removalPenaltyUnits;
+  const projectedBase = driverCompletedRidesWindow + projectedCancelledUnits;
+  const projectedRate = projectedBase > 0 ? Math.round((projectedCancelledUnits / projectedBase) * 100) : 0;
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const loadDriverPolicy = async () => {
+      if (!open || !firestore || !user?.uid || !university) return;
+      try {
+        const userRef = doc(firestore, 'universities', String(university).trim().toLowerCase(), 'users', user.uid);
+        const snap = await getDoc(userRef);
+        if (!snap.exists || cancelled) return;
+
+        const data = snap.data() as any;
+        const policy = data?.driverCancellationPolicy || {};
+        setDriverCancellationRate(Number(policy?.cancellationRate || 0));
+        setDriverCompletedRidesWindow(Number(policy?.completedRidesWindow || 0));
+        setDriverCancelledUnitsWindow(Number(policy?.cancelledRidesWindow || 0));
+      } catch {
+        if (!cancelled) {
+          setDriverCancellationRate(0);
+          setDriverCompletedRidesWindow(0);
+          setDriverCancelledUnitsWindow(0);
+        }
+      }
+    };
+
+    loadDriverPolicy();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, firestore, user?.uid, university]);
 
   const handleCancelPassenger = async () => {
     if (!rideId || !bookingId || !university) {
@@ -253,9 +308,11 @@ export default function PassengerDetailModal({
                     size="lg"
                     truncate={false}
                   />
-                  {phoneNumber && (
+                  {phoneNumber && whatsappLink && (
                     <a
-                      href={`tel:${phoneNumber}`}
+                      href={whatsappLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 transition-colors mt-2 hover:underline"
                     >
                       <Phone className="h-4 w-4 flex-shrink-0" />
@@ -367,14 +424,26 @@ export default function PassengerDetailModal({
               Cancel Passenger?
             </AlertDialogTitle>
             <AlertDialogDescription className="text-slate-300">
-              Are you sure you want to cancel <span className="font-semibold text-white">{passengerName}</span> from this ride? This will remove them and update your cancellation metrics.
+              You are removing <span className="font-semibold text-white">{passengerName}</span> from a confirmed seat. This affects your cancellation rate.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-start gap-2">
             <AlertCircle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-200/80">
-              Cancellations affect your driver rating. Excessive cancellations may result in account suspension.
-            </p>
+            <div className="text-xs text-amber-200/90 space-y-1">
+              <p>
+                Current cancellation rate: <span className="font-semibold text-white">{driverCancellationRate}%</span>
+              </p>
+              <p>
+                This removal adds <span className="font-semibold text-white">{removalPenaltyUnits.toFixed(2)}</span> cancelled rides
+                {isLastMinuteCancellation ? ' (2x last-minute penalty)' : ''}.
+              </p>
+              <p>
+                Projected rate after removal: <span className="font-semibold text-white">{projectedRate}%</span>
+              </p>
+              <p>
+                Accounts with <span className="font-semibold text-white">35%+</span> cancellation rate after at least <span className="font-semibold text-white">3 rides</span> are locked for <span className="font-semibold text-white">7 days</span>.
+              </p>
+            </div>
           </div>
           <AlertDialogFooter className="mt-4">
             <AlertDialogCancel className="bg-slate-700 hover:bg-slate-600 text-white border-0 transition-all duration-300">

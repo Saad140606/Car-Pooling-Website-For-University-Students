@@ -90,6 +90,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const departureTime = ride.departureTime
+      ? (ride.departureTime.toDate ? ride.departureTime.toDate() : new Date(ride.departureTime))
+      : null;
+    const isLastMinuteCancellation = !!departureTime
+      && ((departureTime.getTime() - Date.now()) / (60 * 1000)) >= 0
+      && ((departureTime.getTime() - Date.now()) / (60 * 1000)) <= 30;
+    const rideSeats = Math.max(1, Number(ride?.seats || ride?.totalSeats || 4));
+
     // Step 2: Check for duplicate cancellation (idempotency)
     const userSnap = await db.doc(`universities/${validUniversity}/users/${authenticatedUserId}`).get();
     let userData: any = {};
@@ -140,30 +148,36 @@ export async function POST(req: NextRequest) {
       const now = admin.firestore.Timestamp.now();
       const isLateCancellation = normalizedStatus === 'CONFIRMED';
       const cancellerRole = isPassenger ? 'passenger' : 'driver';
+      const basePenaltyUnits = isLateCancellation
+        ? (isPassenger ? 1 : (1 / rideSeats))
+        : 0;
+      const cancellationPenaltyUnits = basePenaltyUnits > 0
+        ? basePenaltyUnits * (isLastMinuteCancellation ? 2 : 1)
+        : 0;
+
+      const cancellationUpdate = {
+        status: 'CANCELLED',
+        cancelledAt: now,
+        cancelledBy: authenticatedUserId,
+        cancellationReason: sanitizedReason,
+        isLateCancellation,
+        cancelledBeforeDeparture: true,
+        lastMinuteCancellation: isLastMinuteCancellation,
+        rideDepartureTime: departureTime ? admin.firestore.Timestamp.fromDate(departureTime) : null,
+        cancellationPenaltyUnits: Number(cancellationPenaltyUnits.toFixed(4)),
+        cancellationPenaltyApplies: cancellationPenaltyUnits > 0,
+        cancellationScope: isPassenger ? 'booking_cancelled_by_passenger' : 'passenger_removal',
+      };
 
       // Update request if it exists
       if (request) {
-        tx.update(requestRef, {
-          status: 'CANCELLED',
-          cancelledAt: now,
-          cancelledBy: authenticatedUserId,
-          cancellationReason: sanitizedReason,
-          isLateCancellation,
-          cancelledBeforeDeparture: true,
-        });
+        tx.update(requestRef, cancellationUpdate);
       }
 
       // Update booking document if it exists (for analytics and user history)
       const bookingSnap2 = bookingSnap ?? await tx.get(bookingRef);
       if (bookingSnap2.exists) {
-        tx.update(bookingRef, {
-          status: 'CANCELLED',
-          cancelledAt: now,
-          cancelledBy: authenticatedUserId,
-          cancellationReason: sanitizedReason,
-          isLateCancellation,
-          cancelledBeforeDeparture: true,
-        });
+        tx.update(bookingRef, cancellationUpdate);
       }
 
       // Release seats based on status
@@ -186,6 +200,8 @@ export async function POST(req: NextRequest) {
       return { 
         cancellerRole, 
         isLateCancellation, 
+        lastMinuteCancellation: isLastMinuteCancellation,
+        cancellationPenaltyUnits: Number(cancellationPenaltyUnits.toFixed(4)),
         passengerId: effective.passengerId, 
         driverId: effective.driverId 
       };

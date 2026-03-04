@@ -32,24 +32,15 @@ import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
 import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
 import React from 'react';
 
-// Fix for default icon not showing in Leaflet
-if (typeof window !== 'undefined') {
-  try {
-    const pinSvg = `
-      <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-        <path d='M12 2C8 2 5 5 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-4-3-7-7-7z' fill='#FFD166' stroke='#ffffff' stroke-width='1.2' />
-        <circle cx='12' cy='9' r='2.5' fill='#0b1220' />
-      </svg>
-    `;
-    const pinDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(pinSvg)}`;
-    L.Icon.Default.mergeOptions({ iconRetinaUrl: pinDataUrl, iconUrl: pinDataUrl, shadowUrl: '' });
-  } catch (e) {}
-}
-
 // Small helper: truncate string to n characters with ellipsis
 function truncateChars(s?: string | null, n = 30) {
   if (!s) return '';
   return s.length > n ? s.slice(0, n) + '...' : s;
+}
+
+function getPassengerPhone(passengerDetails: any): string | null {
+  if (!passengerDetails) return null;
+  return passengerDetails.contactNumber || passengerDetails.phone || null;
 }
 
 function formatPickupLabel(booking: { id?: string; pickupPlaceName?: string | null; pickupPoint?: { lat: number; lng: number } | null }, fetchedNames?: Record<string, string>) {
@@ -464,12 +455,28 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
               </div>
 
               {/* Contact Info - Only shown after acceptance */}
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                <p className="text-xs text-amber-200/80 flex items-start gap-2">
-                  <span className="text-amber-400 mt-0.5">ℹ️</span>
-                  Contact information will be available after accepting the request.
-                </p>
-              </div>
+              {(() => {
+                const reqStatus = String(selectedRequest.status || '').toUpperCase();
+                const isAcceptedRequest = reqStatus === 'ACCEPTED' || reqStatus === 'CONFIRMED';
+                const passengerPhone = getPassengerPhone(selectedRequest.passengerDetails);
+
+                if (isAcceptedRequest && passengerPhone) {
+                  return (
+                    <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                      <p className="text-xs text-green-200/90">Passenger Number: {passengerPhone}</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                    <p className="text-xs text-amber-200/80 flex items-start gap-2">
+                      <span className="text-amber-400 mt-0.5">ℹ️</span>
+                      Contact information will be available after accepting the request.
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Action Buttons */}
               <div className="flex gap-3 pt-2">
@@ -587,7 +594,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const rideConfirmedCount = Array.isArray((ride as any)?.confirmedPassengers)
       ? (ride as any).confirmedPassengers.length
       : 0;
-    const completionParticipantCount = Math.max(confirmedBookings.length, rideConfirmedCount);
+    const completionParticipantCount = confirmedBookings.length;
     const [availableSeats, setAvailableSeats] = React.useState<number>(ride.availableSeats ?? 0);
 
     React.useEffect(() => {
@@ -676,6 +683,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const shouldShowCompletionForm =
       lifecycleState.shouldShowCompletionUI &&
       completionParticipantCount > 0 &&
+      !(ride as any)?.postRideFormSubmitted &&
+      !((ride as any)?.postRideStatus?.driverConfirmed) &&
       lifecycleState.minutesUntilCompletion !== null &&
       lifecycleState.minutesUntilCompletion <= 0;
 
@@ -1347,11 +1356,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                           <p className="text-[11px] text-slate-500 mt-1.5 ml-9">Click for contact info</p>
                         </div>
                         <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                          {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-2.5 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105">Call</a>
-                          ) : null}
                           {((b as any).chatId || b.id) ? (
-                            <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
+                            <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" otherUserName={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown'} />
                           ) : null}
                         </div>
                       </div>
@@ -1418,11 +1424,8 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                           </div>
                         </div>
                         <div className="relative z-10 flex flex-col gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                          {(b.passengerDetails as any)?.phone ? (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-2.5 py-1.5 rounded-md bg-blue-600/90 hover:bg-blue-700 text-white font-medium transition-all hover:scale-105 text-center" onClick={(e) => e.stopPropagation()}>Call</a>
-                          ) : null}
                           {((b as any).chatId || b.id) ? (
-                            <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" />
+                            <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" otherUserName={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown'} />
                           ) : null}
                         </div>
                       </div>
@@ -1451,11 +1454,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                     <CancellationConfirmDialog
                       open={showCancelDialog}
                       onOpenChange={setShowCancelDialog}
-                      cancellationRate={userData
-                        ? ((userData.totalParticipations ?? 0) >= 3
-                            ? Math.round(((userData.totalCancellations ?? 0) / Math.max((userData.totalParticipations ?? 1), 1)) * 100)
-                            : 0)
-                        : 0}
+                      cancellationRate={Number((userData as any)?.driverCancellationPolicy?.cancellationRate ?? 0)}
                       minutesUntilDeparture={(() => {
                         try {
                           if (!ride.departureTime) return 0;
@@ -1736,8 +1735,14 @@ export default function MyRidesPage() {
     if (!rides) return [];
     const fourHoursMs = 4 * 60 * 60 * 1000;
     const now = nowMs;
+    const hiddenRideStatuses = new Set(['cancelled', 'canceled']);
     
     const filtered = rides.filter((ride) => {
+      const status = String(ride?.status || '').trim().toLowerCase();
+      if (hiddenRideStatuses.has(status)) {
+        return false;
+      }
+
       // Get timestamp in milliseconds (handles Timestamp, Date, number, etc.)
       const departureMs = getTimestampMs(ride.departureTime);
       

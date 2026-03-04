@@ -83,7 +83,7 @@ export function CancellationConfirmDialog({
               <div>
                 <p className="text-sm font-semibold text-white mb-1">You are cancelling this entire ride</p>
                 <p className="text-xs text-slate-300">
-                  All passengers with confirmed bookings will be notified immediately. They will need to find another ride.
+                  All passengers with confirmed bookings will be notified immediately. Cancellation rate impact applies only when this ride has at least one confirmed passenger.
                 </p>
               </div>
             ) : (
@@ -111,7 +111,7 @@ export function CancellationConfirmDialog({
                 ⏱️ Last-minute cancellation
               </p>
               <p className="text-xs text-orange-200 mt-1">
-                You are cancelling {minutesUntilDeparture} minutes before departure. This may negatively affect your cancellation rate.
+                You are cancelling {minutesUntilDeparture} minutes before departure. This counts as a 2x cancellation penalty.
               </p>
             </div>
           )}
@@ -173,7 +173,7 @@ export function CancellationConfirmDialog({
           {willAffectRate && (
             <div className="p-2 bg-slate-900/50 rounded-lg border border-slate-700 text-center">
               <p className="text-[10px] text-slate-400">
-                Accounts with &gt;35% cancellation rate (after 3+ rides) are auto-locked for 7 days
+                Accounts with &gt;=35% cancellation rate (after at least 3 rides) are auto-locked for 7 days
               </p>
             </div>
           )}

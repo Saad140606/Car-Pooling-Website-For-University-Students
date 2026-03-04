@@ -5,6 +5,45 @@
 // from Firebase docs and initialize messaging inside the worker.
 
 self.addEventListener('push', function(event) {
+  const toText = (value) => {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  };
+
+  const firstNonEmpty = (...values) => {
+    for (const value of values) {
+      const text = toText(value);
+      if (text) return text;
+    }
+    return '';
+  };
+
+  const contextualBody = (payload = {}) => {
+    const type = toText(payload.type).toLowerCase();
+    const actor = firstNonEmpty(payload.senderName, payload.actorName, payload.driverName, payload.passengerName, payload.fromName, payload.from);
+
+    if (type.includes('chat') || type.includes('message')) {
+      const preview = firstNonEmpty(payload.messagePreview, payload.message, payload.content, payload.text, payload.body);
+      if (preview) return actor ? `${actor}: ${preview}` : preview;
+      return actor ? `${actor} sent you a message` : 'You received a new message';
+    }
+
+    if (type.includes('cancel')) {
+      return actor ? `${actor} cancelled your ride` : 'Your ride was cancelled';
+    }
+
+    if (type.includes('accept')) {
+      return actor ? `${actor} accepted your ride request` : 'Your ride request was accepted';
+    }
+
+    if (type.includes('call')) {
+      const callKind = toText(payload.mode).toLowerCase() === 'video' ? 'video call' : 'call';
+      return actor ? `${actor} is calling you (${callKind})` : `Incoming ${callKind}`;
+    }
+
+    return firstNonEmpty(payload.message, payload.content, payload.text, payload.description, payload.body);
+  };
+
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
@@ -12,8 +51,9 @@ self.addEventListener('push', function(event) {
     console.warn('Push event had no JSON payload', e);
   }
 
-  const title = (data.notification && data.notification.title) || data.title || 'Incoming Call';
-  const body = (data.notification && data.notification.body) || data.body || 'Tap to open';
+  const payloadData = { ...(data.data || {}), ...data };
+  const title = firstNonEmpty(data?.notification?.title, payloadData.title, payloadData.heading, 'Campus Rides');
+  const body = firstNonEmpty(data?.notification?.body, payloadData.body, payloadData.message, contextualBody(payloadData), 'Open the app to view updates');
   const badge = data.notification?.badge || undefined;
   const icon = data.notification?.icon || '/icons/icon-192x192.png';
 

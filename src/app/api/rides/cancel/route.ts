@@ -86,14 +86,20 @@ export async function POST(req: NextRequest) {
     console.log('[API:CancelRide] Ride found:', { rideId, status: preRideData.status });
     
     // Check departure time
+    let departureTimeDate: Date | null = null;
+    let isLastMinuteCancellation = false;
     if (preRideData.departureTime) {
-      const departureTime = preRideData.departureTime.toDate 
+      departureTimeDate = preRideData.departureTime.toDate 
         ? preRideData.departureTime.toDate() 
         : new Date(preRideData.departureTime);
-      if (new Date() >= departureTime) {
+      const now = new Date();
+      if (now >= departureTimeDate) {
         console.warn('[API:CancelRide] Ride has already departed');
         return errorResponse('Cannot cancel - ride has already started', 400);
       }
+
+      const minutesUntilDeparture = (departureTimeDate.getTime() - now.getTime()) / (60 * 1000);
+      isLastMinuteCancellation = minutesUntilDeparture >= 0 && minutesUntilDeparture <= 30;
     }
 
     // ===== VALIDATION: Fetch user document for metrics/history updates =====
@@ -153,6 +159,7 @@ export async function POST(req: NextRequest) {
       console.log('[API:CancelRide] Ride status check passed, proceeding with cancellation');
 
       const now = admin.firestore.Timestamp.now();
+      let cancelledConfirmedPassengersCount = 0;
 
       // ===== UPDATE: Set ride status to cancelled =====
       tx.update(rideRef, {
@@ -161,6 +168,7 @@ export async function POST(req: NextRequest) {
         cancelledBy: authenticatedUserId,
         cancellationReason: sanitizedReason,
         cancelledBeforeDeparture: true,
+        lastMinuteCancellation: isLastMinuteCancellation,
         updatedAt: now,
       });
 
@@ -174,12 +182,20 @@ export async function POST(req: NextRequest) {
 
         // Only cancel bookings that aren't already cancelled
         if (!['CANCELLED', 'cancelled', 'rejected', 'REJECTED'].includes(booking.status)) {
+          const isConfirmedCancellation = booking.status === 'CONFIRMED';
+          if (isConfirmedCancellation) {
+            cancelledConfirmedPassengersCount += 1;
+          }
+
           tx.update(bookingDoc.ref, {
             status: 'CANCELLED',
             cancelledAt: now,
             cancelledBy: authenticatedUserId,
             cancellationReason: `Driver cancelled the ride`,
-            isLateCancellation: booking.status === 'CONFIRMED',
+            isLateCancellation: isConfirmedCancellation,
+            lastMinuteCancellation: isLastMinuteCancellation,
+            rideDepartureTime: departureTimeDate ? admin.firestore.Timestamp.fromDate(departureTimeDate) : null,
+            cancellationScope: 'ride_cancelled_by_driver',
           });
 
           // Track for notification
@@ -194,11 +210,17 @@ export async function POST(req: NextRequest) {
       requestsDocs.forEach((requestDoc) => {
         const request = requestDoc.data() as any;
         if (!['CANCELLED', 'cancelled', 'rejected', 'REJECTED'].includes(request.status)) {
+          const isConfirmedCancellation = request.status === 'CONFIRMED';
+
           tx.update(requestDoc.ref, {
             status: 'CANCELLED',
             cancelledAt: now,
             cancelledBy: authenticatedUserId,
             cancellationReason: `Driver cancelled the ride`,
+            isLateCancellation: isConfirmedCancellation,
+            lastMinuteCancellation: isLastMinuteCancellation,
+            rideDepartureTime: departureTimeDate ? admin.firestore.Timestamp.fromDate(departureTimeDate) : null,
+            cancellationScope: 'ride_cancelled_by_driver',
           });
 
           // Track for notification if not already tracked
@@ -216,6 +238,14 @@ export async function POST(req: NextRequest) {
           lastCancellationAt: now,
         });
       }
+
+      tx.update(rideRef, {
+        cancelledConfirmedPassengersCount,
+        cancellationPenaltyUnits: cancelledConfirmedPassengersCount > 0
+          ? (isLastMinuteCancellation ? 2 : 1)
+          : 0,
+        cancellationPenaltyApplies: cancelledConfirmedPassengersCount > 0,
+      });
 
       // Return result using rideData
       return {

@@ -19,6 +19,7 @@ import {
   Activity,
   CheckCircle,
   XCircle,
+  AlertCircle,
   Percent,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -305,6 +306,7 @@ interface DriverStatsProps {
   totalRides: number;
   completedRides: number;
   cancelledRides: number;
+  pendingRides: number;
   averageRating: number | null;
   trustScore: number;
   activeDays: number;
@@ -321,6 +323,7 @@ export function DriverStatCards({
   totalRides,
   completedRides,
   cancelledRides,
+  pendingRides,
   averageRating,
   trustScore,
   activeDays,
@@ -374,11 +377,10 @@ export function DriverStatCards({
         delay={4}
       />
       <StatCard
-        title="Cancellation Rate"
-        value={resolvedCancellationRate}
-        suffix="%"
+        title="Cancelled Rides"
+        value={cancelledRides}
         icon={<XCircle className="w-full h-full" />}
-        variant={resolvedCancellationRate > 20 ? 'error' : 'warning'}
+        variant="error"
         delay={5}
       />
       <StatCard
@@ -425,11 +427,10 @@ export function DriverStatCards({
         compact
       />
       <StatCard
-        title="Completion Rate"
-        value={completionRate}
-        suffix="%"
-        icon={<Activity className="w-full h-full" />}
-        variant={completionRate >= 90 ? 'success' : 'warning'}
+        title="Not Completed Rides"
+        value={pendingRides}
+        icon={<AlertCircle className="w-full h-full" />}
+        variant="warning"
         delay={11}
         compact
       />
@@ -445,6 +446,7 @@ interface PassengerStatsProps {
   totalRides: number;
   completedRides: number;
   cancelledRides: number;
+  pendingRides: number;
   completionRate?: number;
   averageRating: number | null;
   trustScore: number;
@@ -462,6 +464,7 @@ export function PassengerStatCards({
   totalRides,
   completedRides,
   cancelledRides,
+  pendingRides,
   completionRate,
   averageRating,
   trustScore,
@@ -518,10 +521,10 @@ export function PassengerStatCards({
         delay={4}
       />
       <StatCard
-        title="Rides Requested"
-        value={ridesRequested}
-        icon={<Activity className="w-full h-full" />}
-        variant="info"
+        title="Cancelled Rides"
+        value={cancelledRides}
+        icon={<XCircle className="w-full h-full" />}
+        variant="error"
         delay={5}
       />
       <StatCard
@@ -568,11 +571,10 @@ export function PassengerStatCards({
         compact
       />
       <StatCard
-        title="Cancellation Rate"
-        value={resolvedCancellationRate}
-        suffix="%"
-        icon={<XCircle className="w-full h-full" />}
-        variant={resolvedCancellationRate > 20 ? 'error' : 'warning'}
+        title="Not Completed Rides"
+        value={pendingRides}
+        icon={<AlertCircle className="w-full h-full" />}
+        variant="warning"
         delay={11}
         compact
       />

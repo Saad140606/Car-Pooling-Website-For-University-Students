@@ -8,7 +8,7 @@ import { useFirestore, useUser } from '@/firebase';
 import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { createNotification } from '@/firebase/firestore/notifications';
 
-export default function ChatRoom({ chatId, university }: { chatId: string, university: string }) {
+export default function ChatRoom({ chatId, university, forcedOtherUserName }: { chatId: string, university: string, forcedOtherUserName?: string }) {
   const {
     messages,
     loading,
@@ -305,13 +305,14 @@ export default function ChatRoom({ chatId, university }: { chatId: string, unive
 
     if (!next.otherUserName) {
       next.otherUserName =
+        forcedOtherUserName ||
         resolvedOtherUser?.fullName ||
         resolvedOtherUser?.name ||
         fallbackIncomingSenderName ||
         undefined;
     }
     return next;
-  }, [meta, resolvedOtherUser, user?.uid, messages]);
+  }, [meta, resolvedOtherUser, user?.uid, messages, forcedOtherUserName]);
 
   // Listen for incoming call signals on `universities/{university}/calls/{chatId}`
   useEffect(() => {

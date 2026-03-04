@@ -3,9 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/firebase/auth/use-user';
-import { useAuth, useFirestore } from '@/firebase';
-import { getSelectedUniversity } from '@/lib/university';
-import { resolveDashboardLandingRoute } from '@/lib/dashboardLanding';
+import { useAuth } from '@/firebase';
+import { getStoredSession } from '@/lib/sessionManager';
 
 /**
  * RootPageGuard: Handles auth-based routing at the root level
@@ -20,14 +19,21 @@ import { resolveDashboardLandingRoute } from '@/lib/dashboardLanding';
 export function RootPageGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, initialized, data: userData } = useUser();
   const auth = useAuth();
-  const firestore = useFirestore();
   const router = useRouter();
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const [hasSessionHint] = useState(() => !!getStoredSession()?.uid);
   const verificationHandledRef = useRef(false);
   const dashboardRedirectHandledUidRef = useRef<string | null>(null);
+  const preAuthRedirectTriggeredRef = useRef(false);
 
   useEffect(() => {
     const run = async () => {
+      if (hasSessionHint && !user && (!initialized || loading) && !preAuthRedirectTriggeredRef.current) {
+        preAuthRedirectTriggeredRef.current = true;
+        setIsRedirecting(true);
+        router.replace('/dashboard/rides');
+      }
+
       // Only act once auth is initialized
       if (!initialized) return;
       
@@ -36,6 +42,7 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
 
       // If user is authenticated, handle email verification before routing to dashboard
       if (user) {
+        preAuthRedirectTriggeredRef.current = false;
         const isVerified = Boolean((userData as any)?.universityEmailVerified);
         const university = (userData as any)?.university || null;
 
@@ -67,30 +74,28 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
         }
         dashboardRedirectHandledUidRef.current = user.uid;
 
-        const fallbackUniversity = getSelectedUniversity();
-        const resolvedUniversity = university || fallbackUniversity || null;
-        const destination = await resolveDashboardLandingRoute({
-          firestore,
-          uid: user.uid,
-          university: resolvedUniversity,
-        });
-
-        console.debug('[RootPageGuard] Authenticated user detected, redirecting to:', destination);
+        console.debug('[RootPageGuard] Authenticated user detected, redirecting to: /dashboard/rides');
         setIsRedirecting(true);
-        router.replace(destination);
+        router.replace('/dashboard/rides');
         return;
       }
 
       dashboardRedirectHandledUidRef.current = null;
+      preAuthRedirectTriggeredRef.current = false;
+      setIsRedirecting(false);
 
       // User is not authenticated, show home page (no action needed)
     };
 
     run();
-  }, [initialized, loading, user, userData, auth, router, firestore]);
+  }, [initialized, loading, user, userData, auth, router, hasSessionHint]);
 
   // CRITICAL: Return null during auth check (invisible to user)
   // This prevents the Home page from rendering and being discarded
+  if ((!initialized || loading) && hasSessionHint) {
+    return null;
+  }
+
   if (!initialized || loading) {
     return null;
   }

@@ -565,12 +565,7 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
                           </div>
                         </div>
                         <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                          {(b.passengerDetails as any)?.phone && (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-2 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white">
-                              Call
-                            </a>
-                          )}
-                          <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" className="text-xs" />
+                          <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" className="text-xs" otherUserName={b.passengerDetails?.fullName || 'Unknown'} />
                         </div>
                       </div>
                     </div>
@@ -609,12 +604,7 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
                           </p>
                         </div>
                         <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                          {(b.passengerDetails as any)?.phone && (
-                            <a href={`tel:${(b.passengerDetails as any).phone}`} className="text-xs px-2 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white">
-                              Call
-                            </a>
-                          )}
-                          <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" className="text-xs" />
+                          <ChatButton chatId={(b as any).chatId || b.id} university={university} label="Chat" className="text-xs" otherUserName={b.passengerDetails?.fullName || 'Unknown'} />
                         </div>
                       </div>
                     </div>
@@ -700,7 +690,7 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
                   <CancellationConfirmDialog
                     open={showCancelDialog}
                     onOpenChange={setShowCancelDialog}
-                    cancellationRate={userData ? Math.round(((userData.totalCancellations ?? 0) / Math.max((userData.totalParticipations ?? 1), 1)) * 100) : 0}
+                    cancellationRate={Number((userData as any)?.driverCancellationPolicy?.cancellationRate ?? 0)}
                     minutesUntilDeparture={(() => {
                       try {
                         if (!ride.departureTime) return 0;

@@ -241,26 +241,104 @@ self.addEventListener('sync', (event) => {
 self.addEventListener('push', (event) => {
   console.log('[SW] Push notification received');
 
+  const toText = (value) => {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  };
+
+  const firstNonEmpty = (...values) => {
+    for (const value of values) {
+      const text = toText(value);
+      if (text) return text;
+    }
+    return '';
+  };
+
+  const buildContextualBody = (payload = {}) => {
+    const type = toText(payload.type).toLowerCase();
+    const actor = firstNonEmpty(payload.senderName, payload.actorName, payload.driverName, payload.passengerName, payload.fromName, payload.from);
+    const rideRoute = firstNonEmpty(payload.route, payload.rideRoute);
+
+    if (type.includes('chat') || type.includes('message')) {
+      const preview = firstNonEmpty(payload.messagePreview, payload.message, payload.content, payload.text);
+      if (preview) return actor ? `${actor}: ${preview}` : preview;
+      return actor ? `${actor} sent you a message` : 'You received a new message';
+    }
+
+    if (type.includes('cancel')) {
+      if (actor && rideRoute) return `${actor} cancelled your ride (${rideRoute})`;
+      if (actor) return `${actor} cancelled your ride`;
+      return 'Your ride was cancelled';
+    }
+
+    if (type.includes('accept')) {
+      return actor ? `${actor} accepted your ride request` : 'Your ride request was accepted';
+    }
+
+    if (type.includes('reject') || type.includes('declin')) {
+      return actor ? `${actor} declined your ride request` : 'Your ride request was declined';
+    }
+
+    if (type.includes('call')) {
+      const callKind = toText(payload.mode).toLowerCase() === 'video' ? 'video call' : 'call';
+      return actor ? `${actor} is calling you (${callKind})` : `Incoming ${callKind}`;
+    }
+
+    return firstNonEmpty(payload.message, payload.content, payload.text, payload.description, payload.body);
+  };
+
   let notificationData = {
     title: 'Campus Rides',
-    body: 'You have a new notification',
+    body: '',
     icon: '/icons/icon-192x192.png',
     badge: '/icons/badge-72x72.png',
     tag: 'campus-rides-notification',
     requireInteraction: false,
   };
 
+  let rawPayload = {};
+
   if (event.data) {
     try {
-      const data = event.data.json();
-      notificationData = {
-        ...notificationData,
-        ...data,
-      };
+      rawPayload = event.data.json() || {};
     } catch (e) {
-      notificationData.body = event.data.text();
+      rawPayload = { body: event.data.text() };
     }
   }
+
+  const payloadData = {
+    ...(rawPayload.data || {}),
+    ...rawPayload,
+  };
+
+  const title = firstNonEmpty(
+    rawPayload?.notification?.title,
+    payloadData.title,
+    payloadData.heading,
+    notificationData.title,
+  );
+
+  const body = firstNonEmpty(
+    rawPayload?.notification?.body,
+    payloadData.body,
+    payloadData.message,
+    buildContextualBody(payloadData),
+    'Open the app to view updates',
+  );
+
+  const icon = firstNonEmpty(rawPayload?.notification?.icon, payloadData.icon, notificationData.icon);
+  const badge = firstNonEmpty(rawPayload?.notification?.badge, payloadData.badge, notificationData.badge);
+  const tag = firstNonEmpty(payloadData.tag, payloadData.notificationId && `notif-${payloadData.notificationId}`, payloadData.type && `campus-rides-${payloadData.type}`, notificationData.tag);
+
+  notificationData = {
+    ...notificationData,
+    ...payloadData,
+    title,
+    body,
+    icon,
+    badge,
+    tag,
+  };
 
   event.waitUntil(
     self.registration.showNotification(notificationData.title, {

@@ -93,7 +93,7 @@ export function MobileBottomNav() {
                 )} />
                 {/* Activity Indicator Dot */}
                 {hasActivity && (
-                  <ActivityDot show={true} size={6} color="bg-primary" position="top-right" pulse={false} />
+                  <ActivityDot show={hasActivity} size={6} color="bg-primary" position="top-right" pulse={false} />
                 )}
               </div>
               <span className={cn(

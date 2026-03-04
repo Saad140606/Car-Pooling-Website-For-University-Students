@@ -43,7 +43,8 @@ function toArray<T>(value: T[] | T | null | undefined): T[] {
   return [];
 }
 
-const ACTIVE_BOOKING_STATUSES = new Set(['PENDING', 'ACCEPTED', 'CONFIRMED']);
+const ACTIVE_BOOKING_STATUSES = new Set(['PENDING', 'ACCEPTED', 'CONFIRMED', 'ONGOING', 'IN_PROGRESS', 'COMPLETION_WINDOW', 'COMPLETED']);
+const HIDDEN_BOOKING_STATUSES = new Set(['CANCELLED', 'CANCELED', 'REJECTED', 'DECLINED', 'REMOVED', 'EXPIRED', 'FAILED']);
 
 /**
  * Safe date formatting utility
@@ -253,6 +254,25 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       checkRideStatus();
     } catch (err: any) {
       console.debug('[handleConfirmRide] Error:', err);
+
+      // If API returned an error after commit, re-check server state before rolling back UI.
+      try {
+        const requestRef = doc(firestore, `universities/${university}/rides/${booking.rideId || ride.id}/requests`, booking.id);
+        const requestSnap = await getDoc(requestRef);
+        const requestStatus = String(requestSnap.data()?.status || '').toUpperCase();
+        if (requestStatus === 'CONFIRMED') {
+          setConfirmationProcessed(true);
+          setLocalBookingStatus('CONFIRMED');
+          toast({
+            title: 'Ride Confirmed',
+            description: 'Confirmation was successful.'
+          });
+          checkRideStatus();
+          return;
+        }
+      } catch (_) {
+        // ignore state recheck failures and continue normal error handling
+      }
       
       // RESET STATE ON ERROR
       setConfirmationProcessed(false);
@@ -423,6 +443,9 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
     safeGet(booking, 'driverDetails.contactNumber') ||
     safeGet(booking, 'driverDetails.phone') ||
     '';
+  const whatsappContactHref = driverContactNumber
+    ? `https://wa.me/${String(driverContactNumber).replace(/\D/g, '')}`
+    : null;
   const driverInitials = driverName.split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase();
   const rideFrom = safeGet(ride, 'from', 'Unknown');
   const rideTo = safeGet(ride, 'to', 'Unknown');
@@ -572,7 +595,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
               </div>
               {driverContactNumber && (
                 <div className="mt-1.5 text-[11px] text-slate-300">
-                  Contact: <a href={`tel:${driverContactNumber}`} className="text-primary hover:underline">{driverContactNumber}</a>
+                  Contact: <a href={whatsappContactHref || '#'} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{driverContactNumber}</a>
                 </div>
               )}
             </div>
@@ -972,6 +995,9 @@ export default function MyBookingsPage() {
 
   const visibleBookings = bookings.filter((booking) => {
     const normalizedStatus = String(booking?.status || '').trim().toUpperCase();
+    if (HIDDEN_BOOKING_STATUSES.has(normalizedStatus)) {
+      return false;
+    }
     if (!ACTIVE_BOOKING_STATUSES.has(normalizedStatus)) {
       return false;
     }
@@ -996,9 +1022,10 @@ export default function MyBookingsPage() {
       return false;
     }
   }).length;
-  const cancellationRate = allBookings.length >= 3
+  const fallbackCancellationRate = allBookings.length >= 3
     ? Math.round((cancelledCount / allBookings.length) * 100)
     : 0;
+  const cancellationRate = Number((userData as any)?.passengerCancellationPolicy?.cancellationRate ?? fallbackCancellationRate);
 
   const waitingForUniversityResolution = !!user?.uid && !userLoading && !normalizedUniversity;
   const waitingForBackfillBeforeEmpty =

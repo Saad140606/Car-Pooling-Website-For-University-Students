@@ -111,7 +111,14 @@ function PremiumBookingCard({ booking, onChat, onCancel, onViewRoute }: BookingC
               <div className="text-slate-400 text-xs mb-1">Driver Info</div>
               <div className="text-white font-medium">{driver?.fullName}</div>
               {'contactNumber' in driver && driver?.contactNumber && (
-                <div className="text-slate-400 text-xs mt-1">{driver.contactNumber}</div>
+                <a
+                  href={`https://wa.me/${String(driver.contactNumber).replace(/\D/g, '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-slate-400 text-xs mt-1 hover:underline"
+                >
+                  {driver.contactNumber}
+                </a>
               )}
             </div>
             <div className="bg-slate-800/50 rounded p-3">

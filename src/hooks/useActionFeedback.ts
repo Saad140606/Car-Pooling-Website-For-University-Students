@@ -52,9 +52,9 @@ export function useActionFeedback() {
     }
   }, []);
 
-  return {
+  return React.useMemo(() => ({
     start,
     update,
     clear,
-  };
+  }), [start, update, clear]);
 }

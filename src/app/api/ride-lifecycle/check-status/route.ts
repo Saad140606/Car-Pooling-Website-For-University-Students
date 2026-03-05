@@ -175,7 +175,24 @@ export async function POST(request: NextRequest) {
               .filter(Boolean)
           ));
 
-          for (const passengerId of passengerIds) {
+          // Fallback for legacy data: if confirmedPassengers is empty/stale, derive participants from bookings.
+          if (passengerIds.length === 0) {
+            const bookingSnap = await adminDb
+              .collection(`universities/${university}/bookings`)
+              .where('rideId', '==', rideId)
+              .where('status', 'in', ['CONFIRMED', 'confirmed', 'ACCEPTED', 'accepted'])
+              .get();
+
+            for (const doc of bookingSnap.docs) {
+              const data = doc.data() as any;
+              const pid = data?.passengerId || data?.passengerDetails?.uid || null;
+              if (pid) passengerIds.push(pid);
+            }
+          }
+
+          const uniquePassengerIds = Array.from(new Set(passengerIds.filter(Boolean)));
+
+          for (const passengerId of uniquePassengerIds) {
 
             await adminDb.collection(`universities/${university}/notifications`).add({
               userId: passengerId,

@@ -13,10 +13,16 @@ export default function MessageBubble({ message, isOwn, senderName, senderInitia
     if (!audioRef.current) return;
     if (playing) {
       audioRef.current.pause();
+      setPlaying(false);
     } else {
-      audioRef.current.play();
+      void audioRef.current.play().then(() => {
+        setPlaying(true);
+      }).catch((err: any) => {
+        if (err?.name !== 'NotAllowedError') {
+          console.error('Audio play failed:', err);
+        }
+      });
     }
-    setPlaying(!playing);
   };
 
   const handleAudioEnd = () => {

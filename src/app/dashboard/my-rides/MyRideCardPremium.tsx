@@ -21,6 +21,10 @@ import PassengerDetailModal from '@/components/PassengerDetailModal';
 import { LatLngExpression } from 'leaflet';
 import { openGoogleMapsRoute } from '@/lib/googleMapsRoute';
 
+function isValidFirestoreInstance(value: any): boolean {
+  return Boolean(value && typeof value === 'object' && '_databaseId' in value);
+}
+
 // Small helper: truncate string to n characters with ellipsis
 function truncateChars(s?: string | null, n = 30) {
   if (!s) return '';
@@ -87,14 +91,14 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
   const [showPassengerDetail, setShowPassengerDetail] = React.useState(false);
 
   // Fetch bookings
-  const acceptedBookingsQuery = (firestore && ride?.id) ? query(
+  const acceptedBookingsQuery = (isValidFirestoreInstance(firestore) && ride?.id) ? query(
     collection(firestore, `universities/${university}/bookings`),
     where('rideId', '==', ride.id),
     where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED'])
   ) : null;
   const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery, { includeUserDetails: 'passengerId' });
 
-  const pendingRequestsQuery = (firestore && ride?.id) ? query(
+  const pendingRequestsQuery = (isValidFirestoreInstance(firestore) && ride?.id) ? query(
     collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
     where('status', 'in', ['PENDING', 'pending'])
   ) : null;
@@ -104,6 +108,22 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
   const pendingCount = acceptedBookings?.filter(b => b.status === 'accepted').length || 0;
   const requestCount = pendingRequests?.length || 0;
   const acceptedCount = acceptedBookings?.length || 0;
+  const driverCancellationRate = React.useMemo(() => {
+    const policy = (userData as any)?.driverCancellationPolicy || {};
+    const policyRate = Number(policy?.cancellationRate);
+    if (Number.isFinite(policyRate) && policyRate > 0) return Math.round(policyRate);
+
+    const completedWindow = Number(policy?.completedRidesWindow || 0);
+    const cancelledWindow = Number(policy?.cancelledRidesWindow || 0);
+    const windowBase = completedWindow + cancelledWindow;
+    if (windowBase > 0) return Math.round((cancelledWindow / windowBase) * 100);
+
+    const totalParticipations = Number((userData as any)?.totalParticipations || 0);
+    const totalCancellations = Number((userData as any)?.totalCancellations || 0);
+    if (totalParticipations > 0) return Math.round((totalCancellations / totalParticipations) * 100);
+
+    return 0;
+  }, [userData]);
 
   const lifecycleStatus = (ride as any)?.lifecycleStatus;
   const needsCompletion = lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW';
@@ -112,7 +132,7 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
 
   // Delete ride handler
   const handleDeleteRide = async () => {
-    if (!firestore) {
+    if (!isValidFirestoreInstance(firestore)) {
       toast({ variant: 'destructive', title: 'Error', description: 'Firestore not initialized.' });
       return;
     }
@@ -690,7 +710,7 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
                   <CancellationConfirmDialog
                     open={showCancelDialog}
                     onOpenChange={setShowCancelDialog}
-                    cancellationRate={Number((userData as any)?.driverCancellationPolicy?.cancellationRate ?? 0)}
+                    cancellationRate={driverCancellationRate}
                     minutesUntilDeparture={(() => {
                       try {
                         if (!ride.departureTime) return 0;

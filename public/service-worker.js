@@ -340,13 +340,18 @@ self.addEventListener('push', (event) => {
     tag,
   };
 
+  const isIncomingCall = String(notificationData.type || '').toLowerCase().includes('call_incoming') ||
+    String(notificationData.type || '').toLowerCase().includes('call');
+
   event.waitUntil(
     self.registration.showNotification(notificationData.title, {
       body: notificationData.body,
       icon: notificationData.icon,
       badge: notificationData.badge,
       tag: notificationData.tag,
-      requireInteraction: notificationData.requireInteraction,
+      requireInteraction: isIncomingCall ? true : notificationData.requireInteraction,
+      renotify: isIncomingCall,
+      vibrate: isIncomingCall ? [300, 120, 300, 120, 300] : [100, 50, 100],
       data: notificationData,
       actions: [
         {

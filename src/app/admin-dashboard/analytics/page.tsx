@@ -149,7 +149,7 @@ function AdminAnalyticsContent() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 pt-4 border-t border-slate-700">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-slate-700">
               <div className="text-center">
                 <p className="text-2xl font-bold text-blue-400">
                   Rs. {analytics.fast.earnings.total.toLocaleString()}
@@ -167,6 +167,30 @@ function AdminAnalyticsContent() {
                   Rs. {analytics.karachi.earnings.total.toLocaleString()}
                 </p>
                 <p className="text-xs text-slate-400">Karachi Earnings</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-blue-300">
+                  Rs. {analytics.fast.spendings.total.toLocaleString()}
+                </p>
+                <p className="text-xs text-slate-400">FAST Spending</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-green-300">
+                  Rs. {analytics.ned.spendings.total.toLocaleString()}
+                </p>
+                <p className="text-xs text-slate-400">NED Spending</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-purple-300">
+                  Rs. {analytics.karachi.spendings.total.toLocaleString()}
+                </p>
+                <p className="text-xs text-slate-400">Karachi Spending</p>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-wide text-blue-200/80">Overall Passenger Spending</p>
+                <p className="text-2xl font-bold text-blue-300 mt-1">
+                  Rs. {analytics.combined.spendings.total.toLocaleString()}
+                </p>
               </div>
             </div>
           </div>

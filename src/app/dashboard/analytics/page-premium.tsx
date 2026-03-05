@@ -615,6 +615,23 @@ export default function AnalyticsPage() {
       let passengerApiAnalytics: any = null;
       let driverApiAnalytics: any = null;
 
+      const safeJsonResponse = async (response: Response) => {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          return response.json().catch(() => null);
+        }
+
+        const bodyText = await response.text().catch(() => '');
+        if (!bodyText) return null;
+
+        // Some environments send JSON with an incorrect content-type.
+        try {
+          return JSON.parse(bodyText);
+        } catch {
+          return null;
+        }
+      };
+
       // Sync summary metrics with post-ride analytics APIs (best-effort only)
       try {
         let token = '';
@@ -636,14 +653,14 @@ export default function AnalyticsPage() {
             fetch(`/api/analytics/passenger?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
               .then(async (response) => {
                 if (!response.ok) return;
-                const data = await response.json();
+                const data = await safeJsonResponse(response);
                 if (data?.success) passengerApiAnalytics = data.analytics;
               })
               .catch(() => undefined),
             fetch(`/api/analytics/driver?university=${encodeURIComponent(userData.university)}`, { headers: authHeaders })
               .then(async (response) => {
                 if (!response.ok) return;
-                const data = await response.json();
+                const data = await safeJsonResponse(response);
                 if (data?.success) driverApiAnalytics = data.analytics;
               })
               .catch(() => undefined),

@@ -19,6 +19,18 @@ function parsePointInput(s: string) {
   return '';
 }
 
+const CAMPUS_OPTIONS = {
+  fast: [
+    { value: 'fast_national', label: 'FAST National University Karachi Campus' },
+    { value: 'fast_city', label: 'FAST City Campus Karachi' },
+  ],
+  ned: [
+    { value: 'ned_main', label: 'NED University of Engineering and Technology (Main)' },
+    { value: 'ned_city', label: 'NED University City Campus' },
+    { value: 'ned_lej', label: 'NED University LEJ Campus' },
+  ],
+} as const;
+
 export default function FiltersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -32,6 +44,7 @@ export default function FiltersPage() {
     pointInput: '' as string,
     point: null as { lat: number; lng: number } | null,
     university: '' as string,
+    campus: '' as string,
     direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
   });
 
@@ -50,6 +63,7 @@ export default function FiltersPage() {
         pointInput: params.pointInput || (params.pointName || ''),
         point: params.point ? (function(){ const parts = (params.point || '').split(',').map(p=>p.trim()); if (parts.length>=2){ const lat=Number(parts[0]); const lng=Number(parts[1]); if (!isNaN(lat)&&!isNaN(lng)) return {lat,lng}; } return null; })() : null,
         university: params.university || '',
+        campus: params.campus || '',
         direction: (params.direction as any) || 'any',
       });
     } catch (_) {}
@@ -65,6 +79,33 @@ export default function FiltersPage() {
     }
   }, [user, userData]);
 
+  const campusFilterOptions = (() => {
+    const lockedUni = (user && userData?.university) ? userData.university : '';
+    const activeUni = lockedUni || filters.university;
+
+    if (activeUni === 'fast') return [...CAMPUS_OPTIONS.fast];
+    if (activeUni === 'ned') return [...CAMPUS_OPTIONS.ned];
+    if (activeUni === 'karachi') return [] as Array<{ value: string; label: string }>;
+
+    return [
+      ...CAMPUS_OPTIONS.fast.map((c) => ({ ...c, label: `FAST - ${c.label}` })),
+      ...CAMPUS_OPTIONS.ned.map((c) => ({ ...c, label: `NED - ${c.label}` })),
+    ];
+  })();
+
+  useEffect(() => {
+    setFilters((prev) => {
+      if (!prev.campus) return prev;
+      const lockedUni = (user && userData?.university) ? userData.university : '';
+      const activeUni = lockedUni || prev.university;
+      if (!activeUni || activeUni === 'any') return prev;
+      if (activeUni === 'karachi') return { ...prev, campus: '' };
+      if (activeUni === 'fast' && !prev.campus.startsWith('fast_')) return { ...prev, campus: '' };
+      if (activeUni === 'ned' && !prev.campus.startsWith('ned_')) return { ...prev, campus: '' };
+      return prev;
+    });
+  }, [user, userData?.university, filters.university]);
+
   const apply = () => {
     const p = new URLSearchParams();
     if (filters.transport && filters.transport !== 'any') p.set('transport', filters.transport);
@@ -73,6 +114,7 @@ export default function FiltersPage() {
     if (filters.maxPrice) p.set('maxPrice', filters.maxPrice);
     if (filters.point) p.set('point', `${filters.point.lat},${filters.point.lng}`);
     if (filters.university && filters.university !== 'any') p.set('university', filters.university);
+    if (filters.campus) p.set('campus', filters.campus);
     if (filters.direction && filters.direction !== 'any') p.set('direction', filters.direction);
 
     const qs = p.toString();
@@ -140,6 +182,23 @@ export default function FiltersPage() {
             </Select>
           )}
         </div>
+
+        {campusFilterOptions.length > 0 && (
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.125s' }}>
+            <div className="text-xs font-semibold text-slate-200 uppercase tracking-wider mb-3">Campus</div>
+            <Select value={filters.campus || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, campus: v === 'any' ? '' : v }))}>
+              <SelectTrigger className="w-full bg-slate-800/50 backdrop-blur-sm text-slate-200 focus:ring-primary">
+                <SelectValue>{filters.campus ? (campusFilterOptions.find((c) => c.value === filters.campus)?.label || 'Selected Campus') : 'All Campuses'}</SelectValue>
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900">
+                <SelectItem value="any">All Campuses</SelectItem>
+                {campusFilterOptions.map((campus) => (
+                  <SelectItem key={campus.value} value={campus.value}>{campus.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {/* Transport Filter */}
         <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/60 via-slate-900/40 to-slate-950/60 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 animate-slide-in-down" style={{ animationDelay: '0.15s' }}>

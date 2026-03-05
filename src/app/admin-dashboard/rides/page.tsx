@@ -66,6 +66,9 @@ function toRideRow(raw: any): RideRow {
   const passengers =
     Number(raw?.seatsBooked) ||
     Number(raw?.bookedSeats) ||
+    Number(raw?.totalPassengersServed) ||
+    Number(raw?.passengersServed) ||
+    Number(raw?.confirmedCount) ||
     Number(raw?.acceptedCount) ||
     (Array.isArray(raw?.confirmedPassengers) ? raw.confirmedPassengers.length : 0) ||
     0;
@@ -75,7 +78,12 @@ function toRideRow(raw: any): RideRow {
   const maxPassengers = seats > 0 ? seats : Math.max(passengers + availableSeats, passengers);
 
   const pricePerSeat = Number(raw?.pricePerSeat || raw?.price || 0);
-  const earnings = Number(raw?.totalEarnings || 0) || (pricePerSeat > 0 ? pricePerSeat * passengers : 0);
+  const earnings =
+    Number(raw?.totalEarnings || 0) ||
+    Number(raw?.earnings?.total || 0) ||
+    Number(raw?.driverEarnings || 0) ||
+    Number(raw?.analytics?.driverEarnings || 0) ||
+    (pricePerSeat > 0 ? pricePerSeat * passengers : 0);
 
   const university = normalizeUniversity(raw?.university || raw?.universityId);
   const universityId = String((raw?.universityId || raw?.university || "").toLowerCase());
@@ -85,6 +93,9 @@ function toRideRow(raw: any): RideRow {
     driver:
       raw?.driverName ||
       raw?.rideProviderName ||
+      raw?.driverInfo?.fullName ||
+      raw?.driverInfo?.name ||
+      raw?.driverDetails?.fullName ||
       raw?.driver?.fullName ||
       raw?.driver?.name ||
       "Unknown Driver",

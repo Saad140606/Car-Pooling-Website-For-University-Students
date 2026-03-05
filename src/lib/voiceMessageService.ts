@@ -263,9 +263,22 @@ class VoiceMessageService {
         console.error('[VoiceMessageService] Playback error:', error);
       };
 
-      await audio.play();
+      try {
+        await audio.play();
+      } catch (playError: any) {
+        if (playError?.name === 'NotAllowedError') {
+          // Browser autoplay policy: this is expected until user interacts.
+          console.debug('[VoiceMessageService] Playback blocked by autoplay policy until user interaction.');
+          return;
+        }
+        throw playError;
+      }
       console.debug('[VoiceMessageService] Playing voice message:', url);
     } catch (error) {
+      if ((error as any)?.name === 'NotAllowedError') {
+        // Keep this silent at runtime; UI can still allow manual replay.
+        return;
+      }
       console.error('[VoiceMessageService] Failed to play voice message:', error);
       throw error;
     }

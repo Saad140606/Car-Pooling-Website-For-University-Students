@@ -7,7 +7,8 @@ import RideCard from './RideCard';
 import RideDetailModal from './RideDetailModal';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMapEvents, Tooltip } from '@/components/map';
+import { MapContainer, TileLayer, Marker, Polyline, useMapEvents, Tooltip } from '@/components/map';
+import { getRoutePinIcon } from '@/lib/mapPinIcons';
 import { runTransaction, doc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { decodePolyline } from '@/lib/route';
 import { detectUniversityFromString } from '@/lib/universities';
@@ -469,6 +470,9 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         email: user.email,
         gender: userData?.gender,
         contactNumber: userData?.contactNumber,
+        universityEmailVerified: userData?.universityEmailVerified === true,
+        idVerified: userData?.idVerified === true,
+        isVerified: !!(userData?.isVerified || (userData?.universityEmailVerified && userData?.idVerified)),
       }
     };
 
@@ -492,6 +496,41 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
         const requestPayload = Object.assign({}, requestData, { bookingId: requestId });
         transaction.set(requestRef, requestPayload);
       });
+
+      // Best-effort provider notification for "requested a seat".
+      void (async () => {
+        try {
+          const idToken = await user.getIdToken();
+          const providerId = ride.driverId || (ride as any).createdBy || null;
+          if (!providerId || !idToken) return;
+          const pickupLabel = pickupPlaceName || (pickup ? `${pickup.lat.toFixed(5)}, ${pickup.lng.toFixed(5)}` : ride.from || 'Starting point');
+
+          const notifRes = await fetch('/api/notifications/ride-request', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              university: rideUniversity,
+              rideId: ride.id,
+              driverId: providerId,
+              passengerName: userData?.fullName || user.displayName || 'A student',
+              from: ride.from || 'Unknown',
+              to: ride.to || 'Unknown',
+              pickupPoint: pickupLabel,
+              dropoffPoint: ride.to || 'Unknown',
+            }),
+          });
+
+          if (!notifRes.ok) {
+            console.debug('[FullRideCard] ride-request notification API failed with status:', notifRes.status);
+          }
+        } catch (notifError) {
+          console.debug('[FullRideCard] ride-request notification API error (non-critical):', notifError);
+        }
+      })();
+
       toast({ title: 'Request Sent!', description: 'The ride provider has been notified of your request.' });
       setOpenBook(false);
       setPickupPoint(null);
@@ -723,10 +762,10 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
               <Polyline positions={ride.route as LatLngExpression[]} color="#60A5FA" weight={4} opacity={0.9} />
               {ride.route && ride.route.length > 0 && (
                 <>
-                  <Marker position={ride.route[0] as any}>
+                  <Marker position={ride.route[0] as any} icon={getRoutePinIcon('start')}>
                     <Tooltip>Start: {start}</Tooltip>
                   </Marker>
-                  <Marker position={ride.route[ride.route.length - 1] as any}>
+                  <Marker position={ride.route[ride.route.length - 1] as any} icon={getRoutePinIcon('end')}>
                     <Tooltip>End: {end}</Tooltip>
                   </Marker>
                 </>
@@ -854,19 +893,19 @@ export default function FullRideCard({ ride, user, userData, firestore, myBookin
               {/* Start and End Markers */}
               {ride.route && ride.route.length > 0 && (
                 <>
-                  <Marker position={ride.route[0] as any}>
+                  <Marker position={ride.route[0] as any} icon={getRoutePinIcon('start')}>
                     <Tooltip>Start: {start}</Tooltip>
                   </Marker>
-                  <Marker position={ride.route[ride.route.length - 1] as any}>
+                  <Marker position={ride.route[ride.route.length - 1] as any} icon={getRoutePinIcon('end')}>
                     <Tooltip>End: {end}</Tooltip>
                   </Marker>
                 </>
               )}
               
               {pickupPoint && (
-                <CircleMarker center={pickupPoint as any} pathOptions={{ color: '#3F51B5', fillColor: '#3F51B5' }} radius={6}>
+                <Marker position={pickupPoint as any} icon={getRoutePinIcon('pickup')}>
                   <Tooltip>{isFromUniversity ? 'Drop' : 'Pickup'}</Tooltip>
-                </CircleMarker>
+                </Marker>
               )}
               <MapEvents onSelect={handleSelectPickup} />
             </MapContainer>

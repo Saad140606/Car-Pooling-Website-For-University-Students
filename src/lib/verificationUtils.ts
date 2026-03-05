@@ -14,10 +14,11 @@
  */
 export function isUserVerified(user: any): boolean {
   if (!user) return false;
-  
+
+  if (user.isVerified === true) return true;
   const hasEmailVerification = user.universityEmailVerified === true;
   const hasIdVerification = user.idVerified === true;
-  
+
   return hasEmailVerification && hasIdVerification;
 }
 
@@ -47,11 +48,12 @@ export function getVerificationState(user: any): {
 
   const emailVerified = user.universityEmailVerified === true;
   const idVerified = user.idVerified === true;
+  const legacyVerified = user.isVerified === true;
 
   return {
     emailVerified,
     idVerified,
-    isVerified: emailVerified && idVerified,
+    isVerified: legacyVerified || (emailVerified && idVerified),
   };
 }
 

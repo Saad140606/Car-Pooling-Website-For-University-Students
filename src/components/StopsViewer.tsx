@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { MapPin, Plus, X, Edit2, Loader2, MousePointer2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip, useMapEvents } from '@/components/map';
+import { getRoutePinIcon } from '@/lib/mapPinIcons';
 import { isPointNearPolyline, haversine, type LatLng } from '@/lib/route';
 import { deduplicateByName } from '@/lib/stopFiltering';
 import { detectUniversityFromString } from '@/lib/universities';
@@ -159,6 +160,12 @@ export default function StopsViewer({
   const stopsWithCoords = React.useMemo(() => {
     return stops.filter((s: any) => Number.isFinite(Number(s?.lat)) && Number.isFinite(Number(s?.lng)));
   }, [stops]);
+
+  const getStopMarkerIcon = React.useCallback((idx: number, total: number) => {
+    if (idx === 0) return getRoutePinIcon('start');
+    if (idx === total - 1) return getRoutePinIcon('end');
+    return getRoutePinIcon('pickup');
+  }, []);
 
   // Update stops when initialStops changes
   React.useEffect(() => {
@@ -843,7 +850,7 @@ export default function StopsViewer({
 
                 {/* Show selected point marker */}
                 {selectedMapPoint && mapSelectionMode && (
-                  <Marker position={[selectedMapPoint.lat, selectedMapPoint.lng]}>
+                  <Marker position={[selectedMapPoint.lat, selectedMapPoint.lng]} icon={getRoutePinIcon('pickup')}>
                     <Popup>Selected location</Popup>
                   </Marker>
                 )}
@@ -852,6 +859,7 @@ export default function StopsViewer({
                   <Marker
                     key={stop.id || `marker-${idx}`}
                     position={[Number(stop.lat), Number(stop.lng)]}
+                    icon={getStopMarkerIcon(idx, stopsWithCoords.length)}
                   >
                     <Popup>
                       <strong>{cleanLocationName(stop.name)}</strong>
@@ -1160,12 +1168,12 @@ export default function StopsViewer({
                 </>
                 <MapClickHandler />
                 {selectedMapPoint && (
-                  <Marker position={[selectedMapPoint.lat, selectedMapPoint.lng]}>
+                  <Marker position={[selectedMapPoint.lat, selectedMapPoint.lng]} icon={getRoutePinIcon('pickup')}>
                     <Popup>{selectedPlaceName || 'Selected Point'}</Popup>
                   </Marker>
                 )}
                 {stopsWithCoords.map((stop, idx) => (
-                  <Marker key={stop.id || `marker-${idx}`} position={[Number(stop.lat), Number(stop.lng)]}>
+                  <Marker key={stop.id || `marker-${idx}`} position={[Number(stop.lat), Number(stop.lng)]} icon={getStopMarkerIcon(idx, stopsWithCoords.length)}>
                     <Popup>{cleanLocationName(stop.name)}</Popup>
                   </Marker>
                 ))}

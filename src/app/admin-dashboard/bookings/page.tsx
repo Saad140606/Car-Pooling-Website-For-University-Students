@@ -83,6 +83,10 @@ function toBookingRow(raw: any): BookingRow {
     driver:
       raw?.driverName ||
       raw?.rideProviderName ||
+      raw?.rideData?.driverInfo?.fullName ||
+      raw?.rideData?.driverInfo?.name ||
+      raw?.ride?.driverInfo?.fullName ||
+      raw?.ride?.driverInfo?.name ||
       raw?.driver?.fullName ||
       raw?.providerName ||
       "Unknown Driver",

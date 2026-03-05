@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import L, { LatLngExpression, LatLngBoundsExpression } from 'leaflet';
 import { createMapPin } from '@/components/map';
+import { getRoutePinIcon } from '@/lib/mapPinIcons';
 
 export type MapLeafletProps = {
   route?: LatLngExpression[];         // polyline positions
@@ -155,32 +156,9 @@ export default function MapLeaflet({
     // Add initial markers (pickup pins) plus optional start/end pins
     markerLayerRef.current = L.layerGroup().addTo(map);
 
-    const pickupIcon = L.icon({
-      iconUrl: createMapPin('#E84C3D'),
-      iconRetinaUrl: createMapPin('#E84C3D'),
-      iconSize: [32, 48],
-      iconAnchor: [16, 48],
-      popupAnchor: [0, -42],
-      tooltipAnchor: [16, -32],
-    });
-
-    const startIcon = L.icon({
-      iconUrl: createMapPin('#16A34A'),
-      iconRetinaUrl: createMapPin('#16A34A'),
-      iconSize: [32, 48],
-      iconAnchor: [16, 48],
-      popupAnchor: [0, -42],
-      tooltipAnchor: [16, -32],
-    });
-
-    const endIcon = L.icon({
-      iconUrl: createMapPin('#2563EB'),
-      iconRetinaUrl: createMapPin('#2563EB'),
-      iconSize: [32, 48],
-      iconAnchor: [16, 48],
-      popupAnchor: [0, -42],
-      tooltipAnchor: [16, -32],
-    });
+    const pickupIcon = getRoutePinIcon('pickup');
+    const startIcon = getRoutePinIcon('start');
+    const endIcon = getRoutePinIcon('end');
 
     // Start pin
     if (startEndPins && route && route.length) {
@@ -333,14 +311,7 @@ export default function MapLeaflet({
 
       // Recreate pickup markers
       if (markers && markers.length) {
-        const pickupIcon = L.icon({
-          iconUrl: createMapPin('#E84C3D'),
-          iconRetinaUrl: createMapPin('#E84C3D'),
-          iconSize: [32, 48],
-          iconAnchor: [16, 48],
-          popupAnchor: [0, -42],
-          tooltipAnchor: [16, -32],
-        });
+        const pickupIcon = getRoutePinIcon('pickup');
         markers.forEach((m: any) => {
           let latlng: [number, number] | null = null;
           let label: string | undefined;
@@ -367,23 +338,8 @@ export default function MapLeaflet({
 
       // Recreate start/end pins when enabled
       if (startEndPins && route && route.length) {
-        const startIcon = L.icon({
-          iconUrl: createMapPin('#16A34A'),
-          iconRetinaUrl: createMapPin('#16A34A'),
-          iconSize: [32, 48],
-          iconAnchor: [16, 48],
-          popupAnchor: [0, -42],
-          tooltipAnchor: [16, -32],
-        });
-
-        const endIcon = L.icon({
-          iconUrl: createMapPin('#2563EB'),
-          iconRetinaUrl: createMapPin('#2563EB'),
-          iconSize: [32, 48],
-          iconAnchor: [16, 48],
-          popupAnchor: [0, -42],
-          tooltipAnchor: [16, -32],
-        });
+        const startIcon = getRoutePinIcon('start');
+        const endIcon = getRoutePinIcon('end');
 
         const startLatLng = L.latLng(route[0] as any);
         startMarkerRef.current = L.marker(startLatLng, { icon: startIcon }).addTo(map);

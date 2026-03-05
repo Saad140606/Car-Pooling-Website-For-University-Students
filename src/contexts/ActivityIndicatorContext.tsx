@@ -132,8 +132,9 @@ export function ActivityIndicatorProvider({ children }: { children: React.ReactN
 
   const hasAnyActivity =
     activityState.bookings || activityState.rides || activityState.analytics || activityState.chat || activityState.notifications;
-  const hasBookingsActivity = activityState.bookings;
-  const hasRidesActivity = activityState.rides;
+  // Chat notifications surface where chat actions live (rides/bookings screens).
+  const hasBookingsActivity = activityState.bookings || activityState.chat;
+  const hasRidesActivity = activityState.rides || activityState.chat;
   const hasAnalyticsActivity = activityState.analytics;
   const hasChatActivity = activityState.chat;
   const hasNotificationsActivity = activityState.notifications;

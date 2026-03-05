@@ -124,7 +124,11 @@ export class RingtoneManager {
 
       console.log('[Ringtone] Ringtone playing');
       this.emit('ringtone-started', { type: 'ringtone' });
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'NotAllowedError') {
+        console.debug('[Ringtone] Autoplay blocked until user interaction.');
+        return;
+      }
       console.error('[Ringtone] Failed to play ringtone:', error);
       this.emit('ringtone-error', { error, type: 'ringtone' });
     }
@@ -165,7 +169,11 @@ export class RingtoneManager {
 
       console.log('[Ringtone] Notification sound playing');
       this.emit('sound-played', { type: 'notification' });
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'NotAllowedError') {
+        console.debug('[Ringtone] Notification autoplay blocked until user interaction.');
+        return;
+      }
       console.error('[Ringtone] Failed to play notification sound:', error);
       this.emit('sound-error', { error, type: 'notification' });
     }

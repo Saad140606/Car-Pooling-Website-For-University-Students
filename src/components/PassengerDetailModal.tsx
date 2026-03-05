@@ -194,7 +194,17 @@ export default function PassengerDetailModal({
 
         const data = snap.data() as any;
         const policy = data?.driverCancellationPolicy || {};
-        setDriverCancellationRate(Number(policy?.cancellationRate || 0));
+        const policyRate = Number(policy?.cancellationRate);
+        const completedWindow = Number(policy?.completedRidesWindow || 0);
+        const cancelledWindow = Number(policy?.cancelledRidesWindow || 0);
+        const windowBase = completedWindow + cancelledWindow;
+        const historicalTotal = Number(data?.totalParticipations || 0);
+        const historicalCancelled = Number(data?.totalCancellations || 0);
+        const fallbackRate = windowBase > 0
+          ? Math.round((cancelledWindow / windowBase) * 100)
+          : (historicalTotal > 0 ? Math.round((historicalCancelled / historicalTotal) * 100) : 0);
+
+        setDriverCancellationRate(Number.isFinite(policyRate) && policyRate > 0 ? Math.round(policyRate) : fallbackRate);
         setDriverCompletedRidesWindow(Number(policy?.completedRidesWindow || 0));
         setDriverCancelledUnitsWindow(Number(policy?.cancelledRidesWindow || 0));
       } catch {
@@ -327,7 +337,18 @@ export default function PassengerDetailModal({
             <div className="p-4 bg-gradient-to-br from-slate-800/80 to-slate-900/60 rounded-lg border border-slate-700/50 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs text-slate-400 uppercase tracking-wider font-semibold">📍 Locations</h3>
-                
+                {(routeLatLngs.length > 0 || pickupLatLng) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 border-slate-600 text-slate-200 hover:bg-slate-700/60"
+                    onClick={() => setShowMap((prev) => !prev)}
+                  >
+                    <Map className="h-3.5 w-3.5 mr-1.5" />
+                    {showMap ? 'Hide Pickup Map' : 'View Pickup on Route'}
+                  </Button>
+                )}
               </div>
               
               {/* Passenger Pickup/Dropoff Location - Conditional Card */}
@@ -369,6 +390,21 @@ export default function PassengerDetailModal({
                   </div>
                 </div>
               </div>
+
+              {showMap && (routeLatLngs.length > 0 || pickupLatLng) && (
+                <div className="rounded-lg overflow-hidden border border-slate-700/60 bg-slate-900/40">
+                  <LazyMapLeaflet
+                    className="h-80 w-full"
+                    route={routeLatLngs as any}
+                    markers={mapMarkers as any}
+                    bounds={boundsFromRide as any}
+                    center={pickupLatLng ? ([pickupLatLng.lat, pickupLatLng.lng] as any) : undefined}
+                    zoom={13}
+                    startEndPins
+                    routeColor="#60A5FA"
+                  />
+                </div>
+              )}
             </div>
 
          

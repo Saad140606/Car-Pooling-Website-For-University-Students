@@ -1666,7 +1666,17 @@ export default function CreateRidePage() {
   const [suggestLimit, setSuggestLimit] = useState<number>(20);
   const [searchLoading, setSearchLoading] = useState(false);
   const [campusSelectOpen, setCampusSelectOpen] = useState<'from' | 'to' | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const searchTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const updateViewport = () => {
+      setIsMobileViewport(window.innerWidth < 768);
+    };
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    return () => window.removeEventListener('resize', updateViewport);
+  }, []);
   
   // Cache the Firebase auth token for search suggestions to avoid repeated async calls and speed up suggestions
   const searchTokenRef = useRef<string | null>(null);
@@ -2327,8 +2337,14 @@ export default function CreateRidePage() {
     const options = getCampusOptions();
     if (options.length <= 1) return null;
     
+    const shouldOpenUp = false;
+
     return (
-      <div role="listbox" aria-label="Campus options" className="absolute left-0 right-0 bg-card border-2 border-primary/30 rounded-lg z-[5000] max-h-72 overflow-auto shadow-xl" style={{ position: 'absolute', top: 'calc(100% + 8px)' }}>
+      <div
+        role="listbox"
+        aria-label="Campus options"
+        className={`absolute left-0 right-0 bg-card border-2 border-primary/30 rounded-lg z-[5000] max-h-72 overflow-auto shadow-xl ${shouldOpenUp ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+      >
        
         {options.map((option) => (
           <button
@@ -2364,8 +2380,10 @@ export default function CreateRidePage() {
       return null;
     }
     console.log('[RENDER] Rendering suggestions dropdown for:', field);
+    const shouldOpenUp = false;
+
     return (
-      <div role="listbox" aria-label="Location suggestions" className="absolute left-0 right-0 top-full bg-card border-2 border-primary/30 rounded-lg mt-2 z-[5000] max-h-72 overflow-auto shadow-xl" style={{ position: 'absolute' }}>
+      <div role="listbox" aria-label="Location suggestions" className={`absolute left-0 right-0 bg-card border-2 border-primary/30 rounded-lg z-[5000] max-h-72 overflow-auto shadow-xl ${shouldOpenUp ? 'bottom-full mb-2' : 'top-full mt-2'}`}>
         <div className="px-3 py-2 text-xs font-semibold text-primary bg-primary/5 border-b border-primary/10">
           📍 {suggestions.length} Location{suggestions.length !== 1 ? 's' : ''} Found
         </div>
@@ -2473,7 +2491,7 @@ export default function CreateRidePage() {
                 <FormField control={form.control} name="from" render={({ field }: any) => {
                   const isFromLockedWithCampuses = uniAuto === 'fromUni' && getCampusOptions().length > 1;
                   return (
-                  <FormItem className="relative z-[4500]" style={{ overflow: 'visible' }}>
+                  <FormItem className={`relative ${query.field === 'to' || campusSelectOpen === 'to' ? 'z-[4300]' : 'z-[4500]'}`} style={{ overflow: 'visible' }}>
                         <FormLabel>From</FormLabel>
                         <FormControl>
                             <div className='relative'>
@@ -2484,8 +2502,8 @@ export default function CreateRidePage() {
                                 readOnly={uniAuto === 'fromUni'} 
                                 className={`${uniAuto === 'fromUni' ? isFromLockedWithCampuses ? 'cursor-pointer opacity-100' : 'opacity-70 cursor-not-allowed' : ''}`}
                                 onClick={() => { if (isFromLockedWithCampuses) setCampusSelectOpen(campusSelectOpen === 'from' ? null : 'from'); }}
-                                onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setQuery({ field: 'from', text: e.target.value }); } }} 
-                                onFocus={() => { if (field.value && uniAuto !== 'fromUni') setQuery({ field: 'from', text: field.value }); }} 
+                                onChange={(e) => { if (uniAuto !== 'fromUni') { field.onChange(e); setCampusSelectOpen(null); setQuery({ field: 'from', text: e.target.value }); } }} 
+                                onFocus={() => { if (uniAuto !== 'fromUni') { setCampusSelectOpen(null); setQuery({ field: 'from', text: field.value || '' }); } }} 
                                 onBlur={() => { setTimeout(() => setSuggestions([]), 300); setTimeout(() => setCampusSelectOpen(null), 200); }}
                                 autoComplete="off" 
                               />
@@ -2507,7 +2525,7 @@ export default function CreateRidePage() {
                 <FormField control={form.control} name="to" render={({ field }: any) => {
                   const isToLockedWithCampuses = uniAuto === 'toUni' && getCampusOptions().length > 1;
                   return (
-                  <FormItem className="relative z-[4500]" style={{ overflow: 'visible' }}>
+                  <FormItem className={`relative ${query.field === 'from' || campusSelectOpen === 'from' ? 'z-[4300]' : 'z-[4500]'}`} style={{ overflow: 'visible' }}>
                         <FormLabel>To</FormLabel>
                         <FormControl>
                             <div className='relative'>
@@ -2518,8 +2536,8 @@ export default function CreateRidePage() {
                                 readOnly={uniAuto === 'toUni'} 
                                 className={`${uniAuto === 'toUni' ? isToLockedWithCampuses ? 'cursor-pointer opacity-100' : 'opacity-70 cursor-not-allowed' : ''}`}
                                 onClick={() => { if (isToLockedWithCampuses) setCampusSelectOpen(campusSelectOpen === 'to' ? null : 'to'); }}
-                                onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setQuery({ field: 'to', text: e.target.value }); } }} 
-                                onFocus={() => { if (field.value && uniAuto !== 'toUni') setQuery({ field: 'to', text: field.value }); }} 
+                                onChange={(e) => { if (uniAuto !== 'toUni') { field.onChange(e); setCampusSelectOpen(null); setQuery({ field: 'to', text: e.target.value }); } }} 
+                                onFocus={() => { if (uniAuto !== 'toUni') { setCampusSelectOpen(null); setQuery({ field: 'to', text: field.value || '' }); } }} 
                                 onBlur={() => { setTimeout(() => setSuggestions([]), 300); setTimeout(() => setCampusSelectOpen(null), 200); }}
                                 autoComplete="off" 
                               />

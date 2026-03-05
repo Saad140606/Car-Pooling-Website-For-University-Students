@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from '@/components/map';
+import { getRoutePinIcon } from '@/lib/mapPinIcons';
 import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
 import { InlineVerifiedBadge } from '@/components/VerificationBadge';
@@ -847,11 +848,13 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
                 )}
                 <Marker
                   position={[pickupLatLng.lat, pickupLatLng.lng] as any}
+                  icon={getRoutePinIcon('pickup')}
                 >
                   <Popup>{pickupPlaceName || 'Pickup location'}</Popup>
                 </Marker>
                 <Marker
                   position={[dropoffLatLng.lat, dropoffLatLng.lng] as any}
+                  icon={getRoutePinIcon('end')}
                 >
                   <Popup>{dropoffPlaceName || ride?.to || 'Dropoff location'}</Popup>
                 </Marker>
@@ -890,6 +893,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
 
 export default function MyBookingsPage() {
   const { user, data: userData, loading: userLoading } = useUser();
+  const { getUnreadForRide, markRideAsRead } = useNotifications();
   const firestore = useFirestore();
   const [retryKey, setRetryKey] = React.useState(0);
   const [pageError, setPageError] = React.useState<string | null>(null);
@@ -1025,18 +1029,46 @@ export default function MyBookingsPage() {
     const fourHoursInMs = 4 * 60 * 60 * 1000;
     return nowMs - departureMs <= fourHoursInMs;
   });
+
+  const getRecencyMs = React.useCallback((booking: any) => {
+    const bookingUpdated = parseTimestampToMs(booking?.updatedAt, { silent: true });
+    const bookingCreated = parseTimestampToMs(booking?.createdAt, { silent: true });
+    const rideUpdated = parseTimestampToMs(booking?.ride?.updatedAt, { silent: true });
+    const rideCreated = parseTimestampToMs(booking?.ride?.createdAt, { silent: true });
+    const departure = parseTimestampToMs(booking?.ride?.departureTime, { silent: true });
+    return bookingUpdated ?? bookingCreated ?? rideUpdated ?? rideCreated ?? departure ?? 0;
+  }, []);
+
+  const sortedVisibleBookings = React.useMemo(() => {
+    return [...visibleBookings].sort((a: any, b: any) => {
+      const aRideId = String(a?.rideId || a?.ride?.id || '');
+      const bRideId = String(b?.rideId || b?.ride?.id || '');
+      const unreadDelta = (getUnreadForRide(bRideId) || 0) - (getUnreadForRide(aRideId) || 0);
+      if (unreadDelta !== 0) return unreadDelta;
+      return getRecencyMs(b) - getRecencyMs(a);
+    });
+  }, [visibleBookings, getUnreadForRide, getRecencyMs]);
+
+  React.useEffect(() => {
+    if (!sortedVisibleBookings.length) return;
+    sortedVisibleBookings.forEach((booking: any) => {
+      const rideId = String(booking?.rideId || booking?.ride?.id || '');
+      if (!rideId) return;
+      if (getUnreadForRide(rideId) > 0) {
+        void markRideAsRead(rideId).catch(() => {});
+      }
+    });
+  }, [sortedVisibleBookings, getUnreadForRide, markRideAsRead]);
   
-  const cancelledCount = allBookings.filter((b) => {
-    try {
-      return String(b.status).toLowerCase() === 'cancelled';
-    } catch (_) {
-      return false;
-    }
-  }).length;
-  const fallbackCancellationRate = allBookings.length >= 3
-    ? Math.round((cancelledCount / allBookings.length) * 100)
+  const policyCancellationRate = Number((userData as any)?.passengerCancellationPolicy?.cancellationRate);
+  const totalParticipations = Number((userData as any)?.totalParticipations || 0);
+  const totalCancellations = Number((userData as any)?.totalCancellations || 0);
+  const fallbackCancellationRate = totalParticipations > 0
+    ? Math.round((totalCancellations / totalParticipations) * 100)
     : 0;
-  const cancellationRate = Number((userData as any)?.passengerCancellationPolicy?.cancellationRate ?? fallbackCancellationRate);
+  const cancellationRate = Number.isFinite(policyCancellationRate)
+    ? policyCancellationRate
+    : fallbackCancellationRate;
 
   const waitingForUniversityResolution = !!user?.uid && !userLoading && !normalizedUniversity;
   const waitingForBackfillBeforeEmpty =
@@ -1148,7 +1180,7 @@ export default function MyBookingsPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
-          {visibleBookings.map((booking) => (
+          {sortedVisibleBookings.map((booking) => (
             <BookingCard
               key={`${booking.id}-${retryKey}`}
               booking={booking}

@@ -505,7 +505,6 @@ export function useAdminAnalytics(): AdminAnalytics {
           setFast((prev) => ({
             ...prev,
             bookings: { total, confirmed, cancelled, pending, seatsBooked },
-            earnings: { ...prev.earnings, total: totalSpendings },
             spendings: { ...prev.spendings, total: totalSpendings },
           }));
 
@@ -561,7 +560,6 @@ export function useAdminAnalytics(): AdminAnalytics {
           setNed((prev) => ({
             ...prev,
             bookings: { total, confirmed, cancelled, pending, seatsBooked },
-            earnings: { ...prev.earnings, total: totalSpendings },
             spendings: { ...prev.spendings, total: totalSpendings },
           }));
 
@@ -617,7 +615,6 @@ export function useAdminAnalytics(): AdminAnalytics {
           setKarachi((prev) => ({
             ...prev,
             bookings: { total, confirmed, cancelled, pending, seatsBooked },
-            earnings: { ...prev.earnings, total: totalSpendings },
             spendings: { ...prev.spendings, total: totalSpendings },
           }));
 

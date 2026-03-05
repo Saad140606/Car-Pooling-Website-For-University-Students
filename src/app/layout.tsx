@@ -44,8 +44,8 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: 'Campus Ride',
-    template: '%s | Campus Ride',
+    default: 'Campus Rides',
+    template: '%s | Campus Rides',
   },
   description: 'University carpooling for FAST, NED, and Karachi University students.',
   keywords: SEO_TARGET_KEYWORDS,
@@ -75,8 +75,8 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'en_US',
     url: SITE_URL,
-    siteName: 'Campus Ride',
-    title: 'Campus Ride - University Carpooling',
+    siteName: 'Campus Rides',
+    title: 'Campus Rides - University Carpooling',
     description: 'Efficient and affordable university carpooling for FAST, NED, and Karachi University students.',
   },
   twitter: {

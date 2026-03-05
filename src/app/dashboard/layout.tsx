@@ -44,6 +44,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     markRidesAsViewed,
     markBookingsAsViewed,
     markAnalyticsAsViewed,
+    markChatAsViewed,
     markNotificationsAsViewed,
   } = useActivityIndicator();
   const auth = useAuth();
@@ -55,8 +56,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     if (pathname === '/dashboard/my-rides') {
       markRidesAsViewed();
+      markChatAsViewed();
     } else if (pathname === '/dashboard/my-bookings') {
       markBookingsAsViewed();
+      markChatAsViewed();
     } else if (pathname === '/dashboard/analytics') {
       markAnalyticsAsViewed();
     } else if (pathname === '/dashboard/notifications') {
@@ -67,6 +70,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     markRidesAsViewed,
     markBookingsAsViewed,
     markAnalyticsAsViewed,
+    markChatAsViewed,
+    markNotificationsAsViewed,
+  ]);
+
+  useEffect(() => {
+    if (pathname === '/dashboard/my-rides' && hasRidesActivity) {
+      markRidesAsViewed();
+      markChatAsViewed();
+    }
+    if (pathname === '/dashboard/my-bookings' && hasBookingsActivity) {
+      markBookingsAsViewed();
+      markChatAsViewed();
+    }
+    if (pathname === '/dashboard/analytics' && hasAnalyticsActivity) {
+      markAnalyticsAsViewed();
+    }
+    if (pathname === '/dashboard/notifications' && hasNotificationsActivity) {
+      markNotificationsAsViewed();
+    }
+  }, [
+    pathname,
+    hasRidesActivity,
+    hasBookingsActivity,
+    hasAnalyticsActivity,
+    hasNotificationsActivity,
+    markRidesAsViewed,
+    markBookingsAsViewed,
+    markAnalyticsAsViewed,
+    markChatAsViewed,
     markNotificationsAsViewed,
   ]);
   // Verification enforcement is handled during sign-in/register flows.

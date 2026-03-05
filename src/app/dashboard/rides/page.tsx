@@ -20,6 +20,7 @@ import type { LatLng, LatLngBoundsExpression, LatLngExpression, LeafletMouseEven
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents, Tooltip } from '@/components/map';
+import { getRoutePinIcon } from '@/lib/mapPinIcons';
 import { Ride as RideType } from '@/lib/types';
 import { getUniversityShortLabel } from '@/lib/universities';
 import { getSelectedUniversity, isValidUniversity } from '@/lib/university';
@@ -65,6 +66,38 @@ const getRouteBounds = (route: LatLngExpression[] | undefined) => {
 // Active booking statuses used for queries and duplicate checks
 // Only these statuses are considered "active" - completed/expired/rejected/cancelled are excluded
 const ACTIVE_BOOKING_STATUSES = ['pending', 'PENDING', 'accepted', 'ACCEPTED', 'confirmed', 'CONFIRMED', 'ongoing', 'ONGOING'];
+
+const CAMPUS_OPTIONS = {
+  fast: [
+    { value: 'fast_national', label: 'FAST National University Karachi Campus' },
+    { value: 'fast_city', label: 'FAST City Campus Karachi' },
+  ],
+  ned: [
+    { value: 'ned_main', label: 'NED University of Engineering and Technology (Main)' },
+    { value: 'ned_city', label: 'NED University City Campus' },
+    { value: 'ned_lej', label: 'NED University LEJ Campus' },
+  ],
+} as const;
+
+const detectRideCampus = (ride: any): string | '' => {
+  const text = `${ride?.from || ''} ${ride?.to || ''} ${Array.isArray(ride?.stops) ? ride.stops.map((s: any) => s?.name || '').join(' ') : ''}`.toLowerCase();
+  const uni = String(ride?.university || '').toLowerCase();
+
+  if (uni === 'fast') {
+    if (text.includes('fast city campus')) return 'fast_city';
+    if (text.includes('fast national') || text.includes('nuces')) return 'fast_national';
+    return '';
+  }
+
+  if (uni === 'ned') {
+    if (text.includes('lej campus')) return 'ned_lej';
+    if (text.includes('city campus')) return 'ned_city';
+    if (text.includes('ned university') || text.includes('engineering and technology')) return 'ned_main';
+    return '';
+  }
+
+  return '';
+};
 
 function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ride: RideType, onBook: (pickupPoint: { lat: number; lng: number }) => Promise<boolean>, children: React.ReactNode, userData?: any, alreadyBooked?: boolean }) {
   const [pickupPoint, setPickupPoint] = useState<{ lat: number; lng: number } | null>(null);
@@ -357,18 +390,18 @@ function RouteMapModal({ ride, onBook, children, userData, alreadyBooked }: { ri
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 />
                 {startPos && (
-                  <Marker position={startPos as any}>
+                  <Marker position={startPos as any} icon={getRoutePinIcon('start')}>
                     <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent={false}>Start</Tooltip>
                   </Marker>
                 )}
                 {endPos && (
-                  <Marker position={endPos as any}>
+                  <Marker position={endPos as any} icon={getRoutePinIcon('end')}>
                     <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent={false}>End</Tooltip>
                   </Marker>
                 )}
                 <Polyline positions={ride.route as LatLngExpression[]} color="#ffffff" weight={2} opacity={0.9} dashArray="5,5" />
                 {pickupPoint && (
-                  <Marker position={pickupPoint as any} />
+                  <Marker position={pickupPoint as any} icon={getRoutePinIcon('pickup')} />
                 )}
                 <MapEvents />
               </MapContainer>
@@ -584,6 +617,9 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
         email: user.email,
         gender: userData?.gender,
         contactNumber: userData?.contactNumber,
+        universityEmailVerified: userData?.universityEmailVerified === true,
+        idVerified: userData?.idVerified === true,
+        isVerified: !!(userData?.isVerified || (userData?.universityEmailVerified && userData?.idVerified)),
       }
     };
 
@@ -925,6 +961,7 @@ function RidesPageInner() {
       pointInput: '' as string,
       point: null as { lat:number; lng:number } | null,
       university: '' as string,
+      campus: '' as string,
       direction: 'any' as 'any'|'toUniversity'|'fromUniversity',
     };
     return baseFilters;
@@ -1058,6 +1095,23 @@ function RidesPageInner() {
     return null;
   }, []);
 
+  const campusFilterOptions = React.useMemo(() => {
+    if (user && lockedUniversity) {
+      if (lockedUniversity === 'fast') return [...CAMPUS_OPTIONS.fast];
+      if (lockedUniversity === 'ned') return [...CAMPUS_OPTIONS.ned];
+      return [] as Array<{ value: string; label: string }>;
+    }
+
+    if (filters.university === 'fast') return [...CAMPUS_OPTIONS.fast];
+    if (filters.university === 'ned') return [...CAMPUS_OPTIONS.ned];
+    if (filters.university === 'karachi') return [] as Array<{ value: string; label: string }>;
+
+    return [
+      ...CAMPUS_OPTIONS.fast.map((c) => ({ ...c, label: `FAST - ${c.label}` })),
+      ...CAMPUS_OPTIONS.ned.map((c) => ({ ...c, label: `NED - ${c.label}` })),
+    ];
+  }, [user, lockedUniversity, filters.university]);
+
   const useMyLocation = useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(pos => {
@@ -1147,6 +1201,12 @@ function RidesPageInner() {
         if (ride.university !== lockedUniversity) return false;
       }
 
+      // Campus filter (FAST/NED only)
+      if (filters.campus && filters.campus !== 'any') {
+        const campus = detectRideCampus(ride);
+        if (campus !== filters.campus) return false;
+      }
+
       // transport/gender/price filters
       if (filters.transport !== 'any' && ride.transportMode !== filters.transport) return false;
       if (filters.gender !== 'any' && !(ride.driverInfo?.gender === filters.gender)) return false;
@@ -1196,7 +1256,7 @@ function RidesPageInner() {
   }, [availableRides, user, lockedUniversity, userData?.university, filters, searchQuery, parsePointInput, isPointNearRoute]);
 
   const clearFilters = useCallback(() => {
-    setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', direction: 'any' });
+    setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', campus: '', direction: 'any' });
   }, [user, lockedUniversity]);
 
   // === END OF ALL HOOK DEFINITIONS ===
@@ -1229,6 +1289,7 @@ function RidesPageInner() {
         pointInput: params.pointInput || '',
         point: params.pointInput ? parsePointInput(params.pointInput) : null,
         university: (user && lockedUniversity) ? lockedUniversity : (params.university || ''),
+        campus: params.campus || '',
         direction: (params.direction as any) || 'any',
       };
       setFilters(f => ({ ...f, ...newFilters }));
@@ -1254,11 +1315,45 @@ function RidesPageInner() {
           newFilters.pointInput = 'University of Karachi';
           newFilters.point = karachiCoords;
         }
+
+        // Karachi has one campus only, so campus filter should never be set.
+        if (lockedUniversity === 'karachi' && newFilters.campus) {
+          newFilters.campus = '';
+        }
+
+        if (lockedUniversity === 'fast' && newFilters.campus && !newFilters.campus.startsWith('fast_')) {
+          newFilters.campus = '';
+        }
+
+        if (lockedUniversity === 'ned' && newFilters.campus && !newFilters.campus.startsWith('ned_')) {
+          newFilters.campus = '';
+        }
         
         return newFilters;
       });
     }
   }, [user, lockedUniversity, filters.direction]);
+
+  useEffect(() => {
+    setFilters((prev) => {
+      if (!prev.campus) return prev;
+
+      const activeUniversity = (user && lockedUniversity) ? lockedUniversity : prev.university;
+      if (!activeUniversity || activeUniversity === 'any') return prev;
+
+      if (activeUniversity === 'karachi') {
+        return { ...prev, campus: '' };
+      }
+      if (activeUniversity === 'fast' && !prev.campus.startsWith('fast_')) {
+        return { ...prev, campus: '' };
+      }
+      if (activeUniversity === 'ned' && !prev.campus.startsWith('ned_')) {
+        return { ...prev, campus: '' };
+      }
+
+      return prev;
+    });
+  }, [user, lockedUniversity, filters.university]);
 
   // Early return for loading state - after all hooks
   const activeRideLock = getActiveRideLock(userData);
@@ -1382,6 +1477,22 @@ function RidesPageInner() {
                     </Select>
                   )}
                 </div>
+
+                {campusFilterOptions.length > 0 && (
+                  <div>
+                    <label className="block text-sm mb-1">Campus</label>
+                    <Select value={filters.campus || 'any'} onValueChange={(v) => setFilters(f => ({ ...f, campus: v === 'any' ? '' : v }))}>
+                      <SelectTrigger className="w-full"><SelectValue>{filters.campus ? (campusFilterOptions.find((c) => c.value === filters.campus)?.label || 'Selected Campus') : 'All Campuses'}</SelectValue></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="any">All Campuses</SelectItem>
+                        {campusFilterOptions.map((campus) => (
+                          <SelectItem key={campus.value} value={campus.value}>{campus.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm mb-1">Transport</label>
                   <Select value={filters.transport} onValueChange={(v) => setFilters(f => ({ ...f, transport: v as any }))}>
@@ -1508,7 +1619,7 @@ function RidesPageInner() {
             </DialogContent>
           </Dialog>
           {/** Show matches badge only when filters/search are active */}
-          { (searchQuery.trim() !== '' || filters.transport !== 'any' || filters.gender !== 'any' || filters.minPrice || filters.maxPrice || filters.pointInput || filters.direction !== 'any' || (filters.university && filters.university !== '' && !user)) && (
+          { (searchQuery.trim() !== '' || filters.transport !== 'any' || filters.gender !== 'any' || filters.minPrice || filters.maxPrice || filters.pointInput || filters.direction !== 'any' || !!filters.campus || (filters.university && filters.university !== '' && !user)) && (
             <Badge>{filteredRides.length} matches</Badge>
           ) }
 
@@ -1522,7 +1633,7 @@ function RidesPageInner() {
           </div>
         </div>
         <div>
-          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
+          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', campus: '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
         </div>
       </div>
 

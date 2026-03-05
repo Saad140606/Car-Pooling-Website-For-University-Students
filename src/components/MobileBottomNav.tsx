@@ -26,14 +26,17 @@ export function MobileBottomNav() {
     markRidesAsViewed,
     markBookingsAsViewed,
     markAnalyticsAsViewed,
+    markChatAsViewed,
   } = useActivityIndicator();
 
   // Mark sections as viewed when navigating to them
   useEffect(() => {
     if (pathname === '/dashboard/my-rides') {
       markRidesAsViewed();
+      markChatAsViewed();
     } else if (pathname === '/dashboard/my-bookings') {
       markBookingsAsViewed();
+      markChatAsViewed();
     } else if (pathname === '/dashboard/analytics') {
       markAnalyticsAsViewed();
     }
@@ -42,6 +45,7 @@ export function MobileBottomNav() {
     markRidesAsViewed,
     markBookingsAsViewed,
     markAnalyticsAsViewed,
+    markChatAsViewed,
   ]);
 
   return (

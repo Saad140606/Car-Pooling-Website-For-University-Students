@@ -81,19 +81,66 @@ export async function GET(req: Request) {
       }
     }
 
-    const rides = paginatedSnap?.docs.map(doc => {
-      const data = doc.data();
-      const pathMatch = doc.ref.path.match(/universities\/([^/]+)\/rides\//i);
-      const derivedUniversityId = pathMatch?.[1]?.toLowerCase() || '';
-      const fieldUniversityId = String(data.universityId || data.university || '').toLowerCase();
-      return {
-        id: doc.id,
-        ...data,
-        universityId: fieldUniversityId || derivedUniversityId,
-        departureTime: data.departureTime?.toDate?.()?.toISOString() || data.departureTime,
-        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-      };
-    }) || [];
+    const driverNameCache = new Map<string, string>();
+
+    const resolveDriverName = async (university: string, driverId: string): Promise<string | null> => {
+      const cacheKey = `${university}:${driverId}`;
+      if (driverNameCache.has(cacheKey)) return driverNameCache.get(cacheKey) || null;
+
+      const candidatePaths = [
+        `universities/${university}/users/${driverId}`,
+        `users/${driverId}`,
+      ];
+
+      for (const path of candidatePaths) {
+        try {
+          const snap = await db.doc(path).get();
+          if (!snap.exists) continue;
+          const d = snap.data() as any;
+          const name = d?.fullName || d?.displayName || d?.name || null;
+          if (name) {
+            driverNameCache.set(cacheKey, String(name));
+            return String(name);
+          }
+        } catch {
+          // Ignore profile fetch failures and continue fallback chain.
+        }
+      }
+
+      driverNameCache.set(cacheKey, '');
+      return null;
+    };
+
+    const rides = paginatedSnap
+      ? await Promise.all(
+          paginatedSnap.docs.map(async (doc) => {
+            const data = doc.data();
+            const pathMatch = doc.ref.path.match(/universities\/([^/]+)\/rides\//i);
+            const derivedUniversityId = pathMatch?.[1]?.toLowerCase() || '';
+            const fieldUniversityId = String(data.universityId || data.university || '').toLowerCase();
+            const universityIdResolved = fieldUniversityId || derivedUniversityId;
+
+            const driverId = String(data.driverId || data.createdBy || '').trim();
+            const resolvedDriverName =
+              data.driverName ||
+              data.rideProviderName ||
+              data.driverInfo?.fullName ||
+              data.driverInfo?.name ||
+              (driverId && universityIdResolved
+                ? await resolveDriverName(universityIdResolved, driverId)
+                : null);
+
+            return {
+              id: doc.id,
+              ...data,
+              driverName: resolvedDriverName || data.driverName || null,
+              universityId: universityIdResolved,
+              departureTime: data.departureTime?.toDate?.()?.toISOString() || data.departureTime,
+              createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+            };
+          })
+        )
+      : [];
 
     console.log(`[admin/rides] Fetched ${rides.length} rides (total: ${total})`);
 

@@ -72,6 +72,14 @@ export async function POST(req: NextRequest) {
       }
       const ride = rideSnap.data() as any;
 
+      // Hard stop: providers cannot accept/reject requests once departure time has passed.
+      const departureMs = ride?.departureTime?.seconds
+        ? Number(ride.departureTime.seconds) * 1000
+        : (ride?.departureTime ? new Date(ride.departureTime).getTime() : NaN);
+      if (Number.isFinite(departureMs) && Date.now() >= departureMs) {
+        throw new Error('You can not accept or reject any passenger after passing departure time.');
+      }
+
       const reqSnap = await tx.get(requestRef);
       if (!reqSnap.exists) {
         throw new Error('Request not found');

@@ -313,10 +313,47 @@ export default function FindARidePage() {
             passengerId: user.uid,
             status: 'PENDING',
             createdAt: serverTimestamp(),
+            passengerDetails: {
+              uid: user.uid,
+              fullName: userData?.fullName || user.displayName || '',
+              email: user.email || '',
+              gender: userData?.gender || null,
+              contactNumber: userData?.contactNumber || null,
+              universityEmailVerified: userData?.universityEmailVerified === true,
+              idVerified: userData?.idVerified === true,
+              isVerified: !!(userData?.isVerified || (userData?.universityEmailVerified && userData?.idVerified)),
+            },
             pickupPoint: null,
             pickupPlaceName: null,
           });
         });
+
+        // Best-effort notification to ride provider for premium flow too.
+        try {
+          const token = await user.getIdToken();
+          const providerId = ride.driverId || (ride as any).createdBy || null;
+          if (providerId && token) {
+            await fetch('/api/notifications/ride-request', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                university: userData.university,
+                rideId,
+                driverId: providerId,
+                passengerName: userData?.fullName || user.displayName || 'A student',
+                from: ride.from || 'Unknown',
+                to: ride.to || 'Unknown',
+                pickupPoint: ride.from || 'Starting point',
+                dropoffPoint: ride.to || 'Destination',
+              }),
+            });
+          }
+        } catch (notifErr) {
+          console.debug('[PremiumRides] ride-request notification failed (non-critical):', notifErr);
+        }
 
         toast({
           title: 'Request sent!',

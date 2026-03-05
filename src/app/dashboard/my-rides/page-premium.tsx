@@ -33,6 +33,10 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+function isValidFirestoreInstance(value: any): boolean {
+  return Boolean(value && typeof value === 'object' && '_databaseId' in value);
+}
+
 interface OfferedRideCardProps {
   ride: RideType;
   requestCount: number;
@@ -194,7 +198,7 @@ export default function MyOfferedRidesPage() {
   const { toast } = useToast();
 
   const ridesQuery =
-    user && firestore && userData
+    user && isValidFirestoreInstance(firestore) && userData && userData.university
       ? query(
           collection(firestore, 'universities', userData.university, 'rides'),
           where('driverId', '==', user.uid),
@@ -211,7 +215,7 @@ export default function MyOfferedRidesPage() {
   const [rideRequests, setRideRequests] = useState<BookingType[]>([]);
 
   const handleViewRequests = async (rideId: string) => {
-    if (!firestore || !userData) return;
+    if (!isValidFirestoreInstance(firestore) || !userData || !userData.university) return;
 
     setSelectedRide(rideId);
     setRequestsLoading(true);
@@ -238,7 +242,7 @@ export default function MyOfferedRidesPage() {
   };
 
   const handleDeleteRide = async (rideId: string) => {
-    if (!firestore || !userData) return;
+    if (!isValidFirestoreInstance(firestore) || !userData || !userData.university) return;
 
     if (!confirm('Are you sure you want to delete this ride?')) return;
 

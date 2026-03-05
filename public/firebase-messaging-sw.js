@@ -62,7 +62,11 @@ self.addEventListener('push', function(event) {
     icon,
     badge,
     data: data.data || data || {},
-    requireInteraction: true
+    requireInteraction: true,
+    renotify: String(payloadData.type || '').toLowerCase().includes('call'),
+    vibrate: String(payloadData.type || '').toLowerCase().includes('call')
+      ? [300, 120, 300, 120, 300]
+      : [100, 50, 100],
   };
 
   event.waitUntil(self.registration.showNotification(title, options));

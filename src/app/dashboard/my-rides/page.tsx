@@ -18,6 +18,7 @@ import { Ride as RideType, Booking as BookingType } from '@/lib/types';
 import { decodePolyline } from '@/lib/route';
 import { formatTimestamp, parseTimestampToMs } from '@/lib/timestampUtils';
 import { MapContainer, TileLayer, Polyline, Marker, Popup } from '@/components/map';
+import { getRoutePinIcon } from '@/lib/mapPinIcons';
 import ChatButton from '@/components/chat/ChatButton';
 import NotificationBadge from '@/components/NotificationBadge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
@@ -28,8 +29,6 @@ import { isUserVerified } from '@/lib/verificationUtils';
 import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialog';
 import PassengerDetailModal from '@/components/PassengerDetailModal';
 import { RideDetailDialog } from './RideDetailDialog';
-import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
-import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
 import React from 'react';
 import { trackEvent } from '@/lib/ga';
 
@@ -59,6 +58,10 @@ function formatPickupLabel(booking: { id?: string; pickupPlaceName?: string | nu
   return 'Pickup not set';
 }
 
+function isValidFirestoreInstance(value: any): boolean {
+  return Boolean(value && typeof value === 'object' && '_databaseId' in value);
+}
+
 function BookingRequests({ ride, university, onProcessed }: { ride: RideType, university: string, onProcessed?: (bookingId: string, status: 'accepted' | 'rejected') => void }) {
   const firestore = useFirestore();
   const { user, data: userData } = useUser();
@@ -66,6 +69,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const actionFeedback = useActionFeedback();
   const [selectedRequest, setSelectedRequest] = React.useState<any | null>(null);
   const [showRequestDetail, setShowRequestDetail] = React.useState(false);
+  const [showRequestRoute, setShowRequestRoute] = React.useState(false);
 
   console.log('[BookingRequests] Component mounted with ride:', { 
     rideId: ride?.id, 
@@ -77,7 +81,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   // can safely list only requests for their ride (rules allow listing here).
   // CRITICAL: Only create query if ride.id is defined to prevent invalid collection paths
   // listen: true (default) enables real-time updates via onSnapshot
-  const bookingsQuery = (firestore && ride?.id) ? query(
+  const bookingsQuery = (isValidFirestoreInstance(firestore) && ride?.id) ? query(
     collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
     where('status', 'in', ['PENDING', 'pending'])
   ) : null;
@@ -89,6 +93,10 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
   const [shownBookings, setShownBookings] = React.useState<BookingType[]>([]);
   const [placeNames, setPlaceNames] = React.useState<Record<string, string>>({});
   const fetchingPlaceNameIdsRef = React.useRef<Set<string>>(new Set());
+  const hasDeparturePassed = React.useMemo(() => {
+    const departureMs = parseTimestampToMs(ride?.departureTime, { silent: true });
+    return departureMs !== null && Date.now() >= departureMs;
+  }, [ride?.departureTime]);
 
   // Keep local shown list in sync with upstream bookings, but allow optimistic
   // removal immediately after an accept/reject so the UI does not permit
@@ -150,12 +158,21 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       booking_full: booking
     });
     
-    if (!firestore) {
+    if (!isValidFirestoreInstance(firestore)) {
       console.error('[handleBooking] Firestore not available');
       return;
     }
     if (!booking?.id) {
       console.error('[handleBooking] No booking ID');
+      return;
+    }
+
+    if (hasDeparturePassed) {
+      toast({
+        variant: 'destructive',
+        title: 'Ride already departed',
+        description: 'You can not accept or reject any passenger after passing departure time.',
+      });
       return;
     }
 
@@ -327,6 +344,13 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
             <Badge className="bg-amber-500/20 text-amber-300 text-xs">{shownBookings.length}</Badge>
           </h4>
         </div>
+
+        {hasDeparturePassed && (
+          <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-xs text-amber-200">
+            You can not accept or reject any passenger after passing departure time.
+          </div>
+        )}
+
         {shownBookings.map((booking: any) => (
           <div 
             key={booking.id} 
@@ -369,8 +393,8 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                   e.stopPropagation();
                   handleBooking(booking, 'accepted');
                 }} 
-                disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
-                title="Accept request"
+                disabled={hasDeparturePassed || processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
+                title={hasDeparturePassed ? 'You can not accept or reject any passenger after passing departure time.' : 'Accept request'}
               >
                 <Check className="h-5 w-5" />
               </Button>
@@ -382,8 +406,8 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                   e.stopPropagation();
                   handleBooking(booking, 'rejected');
                 }} 
-                disabled={processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
-                title="Reject request"
+                disabled={hasDeparturePassed || processingIds.includes(booking.id) || (booking.status !== 'PENDING' && booking.status !== 'pending')}
+                title={hasDeparturePassed ? 'You can not accept or reject any passenger after passing departure time.' : 'Reject request'}
               >
                 <X className="h-5 w-5" />
               </Button>
@@ -485,13 +509,22 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
               })()}
 
               {/* Action Buttons */}
+              <Button
+                onClick={() => setShowRequestRoute(true)}
+                variant="outline"
+                className="w-full border-slate-600/70 bg-slate-800/60 hover:bg-slate-700/70 text-slate-100"
+              >
+                <MapPin className="h-4 w-4 mr-2" />
+                View Route & Pickup
+              </Button>
+
               <div className="flex gap-3 pt-2">
                 <Button
                   onClick={() => {
                     handleBooking(selectedRequest, 'accepted');
                     setShowRequestDetail(false);
                   }}
-                  disabled={processingIds.includes(selectedRequest.id)}
+                  disabled={hasDeparturePassed || processingIds.includes(selectedRequest.id)}
                   className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                 >
                   <Check className="h-4 w-4 mr-2" />
@@ -504,7 +537,7 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
                     handleBooking(selectedRequest, 'rejected');
                     setShowRequestDetail(false);
                   }}
-                  disabled={processingIds.includes(selectedRequest.id)}
+                  disabled={hasDeparturePassed || processingIds.includes(selectedRequest.id)}
                   variant="outline"
                   className="flex-1 border-red-500/50 text-red-400 hover:bg-red-500/10"
                 >
@@ -518,6 +551,101 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
           </DialogContent>
         </Dialog>
       )}
+
+      {selectedRequest && (
+        <Dialog open={showRequestRoute} onOpenChange={setShowRequestRoute}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Passenger Route Preview</DialogTitle>
+              <DialogDescription>
+                Route preview with only this passenger {String(ride.from || '').toLowerCase().includes('university') ? 'dropoff' : 'pickup'}.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="h-[60vh] w-full rounded-lg overflow-hidden border border-slate-700">
+              {(() => {
+                const routePoints = (() => {
+                  if (ride.routePolyline && typeof ride.routePolyline === 'string') return decodePolyline(ride.routePolyline);
+                  if (Array.isArray(ride.route)) {
+                    return (ride.route as any[])
+                      .map((p) => {
+                        if (Array.isArray(p) && p.length >= 2) return { lat: Number(p[0]), lng: Number(p[1]) };
+                        if (p && typeof p.lat === 'number' && typeof p.lng === 'number') return { lat: p.lat, lng: p.lng };
+                        return null;
+                      })
+                      .filter(Boolean) as Array<{ lat: number; lng: number }>;
+                  }
+                  return [] as Array<{ lat: number; lng: number }>;
+                })();
+
+                const pickupPoint = (() => {
+                  const pt = selectedRequest?.pickupPoint;
+                  if (pt && typeof pt.lat === 'number' && typeof pt.lng === 'number') return { lat: pt.lat, lng: pt.lng };
+                  if (Array.isArray(pt) && pt.length >= 2) {
+                    const lat = Number(pt[0]);
+                    const lng = Number(pt[1]);
+                    if (!Number.isNaN(lat) && !Number.isNaN(lng)) return { lat, lng };
+                  }
+                  return null;
+                })();
+
+                const routePath = routePoints.map((point) => [point.lat, point.lng] as [number, number]);
+                const startPoint = routePoints[0] || null;
+                const endPoint = routePoints.length > 1 ? routePoints[routePoints.length - 1] : null;
+                const passengerName =
+                  selectedRequest?.passengerDetails?.fullName ||
+                  selectedRequest?.passengerName ||
+                  'Passenger';
+                const isFromUniversity = String(ride.from || '').toLowerCase().includes('university');
+                const passengerLabel = `${passengerName} ${isFromUniversity ? 'Dropoff' : 'Pickup'}`;
+
+                const boundsPoints: Array<{ lat: number; lng: number }> = [];
+                routePoints.forEach((point) => boundsPoints.push(point));
+                if (pickupPoint) boundsPoints.push(pickupPoint);
+                const bounds = boundsPoints.length >= 2
+                  ? L.latLngBounds(boundsPoints.map((point) => [point.lat, point.lng]))
+                  : null;
+
+                if (!routePoints.length && !pickupPoint) {
+                  return <div className="h-full flex items-center justify-center text-sm text-slate-400">No route available</div>;
+                }
+
+                return (
+                  <MapContainer
+                    bounds={bounds || undefined}
+                    center={bounds ? undefined : (pickupPoint ? ([pickupPoint.lat, pickupPoint.lng] as any) : (startPoint ? ([startPoint.lat, startPoint.lng] as any) : undefined))}
+                    zoom={bounds ? undefined : 13}
+                    style={{ height: '100%', width: '100%' }}
+                  >
+                    <TileLayer
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution='&copy; OpenStreetMap contributors'
+                    />
+                    {routePath.length > 0 && (
+                      <Polyline positions={routePath as any} pathOptions={{ color: '#60A5FA', weight: 5, opacity: 0.9 }} />
+                    )}
+                    {startPoint && (
+                      <Marker position={[startPoint.lat, startPoint.lng] as any} icon={getRoutePinIcon('start')}>
+                        <Popup>Start</Popup>
+                      </Marker>
+                    )}
+                    {endPoint && (
+                      <Marker position={[endPoint.lat, endPoint.lng] as any} icon={getRoutePinIcon('end')}>
+                        <Popup>Destination</Popup>
+                      </Marker>
+                    )}
+                    {pickupPoint && (
+                      <Marker position={[pickupPoint.lat, pickupPoint.lng] as any} icon={getRoutePinIcon('pickup')}>
+                        <Popup>{passengerLabel}</Popup>
+                      </Marker>
+                    )}
+                  </MapContainer>
+                );
+              })()}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 }
@@ -525,16 +653,16 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
 function MyRideCard({ ride, university } : { ride: RideType, university: string }) {
     const firestore = useFirestore();
     const { user, data: userData } = useUser();
-    const { getUnreadForRide } = useNotifications();
+  const { getUnreadForRide, markRideAsRead } = useNotifications();
 
-    const acceptedBookingsQuery = (firestore && ride?.id) ? query(
+    const acceptedBookingsQuery = (isValidFirestoreInstance(firestore) && ride?.id) ? query(
         collection(firestore, `universities/${university}/bookings`),
         where('rideId', '==', ride.id),
       where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
     ) : null;
     const { data: acceptedBookings } = useBookingCollection<BookingType>(acceptedBookingsQuery);
 
-    const acceptedRequestsQuery = (firestore && ride?.id) ? query(
+    const acceptedRequestsQuery = (isValidFirestoreInstance(firestore) && ride?.id) ? query(
       collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
       where('status', 'in', ['accepted', 'ACCEPTED', 'CONFIRMED', 'confirmed'])
     ) : null;
@@ -566,26 +694,66 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
       return merged;
     }, [acceptedBookings, acceptedRequests, ride]);
 
-    const pendingRequestsQuery = (firestore && ride?.id) ? query(
+    const pendingRequestsQuery = (isValidFirestoreInstance(firestore) && ride?.id) ? query(
       collection(firestore, `universities/${university}/rides/${ride.id}/requests`),
       where('status', 'in', ['PENDING', 'pending'])
     ) : null;
     const { data: pendingRequests } = useBookingCollection<BookingType>(pendingRequestsQuery);
 
-    const acceptedPoints = acceptedParticipants?.map((b: any) => b.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
-    const pendingPoints = pendingRequests?.map(r => r.pickupPoint).filter(Boolean) as LatLngExpression[] || [];
-    const pickupPoints = [...acceptedPoints, ...pendingPoints];
+    const isFromUniversityRide = React.useMemo(() => {
+      const fromStr = String(ride.from || '').toLowerCase();
+      return fromStr.includes('university') || fromStr.includes('campus') || fromStr.includes('uni');
+    }, [ride.from]);
+
+    // Keep a legacy alias to avoid runtime issues in any JSX paths still referencing this name.
+    const isFromUniversity = isFromUniversityRide;
+
+    const pickupMarkers = React.useMemo(() => {
+      const toPoint = (pickupPoint: any): { lat: number; lng: number } | null => {
+        if (pickupPoint && typeof pickupPoint.lat === 'number' && typeof pickupPoint.lng === 'number') {
+          return { lat: Number(pickupPoint.lat), lng: Number(pickupPoint.lng) };
+        }
+        if (Array.isArray(pickupPoint) && pickupPoint.length >= 2) {
+          const lat = Number(pickupPoint[0]);
+          const lng = Number(pickupPoint[1]);
+          if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+            return { lat, lng };
+          }
+        }
+        return null;
+      };
+
+      const allParticipants = [
+        ...((acceptedParticipants || []) as any[]),
+        ...((pendingRequests || []) as any[]),
+      ];
+
+      return allParticipants
+        .map((participant: any) => {
+          const point = toPoint(participant?.pickupPoint);
+          if (!point) return null;
+
+          const name =
+            participant?.passengerDetails?.fullName ||
+            participant?.passengerDetails?.name ||
+            participant?.passengerName ||
+            'Passenger';
+
+          return {
+            lat: point.lat,
+            lng: point.lng,
+            label: `${name} ${isFromUniversityRide ? 'Dropoff' : 'Pickup'}`,
+          };
+        })
+        .filter(Boolean) as Array<{ lat: number; lng: number; label: string }>;
+    }, [acceptedParticipants, pendingRequests, isFromUniversityRide]);
     const [isDeleting, setIsDeleting] = React.useState(false);
     const [deleteOpen, setDeleteOpen] = React.useState(false);
     const [isCancelling, setIsCancelling] = React.useState(false);
     const [showCancelDialog, setShowCancelDialog] = React.useState(false);
     const [selectedPassenger, setSelectedPassenger] = React.useState<any | null>(null);
     const [showPassengerDetail, setShowPassengerDetail] = React.useState(false);
-    const [isCompleting, setIsCompleting] = React.useState(false);
-    const [reviewingPassengerId, setReviewingPassengerId] = React.useState<string | null>(null);
     const [showRideDetail, setShowRideDetail] = React.useState(false);
-    const [showCompletionFormDialog, setShowCompletionFormDialog] = React.useState(false);
-    const autoCompleteTriggeredRef = React.useRef(false);
     const acceptedCount = acceptedParticipants?.length || 0;
     const confirmedBookings = React.useMemo(
       () => (acceptedParticipants || []).filter((b: any) => String(b.status || '').toUpperCase() === 'CONFIRMED'),
@@ -600,12 +768,60 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
     const rideConfirmedCount = Array.isArray((ride as any)?.confirmedPassengers)
       ? (ride as any).confirmedPassengers.length
       : 0;
-    const completionParticipantCount = confirmedBookings.length;
     const [availableSeats, setAvailableSeats] = React.useState<number>(ride.availableSeats ?? 0);
+    const [departureTimer, setDepartureTimer] = React.useState<string>('');
+    const driverCancellationRate = React.useMemo(() => {
+      const policy = (userData as any)?.driverCancellationPolicy || {};
+      const policyRate = Number(policy?.cancellationRate);
+      if (Number.isFinite(policyRate) && policyRate > 0) return Math.round(policyRate);
+
+      const completedWindow = Number(policy?.completedRidesWindow || 0);
+      const cancelledWindow = Number(policy?.cancelledRidesWindow || 0);
+      const windowBase = completedWindow + cancelledWindow;
+      if (windowBase > 0) return Math.round((cancelledWindow / windowBase) * 100);
+
+      const totalParticipations = Number((userData as any)?.totalParticipations || 0);
+      const totalCancellations = Number((userData as any)?.totalCancellations || 0);
+      if (totalParticipations > 0) return Math.round((totalCancellations / totalParticipations) * 100);
+
+      return 0;
+    }, [userData]);
 
     React.useEffect(() => {
       setAvailableSeats(ride.availableSeats ?? 0);
     }, [ride.availableSeats]);
+
+    React.useEffect(() => {
+      const updateTimer = () => {
+        const departureMs = parseTimestampToMs(ride?.departureTime, { silent: true });
+        if (departureMs === null) {
+          setDepartureTimer('Time unavailable');
+          return;
+        }
+
+        const diff = departureMs - Date.now();
+        if (diff <= 0) {
+          setDepartureTimer('Ride has started');
+          return;
+        }
+
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+        setDepartureTimer(`${hours}h ${minutes}m ${seconds}s`);
+      };
+
+      updateTimer();
+      const timer = setInterval(updateTimer, 1000);
+      return () => clearInterval(timer);
+    }, [ride?.departureTime]);
+
+    React.useEffect(() => {
+      if (!ride?.id) return;
+      if (getUnreadForRide(ride.id) > 0) {
+        void markRideAsRead(ride.id).catch(() => {});
+      }
+    }, [ride?.id, getUnreadForRide, markRideAsRead]);
 
     React.useEffect(() => {
       const toPoint = (pickupPoint: any): { lat: number; lng: number } | null => {
@@ -680,48 +896,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
       const mapsUrl = `https://www.google.com/maps/dir/?${params.toString()}`;
       window.open(mapsUrl, '_blank', 'noopener,noreferrer');
     }, [ride.route, ride.from, ride.to, toast]);
-    // CRITICAL: Client-side lifecycle monitor for deterministic completion window
-    const lifecycleState = useRideLifecycleMonitor({
-      ride,
-      university,
-      // Using global config: checkInterval and completionDelayMinutes from @/config/lifecycle
-    });
-    const shouldShowCompletionForm =
-      lifecycleState.shouldShowCompletionUI &&
-      completionParticipantCount > 0 &&
-      !(ride as any)?.postRideFormSubmitted &&
-      !((ride as any)?.postRideStatus?.driverConfirmed) &&
-      lifecycleState.minutesUntilCompletion !== null &&
-      lifecycleState.minutesUntilCompletion <= 0;
-
-    React.useEffect(() => {
-      if (shouldShowCompletionForm) {
-        setShowCompletionFormDialog(true);
-      }
-      if (!shouldShowCompletionForm) {
-        setShowCompletionFormDialog(false);
-        autoCompleteTriggeredRef.current = false;
-      }
-    }, [shouldShowCompletionForm]);
-
-    const allPassengersReviewed = confirmedBookings.length > 0 && confirmedBookings.every((b) => !!b.driverReview);
-
-    React.useEffect(() => {
-      if (!shouldShowCompletionForm || !allPassengersReviewed || isCompleting) {
-        return;
-      }
-      if (autoCompleteTriggeredRef.current) {
-        return;
-      }
-      autoCompleteTriggeredRef.current = true;
-      void handleMarkRideComplete();
-    }, [shouldShowCompletionForm, allPassengersReviewed, isCompleting]);
-
     const handleDeleteRide = async () => {
       // ===== CRITICAL: Comprehensive validation before attempting delete =====
       
       // Check 1: Firestore initialized
-      if (!firestore) {
+      if (!isValidFirestoreInstance(firestore)) {
         console.error('[DeleteRide] Firestore not initialized');
         toast({ variant: 'destructive', title: 'System Error', description: 'Database connection not available. Please refresh the page.' });
         return;
@@ -1175,89 +1354,6 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
       }
     };
 
-    const handleDriverReview = async (passengerId: string, review: 'arrived' | 'no-show') => {
-      if (!user || user.uid !== ride.driverId) {
-        toast({ variant: 'destructive', title: 'Not allowed', description: 'Only the driver can review passengers.' });
-        return;
-      }
-
-      setReviewingPassengerId(passengerId);
-      try {
-        const idToken = await user.getIdToken();
-        const response = await fetch('/api/ride-lifecycle/transition', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({
-            university,
-            rideId: ride.id,
-            action: 'driver_review',
-            passengerId,
-            review,
-          }),
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          toast({ variant: 'destructive', title: 'Review Failed', description: data.error || 'Failed to review passenger.' });
-          return;
-        }
-
-        toast({ title: 'Review Saved', description: `Marked passenger as ${review}.` });
-        trackEvent('passenger_confirmation', {
-          ride_id: ride.id,
-          passenger_id: passengerId,
-          outcome: review,
-        });
-      } catch (error: any) {
-        toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to review passenger.' });
-      } finally {
-        setReviewingPassengerId(null);
-      }
-    };
-
-    const handleMarkRideComplete = async () => {
-      if (!user || user.uid !== ride.driverId) {
-        toast({ variant: 'destructive', title: 'Not allowed', description: 'Only the driver can complete this ride.' });
-        return;
-      }
-
-      setIsCompleting(true);
-      try {
-        const idToken = await user.getIdToken();
-        const response = await fetch('/api/ride-lifecycle/transition', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({
-            university,
-            rideId: ride.id,
-            action: 'complete',
-          }),
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          toast({ variant: 'destructive', title: 'Completion Failed', description: data.error || 'Failed to complete ride.' });
-          return;
-        }
-
-        toast({ title: 'Ride Completed', description: 'Ratings are now open for this ride.' });
-        trackEvent('ride_completion', {
-          ride_id: ride.id,
-          event_action: 'ride_completed',
-        });
-      } catch (error: any) {
-        toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to complete ride.' });
-      } finally {
-        setIsCompleting(false);
-      }
-    };
-
     return (
         <>
         <Card 
@@ -1301,7 +1397,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             <CardContent className="p-0">
 
               <div className="mb-2.5 space-y-1.5" onClick={(e) => e.stopPropagation()}>
-                <RouteDialogButton ride={ride} pickupPoints={pickupPoints} />
+                <RouteDialogButton ride={ride} pickupMarkers={pickupMarkers} />
+                <div className="w-full rounded-md border border-blue-500/30 bg-blue-900/10 px-3 py-2 text-xs">
+                  <span className="text-slate-300">Time remaining: </span>
+                  <span className="text-blue-300 font-mono">{departureTimer}</span>
+                </div>
                 <div className="w-full">
                   <Button
                     onClick={openRideInGoogleMaps}
@@ -1474,7 +1574,7 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                     <CancellationConfirmDialog
                       open={showCancelDialog}
                       onOpenChange={setShowCancelDialog}
-                      cancellationRate={Number((userData as any)?.driverCancellationPolicy?.cancellationRate ?? 0)}
+                      cancellationRate={driverCancellationRate}
                       minutesUntilDeparture={(() => {
                         try {
                           if (!ride.departureTime) return 0;
@@ -1565,83 +1665,6 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
           acceptedCount={acceptedCount}
           availableSeats={availableSeats}
         />
-
-        <Dialog
-          open={showCompletionFormDialog}
-          onOpenChange={(open) => {
-            if (!open && shouldShowCompletionForm) return;
-            setShowCompletionFormDialog(open);
-          }}
-        >
-          <DialogContent
-            className="max-w-lg bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-emerald-700"
-            onInteractOutside={(e) => {
-              if (shouldShowCompletionForm) e.preventDefault();
-            }}
-            onEscapeKeyDown={(e) => {
-              if (shouldShowCompletionForm) e.preventDefault();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
-                <CheckCircle2 className="h-6 w-6 text-emerald-400" />
-                Complete Ride Form
-              </DialogTitle>
-              <DialogDescription className="text-slate-300">
-                5 minutes after departure, this form is required. Review each confirmed passenger, then mark the ride complete.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-              {confirmedBookings.map((b) => (
-                <div key={`completion-dialog-${b.id}`} className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-950/40">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <UserNameWithBadge
-                        name={b.passengerDetails?.fullName || (b.passengerDetails as any)?.displayName || 'Unknown Student'}
-                        verified={isUserVerified(b.passengerDetails)}
-                        size="sm"
-                        truncate
-                      />
-                      {b.driverReview && (
-                        <p className="text-xs text-emerald-400 mt-1">✓ Marked as {b.driverReview}</p>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        className="h-8 bg-emerald-600 hover:bg-emerald-500"
-                        disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
-                        onClick={() => handleDriverReview(b.passengerId, 'arrived')}
-                      >
-                        {reviewingPassengerId === b.passengerId ? '...' : 'Completed'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 border-red-600 text-red-400 hover:bg-red-900/20"
-                        disabled={!!b.driverReview || reviewingPassengerId === b.passengerId}
-                        onClick={() => handleDriverReview(b.passengerId, 'no-show')}
-                      >
-                        No-show
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="pt-2">
-              {isCompleting ? (
-                <p className="text-sm text-emerald-300 text-center font-medium">Submitting completion...</p>
-              ) : allPassengersReviewed ? (
-                <p className="text-sm text-emerald-300 text-center font-medium">All reviews done. Completing ride automatically...</p>
-              ) : (
-                <p className="text-xs text-amber-400 text-center">Please review all passengers. Ride will complete automatically.</p>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
         </>
     )
 }
@@ -1700,7 +1723,7 @@ export default function MyRidesPage() {
   }, []);
 
   // ── PERF: Add orderBy and limit to my-rides query ──
-  const ridesQuery = (user && firestore && userData && userData.university) ? query(
+  const ridesQuery = (user && isValidFirestoreInstance(firestore) && userData && userData.university) ? query(
     collection(firestore, 'universities', userData.university, 'rides'),
     where('driverId', '==', user.uid),
     // Note: Would prefer orderBy('departureTime', 'desc') but that requires a composite index
@@ -1884,8 +1907,16 @@ export default function MyRidesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {ridesWithStatus
           .sort((a: RideType, b: RideType) => {
-            const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt as any)?.toMillis?.() ?? 0;
-            const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt as any)?.toMillis?.() ?? 0;
+            const aTime =
+              parseTimestampToMs((a as any)?.updatedAt, { silent: true }) ??
+              parseTimestampToMs((a as any)?.createdAt, { silent: true }) ??
+              parseTimestampToMs((a as any)?.departureTime, { silent: true }) ??
+              0;
+            const bTime =
+              parseTimestampToMs((b as any)?.updatedAt, { silent: true }) ??
+              parseTimestampToMs((b as any)?.createdAt, { silent: true }) ??
+              parseTimestampToMs((b as any)?.departureTime, { silent: true }) ??
+              0;
             return bTime - aTime; // descending order
           })
           .map((ride: RideType) => (
@@ -1899,7 +1930,13 @@ export default function MyRidesPage() {
 
 
 // ---- Simple Route Dialog Button (matching my-bookings implementation) ----
-function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoints: LatLngExpression[] }) {
+function RouteDialogButton({
+  ride,
+  pickupMarkers,
+}: {
+  ride: RideType;
+  pickupMarkers: Array<{ lat: number; lng: number; label?: string }>;
+}) {
   const routeLatLngs = React.useMemo(() => {
     if (ride.routePolyline && typeof ride.routePolyline === 'string') {
       return decodePolyline(ride.routePolyline);
@@ -1929,33 +1966,30 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
   // Calculate bounds for the map
   const mapBounds = React.useMemo(() => {
     const allPoints: any[] = [...routeLatLngs];
-    pickupPoints.forEach((p: any) => {
-      if (Array.isArray(p) && p.length >= 2) {
-        allPoints.push({ lat: Number(p[0]), lng: Number(p[1]) });
-      } else if (p && typeof p.lat === 'number' && typeof p.lng === 'number') {
-        allPoints.push(p);
+    pickupMarkers.forEach((p: any) => {
+      if (p && typeof p.lat === 'number' && typeof p.lng === 'number') {
+        allPoints.push({ lat: Number(p.lat), lng: Number(p.lng) });
       }
     });
     if (allPoints.length < 2) return null;
     return L.latLngBounds(allPoints.map((p: any) => [p.lat, p.lng]));
-  }, [routeLatLngs, pickupPoints]);
+  }, [routeLatLngs, pickupMarkers]);
 
   const startLatLng = routeLatLngs.length > 0 ? routeLatLngs[0] : null;
   const endLatLng = routeLatLngs.length > 1 ? routeLatLngs[routeLatLngs.length - 1] : null;
 
-  const normalizedPickupPoints = React.useMemo(() => {
-    return pickupPoints
+  const normalizedPickupMarkers = React.useMemo(() => {
+    return pickupMarkers
       .map((point: any) => {
-        if (Array.isArray(point) && point.length >= 2) {
-          return { lat: Number(point[0]), lng: Number(point[1]) };
-        }
-        if (point && typeof point.lat === 'number' && typeof point.lng === 'number') {
-          return { lat: Number(point.lat), lng: Number(point.lng) };
-        }
-        return null;
+        if (!point || typeof point.lat !== 'number' || typeof point.lng !== 'number') return null;
+        return {
+          lat: Number(point.lat),
+          lng: Number(point.lng),
+          label: point.label || null,
+        };
       })
-      .filter(Boolean) as Array<{ lat: number; lng: number }>;
-  }, [pickupPoints]);
+      .filter(Boolean) as Array<{ lat: number; lng: number; label: string | null }>;
+  }, [pickupMarkers]);
 
   return (
     <Dialog>
@@ -1990,18 +2024,18 @@ function RouteDialogButton({ ride, pickupPoints }: { ride: RideType, pickupPoint
                 <Polyline positions={routePath as any} pathOptions={{ color: '#60A5FA', weight: 5, opacity: 0.9 }} />
               )}
               {startLatLng && (
-                <Marker position={[startLatLng.lat, startLatLng.lng] as any}>
+                <Marker position={[startLatLng.lat, startLatLng.lng] as any} icon={getRoutePinIcon('start')}>
                   <Popup>Start</Popup>
                 </Marker>
               )}
               {endLatLng && (
-                <Marker position={[endLatLng.lat, endLatLng.lng] as any}>
+                <Marker position={[endLatLng.lat, endLatLng.lng] as any} icon={getRoutePinIcon('end')}>
                   <Popup>Destination</Popup>
                 </Marker>
               )}
-              {normalizedPickupPoints.map((point, idx) => (
-                <Marker key={`pickup-${idx}`} position={[point.lat, point.lng] as any}>
-                  <Popup>Passenger {isFromUniversity ? 'Dropoff' : 'Pickup'} {idx + 1}</Popup>
+              {normalizedPickupMarkers.map((point, idx) => (
+                <Marker key={`pickup-${idx}`} position={[point.lat, point.lng] as any} icon={getRoutePinIcon('pickup')}>
+                  <Popup>{point.label || `Passenger ${isFromUniversity ? 'Dropoff' : 'Pickup'}`}</Popup>
                 </Marker>
               ))}
             </MapContainer>

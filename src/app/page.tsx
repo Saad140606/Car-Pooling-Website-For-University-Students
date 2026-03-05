@@ -16,7 +16,7 @@ export default function Home() {
   const structuredData = {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
-    name: 'Campus Ride',
+    name: 'Campus Rides',
     url: SITE_URL,
     potentialAction: {
       '@type': 'SearchAction',
@@ -65,7 +65,7 @@ export default function Home() {
                 Student-first carpooling
               </div>
               <h1 className="font-headline text-4xl leading-tight tracking-tight sm:text-5xl md:text-6xl text-slate-50 animate-slide-in-down bg-gradient-to-br from-slate-50 via-slate-100 to-slate-300 bg-clip-text text-transparent">
-                Campus Ride — Your University Carpooling Platform
+                Campus Rides — Your University Carpooling Platform
               </h1>
               <p className="max-w-2xl text-lg text-slate-300 animate-slide-in-down leading-relaxed" style={{ animationDelay: '100ms' }}>
                 Safe, student-only carpooling platform. Find or offer rides within your trusted campus community.

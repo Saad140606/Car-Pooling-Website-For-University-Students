@@ -201,14 +201,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
               
               addPremiumNotification(premiumNotif);
               
-              // Play notification sound (unless it's a call notification which has its own ringtone)
-              if (!latestNotification.type.includes('call')) {
-                try {
-                  ringtoneManager.playNotificationSound();
+              // Play sound/vibration for all notifications. Calls use ringtone for stronger alerting.
+              try {
+                if (latestNotification.type.includes('call_incoming')) {
+                  void ringtoneManager.playRingtone();
+                  ringtoneManager.vibrate([200, 120, 200, 120, 200]);
+                } else {
+                  void ringtoneManager.playNotificationSound();
                   ringtoneManager.vibrate([100, 50, 100]);
-                } catch (error) {
-                  console.error('[NotificationProvider] Sound error:', error);
                 }
+              } catch (error) {
+                console.error('[NotificationProvider] Sound error:', error);
               }
             }
             
@@ -257,15 +260,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         }
 
         if (notification) {
-          // Play notification sound (except for call notifications)
+          // Play notification sound/ringtone
           const notificationType = data?.type || 'info';
-          if (!notificationType.includes('call_incoming')) {
-            try {
-              ringtoneManager.playNotificationSound();
+          try {
+            if (notificationType.includes('call_incoming')) {
+              void ringtoneManager.playRingtone();
+              ringtoneManager.vibrate([250, 120, 250, 120, 250]);
+            } else {
+              void ringtoneManager.playNotificationSound();
               ringtoneManager.vibrate([200, 100, 200]);
-            } catch (error) {
-              console.error('[NotificationProvider] Sound/vibrate error:', error);
             }
+          } catch (error) {
+            console.error('[NotificationProvider] Sound/vibrate error:', error);
           }
 
           // Create premium notification
@@ -293,7 +299,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                 badge: notification.badge || '/badge.png',
                 tag: data?.relatedId || 'notification',
                 requireInteraction: notificationType === 'call_incoming' || data?.priority === 'critical',
-                silent: notificationType.includes('call'), // Don't play system sound for calls
+                silent: false,
               });
               
               // Auto-close system notification after 10 seconds (except for calls)

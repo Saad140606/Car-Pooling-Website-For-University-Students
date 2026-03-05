@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-export const SITE_URL = 'https://campusrides.virtual.app';
+export const SITE_URL = 'https://campusrides.vercel.app';
 
 export const SEO_TARGET_KEYWORDS = [
   'Fast University carpool',
@@ -54,6 +54,55 @@ export const SEO_PAGES: SeoPageConfig[] = [
     description:
       'Contact Campus Ride support for FAST, NED, and Karachi University carpool help.',
     keywords: ['carpool support', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/select-university',
+    title: 'Select University | Campus Ride Login & Signup',
+    description:
+      'Choose FAST, NED, or Karachi University to continue with Campus Ride login or signup.',
+    keywords: ['select university', 'campus ride login', 'campus ride signup', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/fast/login',
+    title: 'FAST Login | Campus Ride',
+    description:
+      'Login to Campus Ride for FAST University student carpool access.',
+    keywords: ['FAST login', 'student login', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/fast/register',
+    title: 'FAST Signup | Campus Ride',
+    description:
+      'Create your Campus Ride account for FAST University carpools.',
+    keywords: ['FAST signup', 'student signup', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/ned/login',
+    title: 'NED Login | Campus Ride',
+    description:
+      'Login to Campus Ride for NED University student carpool access.',
+    keywords: ['NED login', 'student login', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/ned/register',
+    title: 'NED Signup | Campus Ride',
+    description:
+      'Create your Campus Ride account for NED University carpools.',
+    keywords: ['NED signup', 'student signup', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/karachi/login',
+    title: 'Karachi University Login | Campus Ride',
+    description:
+      'Login to Campus Ride for University of Karachi student carpool access.',
+    keywords: ['University of Karachi login', 'student login', ...SEO_TARGET_KEYWORDS],
+  },
+  {
+    path: '/auth/karachi/register',
+    title: 'Karachi University Signup | Campus Ride',
+    description:
+      'Create your Campus Ride account for University of Karachi carpools.',
+    keywords: ['University of Karachi signup', 'student signup', ...SEO_TARGET_KEYWORDS],
   },
 ];
 

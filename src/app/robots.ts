@@ -6,10 +6,26 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: ['/', '/rides', '/how-it-works', '/about', '/contact-us', '/terms'],
+        allow: [
+          '/',
+          '/rides',
+          '/how-it-works',
+          '/about',
+          '/contact-us',
+          '/terms',
+          '/auth/select-university',
+          '/auth/fast/login',
+          '/auth/fast/register',
+          '/auth/ned/login',
+          '/auth/ned/register',
+          '/auth/karachi/login',
+          '/auth/karachi/register',
+        ],
         disallow: [
           '/dashboard/',
-          '/auth/',
+          '/auth/forgot-password',
+          '/auth/reset-password/',
+          '/auth/verify-email',
           '/admin-dashboard/',
           '/debug/',
           '/api/',

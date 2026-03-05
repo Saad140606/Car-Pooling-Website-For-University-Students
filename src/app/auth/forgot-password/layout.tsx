@@ -3,11 +3,11 @@ import type { ReactNode } from 'react';
 
 export const metadata: Metadata = {
   robots: {
-    index: true,
-    follow: true,
+    index: false,
+    follow: false,
   },
 };
 
-export default function AuthLayout({ children }: { children: ReactNode }) {
+export default function ForgotPasswordLayout({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }

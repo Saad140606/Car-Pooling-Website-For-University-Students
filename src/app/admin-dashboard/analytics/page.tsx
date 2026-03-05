@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { BarChart3, TrendingUp, Calendar, Download, Filter } from "lucide-react";
 import { useAdminAnalytics } from "@/hooks/useAdminAnalytics";
 
-export default function AdminAnalyticsPage() {
+function AdminAnalyticsContent() {
   const analytics = useAdminAnalytics();
   const [timeRange, setTimeRange] = useState<"7d" | "30d" | "90d">("7d");
   const [university, setUniversity] = useState<"all" | "fast" | "ned" | "karachi">("all");
@@ -225,6 +225,23 @@ export default function AdminAnalyticsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AdminAnalyticsPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen bg-slate-950">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-slate-700 border-t-primary rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-slate-400">Loading analytics...</p>
+          </div>
+        </div>
+      }
+    >
+      <AdminAnalyticsContent />
+    </React.Suspense>
   );
 }
 

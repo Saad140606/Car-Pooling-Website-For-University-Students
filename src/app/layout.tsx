@@ -1,4 +1,5 @@
 import type {Metadata, Viewport} from 'next';
+import { Suspense } from 'react';
 import { Inter, Space_Grotesk } from 'next/font/google';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
@@ -118,7 +119,9 @@ export default function RootLayout({
       <body className="font-body antialiased">
         <SafeConsolePatch />
         <PWAServiceWorkerRegistration />
-        <GoogleAnalytics />
+        <Suspense fallback={null}>
+          <GoogleAnalytics />
+        </Suspense>
         <GlobalErrorBoundary>
           <FirebaseClientProvider>
             <ClientSideProviders>

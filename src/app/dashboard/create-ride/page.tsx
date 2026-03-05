@@ -34,6 +34,7 @@ import { FirestorePermissionError } from '@/firebase/errors';
 import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
 import { getActiveRideLock, formatRideLockMessage } from '@/lib/rideActionLock';
 import { createMapPin } from '@/components/map';
+import { trackEvent } from '@/lib/ga';
 
 const StopsViewer = dynamic(() => import('@/components/StopsViewer'), {
   ssr: false,
@@ -2245,6 +2246,14 @@ export default function CreateRidePage() {
         }
 
       console.debug('Ride created successfully - notifying user');
+      trackEvent('ride_booking', {
+        event_action: 'ride_created',
+        ride_id: createdRideId,
+        university: universityId,
+        transport_mode: values.transportMode,
+        seats: values.totalSeats,
+        price: values.price,
+      });
       toast({ title: 'Success!', description: 'Your ride has been created. Redirecting to My Rides...' });
       
       // CRITICAL: Wait for Firestore replication before redirecting to My Rides
@@ -2285,6 +2294,10 @@ export default function CreateRidePage() {
           : (e?.message || 'An error occurred while creating the ride.');
         
         toast({ variant: 'destructive', title: 'Could not create ride', description: errorMsg });
+        trackEvent('ride_booking_failed', {
+          university: universityId,
+          error_code: e?.code || 'unknown',
+        });
 
         // Emit the permission error for developer visibility, but do it asynchronously so the UI can update first
         try {

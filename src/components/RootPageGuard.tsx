@@ -22,7 +22,6 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [hasSessionHint] = useState(() => !!getStoredSession()?.uid);
-  const verificationHandledRef = useRef(false);
   const dashboardRedirectHandledUidRef = useRef<string | null>(null);
   const preAuthRedirectTriggeredRef = useRef(false);
 
@@ -40,34 +39,11 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
       // If still loading, wait
       if (loading) return;
 
-      // If user is authenticated, handle email verification before routing to dashboard
+      // If user is authenticated, route to dashboard.
+      // Email verification is enforced in explicit auth flows to avoid
+      // false re-verification loops caused by stale/misaligned profile reads.
       if (user) {
         preAuthRedirectTriggeredRef.current = false;
-        const isVerified = Boolean((userData as any)?.universityEmailVerified);
-        const university = (userData as any)?.university || null;
-
-        if (university && !isVerified && !verificationHandledRef.current) {
-          verificationHandledRef.current = true;
-          setIsRedirecting(true);
-          // Send OTP for verification
-          try {
-            await fetch('/api/send-signup-otp', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uid: user.uid, email: user.email, university }),
-            });
-          } catch (_) {
-            // ignore OTP send errors; verify page can resend
-          }
-
-          // Sign out to prevent access until verified
-          try {
-            await auth?.signOut();
-          } catch (_) {}
-
-          router.replace(`/auth/verify-email?email=${encodeURIComponent(user.email || '')}&university=${university}&uid=${user.uid}`);
-          return;
-        }
 
         if (dashboardRedirectHandledUidRef.current === user.uid) {
           return;
@@ -88,7 +64,7 @@ export function RootPageGuard({ children }: { children: React.ReactNode }) {
     };
 
     run();
-  }, [initialized, loading, user, userData, auth, router, hasSessionHint]);
+  }, [initialized, loading, user, auth, router, hasSessionHint]);
 
   // CRITICAL: Return null during auth check (invisible to user)
   // This prevents the Home page from rendering and being discarded

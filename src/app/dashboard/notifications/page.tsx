@@ -19,6 +19,7 @@ import {
 import type { Notification } from '@/types/notification';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
+import { trackEvent } from '@/lib/ga';
 
 const NOTIFICATION_ICONS = {
   ride_requested: MapPin,
@@ -80,6 +81,21 @@ export default function NotificationsPage() {
   const unreadCount = useMemo(() => allNotifications.filter((n) => !n.isRead).length, [allNotifications]);
 
   useEffect(() => {
+    if (!allNotifications.length) return;
+
+    const started = allNotifications.filter((notification) => notification.type === 'ride_started').length;
+    const completed = allNotifications.filter((notification) => notification.type === 'ride_completed').length;
+    const cancelled = allNotifications.filter((notification) => notification.type === 'ride_cancelled').length;
+
+    trackEvent('notification_feed_loaded', {
+      total_notifications: allNotifications.length,
+      ride_started_notifications: started,
+      ride_completed_notifications: completed,
+      ride_cancelled_notifications: cancelled,
+    });
+  }, [allNotifications]);
+
+  useEffect(() => {
     if (!user?.uid) return;
     if (contextUnreadCount.total <= 0) {
       markNotificationsAsViewed();
@@ -89,6 +105,9 @@ export default function NotificationsPage() {
     const timer = window.setTimeout(() => {
       markAllAsRead().catch(() => {});
       markNotificationsAsViewed();
+      trackEvent('notifications_viewed', {
+        unread_count: contextUnreadCount.total,
+      });
     }, 250);
 
     return () => window.clearTimeout(timer);

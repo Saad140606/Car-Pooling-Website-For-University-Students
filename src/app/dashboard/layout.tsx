@@ -20,6 +20,7 @@ import FeedbackPromptsManager from '@/components/feedback/FeedbackPromptsManager
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { useActivityIndicator } from '@/contexts/ActivityIndicatorContext';
 import { ActivityDot } from '@/components/ActivityIndicatorDot';
+import { trackEvent } from '@/lib/ga';
 
 const navItems = [
   { href: '/dashboard/rides', icon: Search, label: 'Find a Ride' },
@@ -50,10 +51,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const { toast } = useToast();
   const [layoutError, setLayoutError] = useState<string | null>(null);
-  const [verificationChecked, setVerificationChecked] = useState(false);
-
-  // ═══ PERF: Cache verification status in sessionStorage to avoid repeated checks ═══
-  const VERIFICATION_CACHE_KEY = 'campus_rides_verification_checked';
   // Mark sections as viewed when navigating to them
   useEffect(() => {
     if (pathname === '/dashboard/my-rides') {
@@ -72,67 +69,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     markAnalyticsAsViewed,
     markNotificationsAsViewed,
   ]);
-  useEffect(() => {
-    if (!user || !userData || !initialized || !firestore) return;
-    
-    // Check cache first (per session)
-    if (sessionStorage.getItem(VERIFICATION_CACHE_KEY)) {
-      setVerificationChecked(true);
-      return;
-    }
-
-    const checkVerification = async () => {
-      try {
-        const university = userData?.university;
-        if (!university || (university !== 'ned' && university !== 'fast')) {
-          console.warn('[Dashboard] Invalid university in userData:', university);
-          setVerificationChecked(true);
-          return;
-        }
-
-        const { doc, getDoc } = await import('firebase/firestore');
-        const userDocRef = doc(firestore, 'universities', university, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-        
-        if (!userDoc.exists()) {
-          console.error('[Dashboard] User document not found');
-          setVerificationChecked(true);
-          return;
-        }
-
-        const profile = userDoc.data();
-        const emailVerified = Boolean(profile?.universityEmailVerified);
-
-        if (!emailVerified) {
-          console.log('[Dashboard] Unverified user detected, redirecting to verification');
-          toast({
-            variant: 'destructive',
-            title: 'Email Verification Required',
-            description: 'Please verify your email to access the dashboard.',
-          });
-          
-          try {
-            await auth?.signOut();
-          } catch (e) {
-            console.error('[Dashboard] Failed to sign out unverified user:', e);
-          }
-          
-          router.replace(`/auth/verify-email?email=${encodeURIComponent(user.email || '')}&university=${university}&uid=${user.uid}`);
-          return;
-        }
-
-        // ── PERF: Cache verification success ──
-        sessionStorage.setItem(VERIFICATION_CACHE_KEY, 'true');
-        setVerificationChecked(true);
-      } catch (error) {
-        console.error('[Dashboard] Verification check failed:', error);
-        setVerificationChecked(true);
-      }
-    };
-
-    checkVerification();
-  }, [user, userData, initialized, firestore, auth, router, toast]);
-  // ===== END VERIFICATION CHECK =====
+  // Verification enforcement is handled during sign-in/register flows.
+  // Avoid route-level OTP resend/redirect loops from transient profile state.
 
   // Auth redirect logic - only redirect unauthenticated users to login for certain pages
   useEffect(() => {
@@ -157,6 +95,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     try {
       if (auth) {
         await auth.signOut();
+        trackEvent('logout', {
+          from_path: pathname || '/dashboard',
+        });
         router.push('/');
       }
     } catch (error) {

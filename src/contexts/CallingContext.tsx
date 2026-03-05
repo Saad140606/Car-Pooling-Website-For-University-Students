@@ -5,7 +5,6 @@ import { webrtcCallingService, type CallData, type CallType } from '@/lib/webrtc
 import { useFirestore } from '@/firebase';
 import { useUser } from '@/firebase/auth/use-user';
 import { notifyMissedCall } from '@/lib/rideNotificationService';
-import { useNotifications } from '@/contexts/NotificationContext';
 
 interface CallingContextType {
   currentCall: CallData | null;
@@ -45,11 +44,12 @@ export function CallingProvider({ children }: { children: React.ReactNode }) {
 
   // Initialize calling service
   useEffect(() => {
-    if (firestore && user?.uid) {
-      webrtcCallingService.initialize(firestore, user.uid);
+    const university = (userData as any)?.university || null;
+    if (firestore && user?.uid && university) {
+      webrtcCallingService.initialize(firestore, user.uid, university);
       console.debug('[CallingProvider] Initialized for user:', user.uid);
     }
-  }, [firestore, user?.uid]);
+  }, [firestore, user?.uid, userData]);
 
   // Handle missed call detection
   const handleMissedCall = useCallback(async (call: CallData) => {

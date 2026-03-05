@@ -12,6 +12,7 @@ import Logo from '@/components/logo';
 import { ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getSelectedUniversity, isValidUniversity, University } from '@/lib/university';
+import { trackEvent } from '@/lib/ga';
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -120,6 +121,9 @@ export default function ForgotPasswordPage() {
       toast({
         title: 'Code Sent!',
         description: 'Check your email for the verification code',
+      });
+      trackEvent('password_reset_request', {
+        university: selectedUniversity,
       });
 
       // Navigate to code verification page and pass email

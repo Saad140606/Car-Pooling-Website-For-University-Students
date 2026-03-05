@@ -28,6 +28,7 @@ import { CancellationConfirmDialog } from '@/components/CancellationConfirmDialo
 import { BookingDetailDialog } from './BookingDetailDialog';
 import { decodePolyline } from '@/lib/route';
 import { parseTimestampToMs } from '@/lib/timestampUtils';
+import { trackEvent } from '@/lib/ga';
 
 const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
   ssr: false,
@@ -250,6 +251,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         title: 'Success',
         description: 'Ride confirmed! Driver can now pick you up.'
       });
+      trackEvent('ride_acceptance', {
+        event_action: 'passenger_confirmed',
+        ride_id: booking.rideId || ride.id,
+        booking_id: booking.id,
+      });
       
       checkRideStatus();
     } catch (err: any) {
@@ -371,6 +377,11 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
       toast({
         title: 'Booking Cancelled',
         description: 'Your booking has been cancelled and the seat has been released.'
+      });
+      trackEvent('ride_cancellation', {
+        event_action: 'passenger_cancelled',
+        ride_id: ride.id,
+        booking_id: booking.id,
       });
 
       // Update local state

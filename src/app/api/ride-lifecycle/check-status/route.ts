@@ -166,9 +166,16 @@ export async function POST(request: NextRequest) {
             });
           }
 
-          for (const passenger of confirmedPassengers) {
-            const passengerId = typeof passenger === 'string' ? passenger : passenger.userId;
-            if (!passengerId) continue;
+          const passengerIds = Array.from(new Set(
+            confirmedPassengers
+              .map((passenger: any) => {
+                if (typeof passenger === 'string') return passenger;
+                return passenger?.userId || passenger?.passengerId || passenger?.uid || null;
+              })
+              .filter(Boolean)
+          ));
+
+          for (const passengerId of passengerIds) {
 
             await adminDb.collection(`universities/${university}/notifications`).add({
               userId: passengerId,
@@ -245,8 +252,16 @@ export async function POST(request: NextRequest) {
           }
 
           // Notify passengers
-          for (const passenger of confirmedPassengers) {
-            const passengerId = typeof passenger === 'string' ? passenger : passenger.userId;
+          const passengerIds = Array.from(new Set(
+            confirmedPassengers
+              .map((passenger: any) => {
+                if (typeof passenger === 'string') return passenger;
+                return passenger?.userId || passenger?.passengerId || passenger?.uid || null;
+              })
+              .filter(Boolean)
+          ));
+
+          for (const passengerId of passengerIds) {
             if (passengerId) {
               await adminDb.collection(`universities/${university}/notifications`).add({
                 userId: passengerId,

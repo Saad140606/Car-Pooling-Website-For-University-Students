@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import {
   ArrowRight,
@@ -22,6 +23,9 @@ import { SiteHeader } from '@/components/SiteHeader';
 import { Reveal } from '@/components/Reveal';
 import { AnimatedCard } from '@/components/AnimatedCard';
 import { AnimatedButton } from '@/components/AnimatedButton';
+import { buildSeoMetadata } from '@/config/seo';
+
+export const metadata: Metadata = buildSeoMetadata('/how-it-works');
 
 type Step = {
   label: string;

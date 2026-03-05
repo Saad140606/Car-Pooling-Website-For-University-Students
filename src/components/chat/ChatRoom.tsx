@@ -326,20 +326,26 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
         return;
       }
       const data = snap.data();
-      // If there's an offer and we're not already in a call, show incoming ringing UI
-      if (data.offer && !inCall) {
-        const incomingCaller = data.callerId || data.caller;
-        const incomingMode = data.callType || data.mode || 'audio';
+      const incomingCaller = data.callerId || data.caller;
+      const incomingReceiver = data.receiverId || data.callee;
+      const incomingMode = data.callType || data.mode || 'audio';
+      const isReceiver = !!user?.uid && incomingReceiver === user.uid;
+      const isRinging = (data.status || 'ringing') === 'ringing';
+
+      // Only the intended receiver should ring.
+      if (data.offer && isReceiver && isRinging && !inCall) {
         setIncomingCall({ caller: incomingCaller, mode: incomingMode });
-        // play ringtone & vibrate
         playRingtone();
+      } else {
+        setIncomingCall(null);
+        stopRingtone();
       }
     }, (err) => {
       // ignore
     });
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firestore, normalizedUniversity, activeChatId, inCall]);
+  }, [firestore, normalizedUniversity, activeChatId, inCall, user?.uid]);
 
   const handleMediaError = (error: any) => {
     const name = error?.name || '';
@@ -1034,7 +1040,7 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
       {/* Messages area with gradient background */}
       <div className="relative flex-1 overflow-hidden">
         {inCall && callMode === 'video' && (
-          <div className="absolute inset-0 z-40 bg-black/90 flex flex-col">
+          <div className="fixed inset-0 z-[140] bg-black/95 flex flex-col">
             <div className="relative flex-1">
               <video
                 ref={remoteVideoRef}
@@ -1086,12 +1092,13 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
         )}
 
         {inCall && callMode === 'audio' && (
-          <div className="absolute inset-x-0 bottom-0 z-40 bg-slate-950/90 border-t border-slate-800 px-4 py-3 flex items-center justify-between gap-3">
+          <div className="fixed inset-0 z-[140] bg-black/95 flex items-center justify-center">
+            <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-950/90 px-5 py-6 shadow-2xl">
             <div>
               <div className="text-sm text-slate-100 font-medium">Audio call</div>
               <div className="text-xs text-slate-400">{isConnecting ? 'Connecting...' : 'Connected'}</div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="mt-5 flex items-center justify-center gap-3">
               <button
                 onClick={toggleMute}
                 className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
@@ -1108,6 +1115,7 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
               >
                 <PhoneOff className="h-4 w-4" />
               </button>
+            </div>
             </div>
           </div>
         )}
@@ -1179,7 +1187,7 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
       
       {/* Incoming call overlay */}
       {incomingCall && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 backdrop-blur-sm bg-black/50">
+        <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-[150] backdrop-blur-sm bg-black/60">
           <div className="bg-gradient-to-br from-slate-800 to-slate-900 text-white p-6 sm:p-8 rounded-2xl shadow-2xl pointer-events-auto flex flex-col sm:flex-row items-center gap-6 mx-4 max-w-md border border-slate-700 animate-in zoom-in duration-300">
             <div className="text-center sm:text-left space-y-2">
               <div className="h-16 w-16 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-white text-xl font-bold mx-auto sm:mx-0 animate-pulse">

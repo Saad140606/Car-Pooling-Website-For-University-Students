@@ -78,7 +78,11 @@ export async function POST(req: NextRequest) {
         .get();
 
       if (fallbackQuery.empty) {
-        return errorResponse('Request not found for current user', 403);
+        console.warn('[RideRequestNotification] Request not found yet; proceeding with best-effort notification', {
+          university: validUniversity,
+          rideId,
+          authenticatedUserId,
+        });
       }
     }
 

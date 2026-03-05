@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SiteHeader } from '@/components/SiteHeader';
 import { Reveal } from '@/components/Reveal';
+import { trackEvent } from '@/lib/ga';
 
 export default function ContactUsPage() {
   const { user, data: userData } = useUser();
@@ -45,10 +46,17 @@ export default function ContactUsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Failed');
       toast({ title: 'Message sent', description: 'Thanks, we will get back to you shortly.' });
+      trackEvent('feedback_submit', {
+        category: 'contact_message',
+        logged_in: !!user,
+      });
       setMessage('');
       setSent(true);
     } catch (err: any) {
       console.error('Contact submit failed', err);
+      trackEvent('feedback_submit_failed', {
+        category: 'contact_message',
+      });
       toast({ variant: 'destructive', title: 'Could not send message', description: err?.message || 'Try again later.' });
     } finally {
       setSending(false);

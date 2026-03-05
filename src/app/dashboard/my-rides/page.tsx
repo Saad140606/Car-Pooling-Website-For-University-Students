@@ -31,6 +31,7 @@ import { RideDetailDialog } from './RideDetailDialog';
 import { useRideLifecycleMonitor } from '@/hooks/useRideLifecycleMonitor';
 import { LIFECYCLE_CONFIG } from '@/config/lifecycle';
 import React from 'react';
+import { trackEvent } from '@/lib/ga';
 
 // Small helper: truncate string to n characters with ellipsis
 function truncateChars(s?: string | null, n = 30) {
@@ -263,6 +264,11 @@ function BookingRequests({ ride, university, onProcessed }: { ride: RideType, un
       toast({
         title: `Booking ${newStatus}`,
         description: `The request has been ${newStatus}.`
+      });
+      trackEvent('ride_acceptance', {
+        event_action: newStatus === 'accepted' ? 'driver_accepted' : 'driver_rejected',
+        ride_id: ride.id || booking.rideId,
+        booking_id: booking.id,
       });
 
     } catch (error) {
@@ -1133,6 +1139,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
             ? `${passengersAffected} passenger${passengersAffected > 1 ? 's have' : ' has'} been notified.`
             : 'Ride has been cancelled successfully.' 
         });
+        trackEvent('ride_cancellation', {
+          event_action: 'driver_cancelled',
+          ride_id: ride.id,
+          passengers_affected: passengersAffected,
+        });
         setShowCancelDialog(false);
         
       } catch (apiErr: any) {
@@ -1195,6 +1206,11 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
         }
 
         toast({ title: 'Review Saved', description: `Marked passenger as ${review}.` });
+        trackEvent('passenger_confirmation', {
+          ride_id: ride.id,
+          passenger_id: passengerId,
+          outcome: review,
+        });
       } catch (error: any) {
         toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to review passenger.' });
       } finally {
@@ -1231,6 +1247,10 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
         }
 
         toast({ title: 'Ride Completed', description: 'Ratings are now open for this ride.' });
+        trackEvent('ride_completion', {
+          ride_id: ride.id,
+          event_action: 'ride_completed',
+        });
       } catch (error: any) {
         toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to complete ride.' });
       } finally {

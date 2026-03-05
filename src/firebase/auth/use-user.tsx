@@ -23,6 +23,7 @@ export function useUser() {
   const lockCheckInProgressRef = useRef(false);
   const lastLockToastKeyRef = useRef<string | null>(null);
   const { toast } = useToast();
+  const [resolvedUniversity, setResolvedUniversity] = useState<'ned' | 'fast' | 'karachi' | null>(null);
 
   useEffect(() => {
     if (!auth) {
@@ -119,9 +120,54 @@ export function useUser() {
     return () => unsubscribe();
   }, [auth, firestore]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveUniversity = async () => {
+      if (!firestore || !user?.uid) {
+        setResolvedUniversity(null);
+        return;
+      }
+
+      const preferredOrder = [
+        getSelectedUniversity(),
+        getPendingUniversity(),
+        'fast',
+        'ned',
+        'karachi',
+      ].filter((value, index, arr): value is 'ned' | 'fast' | 'karachi' => {
+        return !!value && (value === 'ned' || value === 'fast' || value === 'karachi') && arr.indexOf(value) === index;
+      });
+
+      for (const uni of preferredOrder) {
+        try {
+          const snap = await getDoc(doc(firestore, 'universities', uni, 'users', user.uid));
+          if (snap.exists()) {
+            if (!cancelled) {
+              setResolvedUniversity(uni);
+              setSelectedUniversity(uni);
+            }
+            return;
+          }
+        } catch (_) {
+          // try next university
+        }
+      }
+
+      const fallback = getSelectedUniversity() || getPendingUniversity() || 'fast';
+      if (!cancelled) setResolvedUniversity(fallback as 'ned' | 'fast' | 'karachi');
+    };
+
+    void resolveUniversity();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, user?.uid]);
+
   // User profile subscription via useDoc (real-time)
-  // CRITICAL: Use selected university if available, else pending (from auth portal), else default to fast
-  const userUniversity = user ? (getSelectedUniversity() || getPendingUniversity() || 'fast') : null;
+  // CRITICAL: Prefer resolved university from existing documents to avoid
+  // reading the wrong university profile.
+  const userUniversity = user ? (resolvedUniversity || getSelectedUniversity() || getPendingUniversity() || 'fast') : null;
   const userRef = user && firestore ? doc(firestore, 'universities', userUniversity || 'fast', 'users', user.uid) : null;
   const { data: userData, loading: userLoading, error: userError } = useDoc<UserProfile>(userRef);
 

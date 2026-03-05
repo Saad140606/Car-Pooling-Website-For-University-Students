@@ -44,6 +44,7 @@ class WebRTCCallingService {
   private currentCall: CallData | null = null;
   private firestore: Firestore | null = null;
   private currentUserId: string | null = null;
+  private universityId: string | null = null;
   private listeners: CallListener = {};
   private callTimeout: number | null = null;
   private hasNotifiedConnected = false;
@@ -61,10 +62,21 @@ class WebRTCCallingService {
   /**
    * Initialize the calling service
    */
-  initialize(firestore: Firestore, userId: string): void {
+  initialize(firestore: Firestore, userId: string, universityId?: string | null): void {
     this.firestore = firestore;
     this.currentUserId = userId;
+    this.universityId = universityId || this.universityId;
     console.debug('[WebRTCCalling] Service initialized for user:', userId);
+  }
+
+  private getCallsCollection() {
+    if (!this.firestore || !this.universityId) return null;
+    return collection(this.firestore, 'universities', this.universityId, 'calls');
+  }
+
+  private getCallDoc(callId: string) {
+    if (!this.firestore || !this.universityId) return null;
+    return doc(this.firestore, 'universities', this.universityId, 'calls', callId);
   }
 
   /**
@@ -202,7 +214,7 @@ class WebRTCCallingService {
     callerVerified?: boolean,
     rideId?: string
   ): Promise<CallData> {
-    if (!this.firestore || !this.currentUserId) {
+    if (!this.firestore || !this.currentUserId || !this.universityId) {
       throw new Error('Service not initialized');
     }
 
@@ -239,7 +251,11 @@ class WebRTCCallingService {
         rideId: rideId,
       };
 
-      const callRef = await addDoc(collection(this.firestore, 'calls'), callData);
+      const callsCollection = this.getCallsCollection();
+      if (!callsCollection) {
+        throw new Error('Calls collection not available');
+      }
+      const callRef = await addDoc(callsCollection, callData);
       this.currentCall = { id: callRef.id, ...callData, createdAt: new Date() };
       this.hasNotifiedConnected = false;
       this.iceRole = 'caller';
@@ -269,13 +285,16 @@ class WebRTCCallingService {
    * Listen for incoming calls
    */
   subscribeToIncomingCalls(onIncoming: (call: CallData) => void): () => void {
-    if (!this.firestore || !this.currentUserId) {
+    if (!this.firestore || !this.currentUserId || !this.universityId) {
       console.warn('[WebRTCCalling] Service not initialized for incoming calls');
       return () => {};
     }
 
+    const callsCollection = this.getCallsCollection();
+    if (!callsCollection) return () => {};
+
     const q = query(
-      collection(this.firestore, 'calls'),
+      callsCollection,
       where('receiverId', '==', this.currentUserId),
       where('status', '==', 'ringing')
     );
@@ -323,7 +342,7 @@ class WebRTCCallingService {
    * Accept incoming call
    */
   async acceptCall(callId: string, callType: CallType): Promise<void> {
-    if (!this.firestore) {
+    if (!this.firestore || !this.universityId) {
       throw new Error('Service not initialized');
     }
 
@@ -342,7 +361,8 @@ class WebRTCCallingService {
       console.debug('[WebRTCCalling] Accepting call:', callId);
 
       // Get offer from call document first (before creating local stream)
-      const callDoc = doc(this.firestore, 'calls', callId);
+      const callDoc = this.getCallDoc(callId);
+      if (!callDoc) throw new Error('Call document not available');
       const callSnapshot = await getDoc(callDoc);
       const callData = callSnapshot.data() as any;
       
@@ -428,13 +448,14 @@ class WebRTCCallingService {
    * Reject incoming call
    */
   async rejectCall(callId: string): Promise<void> {
-    if (!this.firestore) return;
+    if (!this.firestore || !this.universityId) return;
 
     // Stop ringtone when rejecting
     ringtoneManager.stopRingtone();
 
     try {
-      const callDoc = doc(this.firestore, 'calls', callId);
+      const callDoc = this.getCallDoc(callId);
+      if (!callDoc) return;
       await updateDoc(callDoc, {
         status: 'rejected',
         endedAt: serverTimestamp(),
@@ -468,9 +489,10 @@ class WebRTCCallingService {
     }
 
     // Update call status in Firestore
-    if (this.firestore && this.currentCall) {
+    if (this.firestore && this.currentCall && this.universityId) {
       try {
-        const callDoc = doc(this.firestore, 'calls', this.currentCall.id);
+        const callDoc = this.getCallDoc(this.currentCall.id);
+        if (!callDoc) throw new Error('Call document not available');
         await updateDoc(callDoc, {
           status: 'ended',
           endedAt: serverTimestamp(),
@@ -495,10 +517,11 @@ class WebRTCCallingService {
    * Save ICE candidate
    */
   private async saveICECandidate(callId: string, candidate: RTCIceCandidate, role: 'caller' | 'callee'): Promise<void> {
-    if (!this.firestore) return;
+    if (!this.firestore || !this.universityId) return;
 
     try {
-      const callDoc = doc(this.firestore, 'calls', callId);
+      const callDoc = this.getCallDoc(callId);
+      if (!callDoc) return;
       const target = role === 'callee' ? 'calleeCandidates' : 'callerCandidates';
       
       const candidateData = this.serializeCandidate(candidate);
@@ -527,11 +550,12 @@ class WebRTCCallingService {
    * Listen for call updates and remote ICE candidates
    */
   private listenForCallUpdates(callId: string, role: 'caller' | 'callee'): void {
-    if (!this.firestore || !this.peerConnection) return;
+    if (!this.firestore || !this.peerConnection || !this.universityId) return;
 
     this.cleanupSignaling();
 
-    const callDoc = doc(this.firestore, 'calls', callId);
+    const callDoc = this.getCallDoc(callId);
+    if (!callDoc) return;
     
     this.callDocUnsub = onSnapshot(callDoc, async (snap) => {
       try {

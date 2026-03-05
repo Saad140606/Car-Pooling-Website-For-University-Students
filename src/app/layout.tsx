@@ -8,6 +8,8 @@ import ClientSideProviders from '@/components/ClientSideProviders';
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 import SafeConsolePatch from '@/components/SafeConsolePatch';
 import { PWAServiceWorkerRegistration } from '@/components/pwa/PWAServiceWorkerRegistration';
+import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
+import { SEO_TARGET_KEYWORDS, SITE_URL } from '@/config/seo';
 
 // Client-side providers moved into a client component to satisfy next/dynamic SSR rules.
 
@@ -39,8 +41,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'Campus Rides',
-  description: 'University carpooling, simplified.',
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: 'Campus Ride',
+    template: '%s | Campus Ride',
+  },
+  description: 'University carpooling for FAST, NED, and Karachi University students.',
+  keywords: SEO_TARGET_KEYWORDS,
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
@@ -60,13 +67,25 @@ export const metadata: Metadata = {
       { url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
     ],
   },
+  alternates: {
+    canonical: SITE_URL,
+  },
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: 'https://campusrides.app',
-    siteName: 'Campus Rides',
+    url: SITE_URL,
+    siteName: 'Campus Ride',
+    title: 'Campus Ride - University Carpooling',
+    description: 'Efficient and affordable university carpooling for FAST, NED, and Karachi University students.',
+  },
+  twitter: {
+    card: 'summary_large_image',
     title: 'Campus Rides - University Carpooling',
-    description: 'Efficient and affordable carpooling for university students. Share rides, split costs, and build community.',
+    description: 'Safe student carpools across FAST, NED, and Karachi University routes.',
+  },
+  robots: {
+    index: true,
+    follow: true,
   },
 };
 
@@ -99,6 +118,7 @@ export default function RootLayout({
       <body className="font-body antialiased">
         <SafeConsolePatch />
         <PWAServiceWorkerRegistration />
+        <GoogleAnalytics />
         <GlobalErrorBoundary>
           <FirebaseClientProvider>
             <ClientSideProviders>

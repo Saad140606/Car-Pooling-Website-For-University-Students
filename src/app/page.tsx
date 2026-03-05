@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Car, ShieldCheck, Users, ArrowRight, Sparkles, Waves, Zap, Heart, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -7,8 +8,24 @@ import { Reveal } from '@/components/Reveal';
 import { AnimatedCard } from '@/components/AnimatedCard';
 import { AnimatedButton } from '@/components/AnimatedButton';
 import { RootPageGuard } from '@/components/RootPageGuard';
+import { buildSeoMetadata, SEO_TARGET_KEYWORDS, SITE_URL } from '@/config/seo';
+
+export const metadata: Metadata = buildSeoMetadata('/');
 
 export default function Home() {
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: 'Campus Ride',
+    url: SITE_URL,
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: `${SITE_URL}/rides`,
+      'query-input': 'required name=search_term_string',
+    },
+    keywords: SEO_TARGET_KEYWORDS.join(', '),
+  };
+
   const features = [
     {
       icon: <Car className="h-10 w-10 text-accent" />,
@@ -30,6 +47,10 @@ export default function Home() {
   return (
     <RootPageGuard>
       <div className="flex flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-foreground animate-page-rise">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
       <SiteHeader />
       <main className="flex-grow">
         <section className="relative overflow-hidden">

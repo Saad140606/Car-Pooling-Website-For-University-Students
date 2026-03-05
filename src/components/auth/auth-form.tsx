@@ -14,7 +14,7 @@ import {
   signOut,
 } from "firebase/auth";
 import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { setPendingUniversity, getPendingUniversity, getPendingGender, clearPendingUniversity, clearPendingGender, isValidUniversity } from "@/lib/university";
+import { setPendingUniversity, setSelectedUniversity, getPendingUniversity, getPendingGender, clearPendingUniversity, clearPendingGender, isValidUniversity } from "@/lib/university";
 import { getPendingBooking, clearPendingBooking } from '@/lib/bookings';
 import { getAccountLockState, toFirestoreLockTimestamp } from "@/lib/accountLock";
 
@@ -38,6 +38,7 @@ import { useActionFeedback } from '@/hooks/useActionFeedback';
 import { FirestorePermissionError } from "@/firebase/errors";
 import { errorEmitter } from "@/firebase/error-emitter";
 import { resolveDashboardLandingRoute } from '@/lib/dashboardLanding';
+import { trackEvent } from '@/lib/ga';
 
 type AuthFormProps = {
   university: "ned" | "fast" | "karachi";
@@ -127,6 +128,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
     }
 
     try {
+      setSelectedUniversity(university);
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
       const cred = await signInWithPopup(auth, provider);
@@ -270,6 +272,10 @@ export function AuthForm({ university, action }: AuthFormProps) {
         title: 'Signed In',
         description: 'Signed in with Google successfully.',
       });
+      trackEvent('login', {
+        method: 'google',
+        university: selectedUni,
+      });
 
       try {
         const pending = getPendingBooking();
@@ -320,6 +326,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
     }
 
     try {
+      setSelectedUniversity(university);
       // ===== BLOCK ADMIN EMAILS from university login pages =====
       const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
         .split(',')
@@ -419,6 +426,11 @@ export function AuthForm({ university, action }: AuthFormProps) {
               description: `Check ${values.email} for your 6-digit code.`,
             });
           }
+
+          trackEvent('sign_up', {
+            method: 'email',
+            university,
+          });
 
           // Redirect to verification page
           router.push(`/auth/verify-email?email=${encodeURIComponent(values.email)}&university=${university}&uid=${user.uid}`);
@@ -672,6 +684,10 @@ export function AuthForm({ university, action }: AuthFormProps) {
                 console.debug('Failed to read user profile for completeness check:', e);
               }
               toast({ title: 'Signed In', description: 'Welcome back!' });
+              trackEvent('login', {
+                method: 'email',
+                university: selectedUni,
+              });
               try {
                 const pending = getPendingBooking();
                 if (pending && pending.rideId && pending.university && pending.university === selectedUni) {
@@ -752,12 +768,20 @@ export function AuthForm({ university, action }: AuthFormProps) {
               if (pending && pending.rideId && pending.university && pending.university === finalUniversity) {
                 clearPendingBooking();
                 toast({ title: 'Signed In', description: 'Welcome! Redirecting to resume booking.' });
+                trackEvent('login', {
+                  method: 'email',
+                  university: finalUniversity,
+                });
                 router.push(`/dashboard/rides?pendingBooking=${encodeURIComponent(pending.rideId)}`);
                 return;
               }
             } catch (e) {}
             // Profile created - go straight to dashboard
             toast({ title: 'Signed In', description: 'Welcome! You can complete your profile from the dashboard.' });
+            trackEvent('login', {
+              method: 'email',
+              university: finalUniversity,
+            });
             await pushPreferredDashboard(u.uid, finalUniversity);
             return;
           } catch (e) {

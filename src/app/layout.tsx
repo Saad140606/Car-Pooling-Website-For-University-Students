@@ -10,6 +10,7 @@ import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 import SafeConsolePatch from '@/components/SafeConsolePatch';
 import { PWAServiceWorkerRegistration } from '@/components/pwa/PWAServiceWorkerRegistration';
 import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
+import MonthlyRewardPosterPopup from '@/components/MonthlyRewardPosterPopup';
 import { SEO_TARGET_KEYWORDS, SITE_URL } from '@/config/seo';
 
 // Client-side providers moved into a client component to satisfy next/dynamic SSR rules.
@@ -129,6 +130,7 @@ export default function RootLayout({
             </ClientSideProviders>
           </FirebaseClientProvider>
         </GlobalErrorBoundary>
+        <MonthlyRewardPosterPopup />
         <Toaster />
       </body>
     </html>

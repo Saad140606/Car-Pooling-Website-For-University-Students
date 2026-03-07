@@ -35,7 +35,7 @@ export default function Home() {
     {
       icon: <ShieldCheck className="h-10 w-10 text-accent" />,
       title: 'Safety First',
-      description: 'Gender-based filtering, real-time location sharing, and user reporting for a secure journey.',
+      description: 'Gender-based filtering, real-time notifications, and user reporting for a secure journey.',
     },
     {
       icon: <Users className="h-10 w-10 text-accent" />,
@@ -107,8 +107,8 @@ export default function Home() {
                       <Car className="h-6 w-6" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Campus Ride</p>
-                      <p className="text-lg font-semibold text-foreground">Library meetup</p>
+                      <p className="text-sm text-muted-foreground">Campus Rides</p>
+                      <p className="text-lg font-semibold text-foreground">Find your ride, share the journey</p>
                     </div>
                   </div>
                   <span className="rounded-full bg-primary/15 px-3 py-1 text-xs font-semibold text-primary animate-pulse-glow">Live</span>
@@ -131,14 +131,14 @@ export default function Home() {
 
                 <div className="mt-6 grid gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-primary/20 bg-primary/10 p-4 hover-lift-sm hover-glow transition-all duration-300 cursor-pointer animate-flip-in" style={{ animationDelay: '600ms' }}>
-                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Rider view</p>
+                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Passenger view</p>
                     <p className="mt-2 font-semibold text-foreground">Instant alerts</p>
                     <p className="mt-1 text-sm text-muted-foreground">See accepts fast, confirm the best match.</p>
                   </div>
                   <div className="rounded-2xl border border-secondary/20 bg-secondary/10 p-4 hover-lift-sm hover-glow transition-all duration-300 cursor-pointer animate-flip-in" style={{ animationDelay: '700ms' }}>
                     <p className="text-xs uppercase tracking-[0.15em] text-primary">Ride Provider view</p>
                     <p className="mt-2 font-semibold text-foreground">Seat hold</p>
-                    <p className="mt-1 text-sm text-muted-foreground">No overbooking while riders decide.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">No overbooking while passengers decide.</p>
                   </div>
                 </div>
               </div>
@@ -186,7 +186,7 @@ export default function Home() {
             <div className="text-center space-y-4 mb-6 sm:mb-8 md:mb-12\">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-400">What makes us different</p>
               <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Trusted by your campus community</h2>
-              <p className="text-slate-300 max-w-2xl mx-auto">Join students who choose Campus Ride for safe, affordable, and reliable commutes every day.</p>
+              <p className="text-slate-300 max-w-2xl mx-auto">Join students who choose Campus Rides for safe, affordable, and reliable commutes every day.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 max-w-4xl mx-auto">
@@ -247,9 +247,9 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 </div>
-                <span className="text-xl font-headline font-bold text-slate-50">Campus Ride</span>
+                <span className="text-xl font-headline font-bold text-slate-50">Campus Rides</span>
               </div>
-              <p className="text-sm text-slate-400 leading-relaxed">Join your campus community and start carpooling the smart way. Safe, affordable, and eco-friendly rides for university students.</p>
+              <p className="text-sm text-slate-400 leading-relaxed">Join your campus community and start carpooling the smart way. Safe, affordable, and eco-friendly rides for university students.Available for FAST National University (Karachi), NED University of Engineering and Technology, and University of Karachi</p>
             </div>
 
             {/* Quick Links */}
@@ -290,7 +290,7 @@ export default function Home() {
           {/* Bottom Bar */}
           <div className="pt-8 border-t border-slate-800/50">
             <div className="flex items-center justify-center">
-              <p className="text-sm text-slate-500">&copy; {new Date().getFullYear()} Campus Ride. All rights reserved.</p>
+              <p className="text-sm text-slate-500">&copy; {new Date().getFullYear()} Campus Rides. All rights reserved.</p>
             </div>
           </div>
         </div>

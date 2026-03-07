@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Download, X, Check, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { downloadAppManager } from '@/lib/downloadAppManager';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -279,6 +280,14 @@ export function PWAInstallPromptHandler() {
 
     if (!deferredPrompt) {
       console.warn('[PWA] No install prompt available');
+
+      // Android fallback: install prompt is unavailable, so start APK download directly.
+      if (downloadAppManager.isAndroidDevice()) {
+        downloadAppManager.downloadAPK(false);
+        setShowInstallUI(false);
+        return;
+      }
+
       setState(prev => ({ ...prev, showManualPrompt: true }));
       return;
     }
@@ -304,6 +313,13 @@ export function PWAInstallPromptHandler() {
         // User dismissed the prompt
         setInstallationStatus('idle');
         setDismissedCount(prev => prev + 1);
+
+        // Android fallback: if install is dismissed, continue with APK download.
+        if (downloadAppManager.isAndroidDevice()) {
+          downloadAppManager.downloadAPK(false);
+          setShowInstallUI(false);
+          return;
+        }
         
         // Close UI after 2 seconds if dismissed
         setTimeout(() => {
@@ -415,7 +431,7 @@ export function PWAInstallPromptHandler() {
                 </div>
                 <div>
                   <h2 className="font-bold text-lg text-white">Install Campus Rides</h2>
-                  <p className="text-sm text-slate-400">Get quick access from home screen</p>
+                  <p className="text-sm text-slate-400">Tap Add to Home Screen for easy access</p>
                 </div>
               </div>
 

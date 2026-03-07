@@ -43,7 +43,7 @@ const termsSections: PolicySection[] = [
   {
     id: "platform-overview",
     title: "Platform Overview",
-    summary: "Campus Ride facilitates voluntary ride sharing between verified students and faculty at participating universities.",
+    summary: "Campus Ride facilitates voluntary ride sharing between students and faculty at participating universities.",
     bullets: [
       "Campus-exclusive network; not a commercial transport provider",
       "Facilitates ride discovery, coordination, and respectful communication",
@@ -88,15 +88,16 @@ const termsSections: PolicySection[] = [
   {
     id: "safety-guidelines",
     title: "Safety Guidelines",
-    summary: "Safety is shared. Verify riders, choose trusted options, and keep communication inside the app.",
+    summary: "Safety is a shared responsibility. Always verify riders, choose trusted options, and keep communication inside the app. Please review profiles carefully and use your own judgment before accepting or requesting any ride.",
     bullets: [
       "Use in-app chat only; avoid off-platform payments or links",
-      "Share rides only with verified campus members and respect seat holds",
-      "Report concerns immediately; urgent risks should be escalated to authorities",
+      "Prefer riding with verified campus members and respect ride agreements",
+      "Check rider/driver details and location carefully before starting the ride",
+      "Report suspicious behavior immediately; for urgent or dangerous situations, contact local authorities",
     ],
     icon: <ShieldHalf className="h-5 w-5 text-amber-300" />,
     tone: "warning",
-    footnote: "Campus Ride is a facilitator, not a transporter. You are responsible for your personal judgment and belongings.",
+    footnote: "Campus Rides acts only as a platform that connects students and does not provide transportation services. We are not responsible for any road accidents, theft, loss of belongings, misconduct, kidnapping, injury, or any other harm or incident that may occur during or outside a ride. Users are fully responsible for their personal safety, decisions, and belongings. Always verify, stay cautious, and double-check before participating in any ride.",
   },
   {
     id: "reports-violations",
@@ -320,10 +321,10 @@ export default function TermsContent() {
           </div>
           <div className="mt-4 inline-flex items-center gap-3 rounded-full border border-primary/30 bg-slate-900/60 px-4 py-2 text-xs text-slate-300">
             <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-emerald-200 font-semibold">
-              <Info className="h-4 w-4" /> Last updated: 10 Jan 2026
+              <Info className="h-4 w-4" /> Last updated: 5 March 2026
             </span>
             <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-primary font-semibold animate-pulse-glow">
-              Effective: 1 Jan 2026
+              Effective: 1 March 2026
             </span>
           </div>
         </Reveal>

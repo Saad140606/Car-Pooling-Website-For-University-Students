@@ -293,24 +293,26 @@ export class DownloadAppManager {
    * Download APK file (Android fallback)
    * CRITICAL: This MUST trigger a download. No silent failures allowed.
    */
-  downloadAPK(): void {
+  downloadAPK(requireConfirmation = true): void {
     try {
       console.log('[DownloadApp] Downloading APK:', this.APK_DOWNLOAD_URL);
       
-      // Show user what's happening
-      const proceed = confirm(
-        '📱 Download Campus Rides APK\n\n' +
-        'The APK file will be downloaded to your device.\n\n' +
-        '⚠️ After download, you may need to:\n' +
-        '1. Open your Downloads folder\n' +
-        '2. Tap the APK file to install\n' +
-        '3. If prompted, enable "Install from unknown sources"\n\n' +
-        'Tap OK to start download.'
-      );
-      
-      if (!proceed) {
-        console.log('[DownloadApp] User cancelled APK download');
-        return;
+      if (requireConfirmation) {
+        // Show user what's happening
+        const proceed = confirm(
+          '📱 Download Campus Rides APK\n\n' +
+          'The APK file will be downloaded to your device.\n\n' +
+          '⚠️ After download, you may need to:\n' +
+          '1. Open your Downloads folder\n' +
+          '2. Tap the APK file to install\n' +
+          '3. If prompted, enable "Install from unknown sources"\n\n' +
+          'Tap OK to start download.'
+        );
+        
+        if (!proceed) {
+          console.log('[DownloadApp] User cancelled APK download');
+          return;
+        }
       }
       
       // Method 1: Try creating a download link
@@ -426,16 +428,10 @@ export class DownloadAppManager {
             return;
           } else {
             console.log('[PWA] User dismissed PWA install prompt');
-            // User dismissed - on Android offer APK as alternative
+            // User dismissed - on Android immediately fallback to APK
             if (os === 'android') {
-              const downloadAPK = confirm(
-                '📱 Would you like to download the APK instead?\n\n' +
-                'The APK file can be installed manually on your device.'
-              );
-              if (downloadAPK) {
-                this.downloadAPK();
-                return;
-              }
+              this.downloadAPK(false);
+              return;
             }
           }
         } catch (error) {
@@ -443,14 +439,14 @@ export class DownloadAppManager {
           // On Android, automatically fallback to APK
           if (os === 'android') {
             console.log('[PWA] PWA install failed on Android, falling back to APK');
-            this.downloadAPK();
+            this.downloadAPK(false);
             return;
           }
         }
       } else if (os === 'android') {
         // No install prompt available on Android - immediately download APK
         console.log('[PWA] No install prompt on Android, downloading APK directly');
-        this.downloadAPK();
+        this.downloadAPK(false);
         return;
       }
 
@@ -461,7 +457,7 @@ export class DownloadAppManager {
           break;
         case 'android':
           // Should have been handled above, but just in case
-          this.downloadAPK();
+          this.downloadAPK(false);
           break;
         default:
           // Desktop or unknown
@@ -478,7 +474,7 @@ export class DownloadAppManager {
       if (this.getOS() === 'android') {
         console.log('[PWA] Error occurred, attempting APK fallback');
         try {
-          this.downloadAPK();
+          this.downloadAPK(false);
         } catch (e) {
           console.error('[PWA] APK fallback also failed:', e);
         }
@@ -583,10 +579,10 @@ export class DownloadAppManager {
       
       'android-firefox': '📱 Firefox on Android:\n\n' +
                          'Full PWA installation isn\'t available yet in Firefox for Android.\n' +
-                         'However, you can bookmark this page for quick access:\n\n' +
+                         'Use "Add to Home Screen" for easy access:\n\n' +
                          '1. Tap the menu (⋮)\n' +
-                         '2. Tap "Bookmark this page"\n' +
-                         '3. Long press the bookmark and select "Add to home screen"',
+                         '2. Tap "Add to Home Screen"\n' +
+                         '3. Confirm to place Campus Rides on your home screen',
       
       'android-apk-available': '📱 Download Campus Rides APK:\n\n' +
                                'Your browser doesn\'t support PWA installation.\n' +
@@ -644,9 +640,8 @@ export class DownloadAppManager {
                        '✨ No download needed - it works right in your browser!',
       
       'fallback': '✨ Welcome to Campus Rides!\n\n' +
-                  'This is a web app that works right in your browser.\n\n' +
-                  '📌 Bookmark this page for quick access!\n\n' +
-                  'Get a faster, app-like experience with offline support.'
+          'You can add this app to your home screen by clicking "Add to Home Screen" for easy access.\n\n' +
+          'If install is not available on your Android browser, the APK download will start automatically.'
     };
 
     const message = instructions[platform] || instructions['fallback'];

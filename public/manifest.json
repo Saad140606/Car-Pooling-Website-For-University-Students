@@ -62,13 +62,7 @@
   ],
   "icons": [
     {
-      "src": "/icons/favicon-32x32.png",
-      "sizes": "32x32",
-      "type": "image/png"
-    },
-    {
-      "src": "/icons/favicon-96x96.png",
-      "sizes": "96x96",
+      "src": "/favicon-campus-rides.png",
       "type": "image/png"
     },
     {

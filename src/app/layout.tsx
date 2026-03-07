@@ -12,6 +12,8 @@ import { PWAServiceWorkerRegistration } from '@/components/pwa/PWAServiceWorkerR
 import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
 import MonthlyRewardPosterPopup from '@/components/MonthlyRewardPosterPopup';
 import { SEO_TARGET_KEYWORDS, SITE_URL } from '@/config/seo';
+import { Analytics } from '@vercel/analytics/next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 
 // Client-side providers moved into a client component to satisfy next/dynamic SSR rules.
 
@@ -61,8 +63,7 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: '/icons/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/icons/favicon-96x96.png', sizes: '96x96', type: 'image/png' },
+      { url: '/favicon-campus-rides.png', type: 'image/png' },
       { url: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png' },
     ],
     apple: [
@@ -109,8 +110,7 @@ export default function RootLayout({
         
         {/* PWA Support */}
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" href="/icons/favicon-32x32.png" sizes="32x32" type="image/png" />
-        <link rel="icon" href="/icons/favicon-96x96.png" sizes="96x96" type="image/png" />
+        <link rel="icon" href="/favicon-campus-rides.png" type="image/png" />
         <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" type="image/png" />
         <link rel="mask-icon" href="/icons/safari-pinned-tab.svg" color="#1f2937" />
         
@@ -131,6 +131,8 @@ export default function RootLayout({
           </FirebaseClientProvider>
         </GlobalErrorBoundary>
         <MonthlyRewardPosterPopup />
+        <Analytics />
+        <SpeedInsights />
         <Toaster />
       </body>
     </html>

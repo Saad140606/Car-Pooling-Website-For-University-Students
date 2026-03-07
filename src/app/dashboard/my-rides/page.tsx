@@ -1398,10 +1398,6 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
 
               <div className="mb-2.5 space-y-1.5" onClick={(e) => e.stopPropagation()}>
                 <RouteDialogButton ride={ride} pickupMarkers={pickupMarkers} />
-                <div className="w-full rounded-md border border-blue-500/30 bg-blue-900/10 px-3 py-2 text-xs">
-                  <span className="text-slate-300">Time remaining: </span>
-                  <span className="text-blue-300 font-mono">{departureTimer}</span>
-                </div>
                 <div className="w-full">
                   <Button
                     onClick={openRideInGoogleMaps}
@@ -1411,6 +1407,10 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                   >
                     <MapPin className="mr-1.5 h-3.5 w-3.5" /> View on Maps
                   </Button>
+                </div>
+                <div className="w-full rounded-md border border-blue-500/30 bg-blue-900/10 px-3 py-2 text-xs">
+                  <span className="text-slate-300">Time remaining: </span>
+                  <span className="text-blue-300 font-mono">{departureTimer}</span>
                 </div>
               </div>
 
@@ -1902,7 +1902,7 @@ export default function MyRidesPage() {
       <div className="section-shell py-8 relative z-10">
         <div className="mb-6 sm:mb-8 animate-page">
           <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Offered Rides</h1>
-          <p className="text-slate-300">Track and manage your active ride offers</p>
+          <p className="text-slate-300">Ride providers can view and track their ride offers after creating them.</p>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {ridesWithStatus

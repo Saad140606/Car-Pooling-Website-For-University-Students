@@ -43,7 +43,7 @@ const coreSteps: Step[] = [
     points: [
       'Choose From and To, time, and seats.',
       'Send a few requests so you stay covered and safe.',
-      'Everything is student only; no outsiders.',
+      'Everything is Safe For Students',
     ],
   },
   {
@@ -94,7 +94,7 @@ const safetySteps: Step[] = [
     title: 'Safe communication',
     icon: <MessageCircle className="h-6 w-6" />,
     points: [
-      'Chat and calls stay inside Campus Ride, no phone numbers shared.',
+      'Chat and calls stay inside Campus Rides, Whatsapp phone numbers shared also.',
       'Opens right after a ride provider accepts your request.',
       'Agree on pickup spot or quick updates without leaving the app.',
     ],
@@ -160,15 +160,15 @@ export default function HowItWorks() {
                 Simple, safe, student-only
               </div>
               <h1 className="font-headline text-4xl leading-tight tracking-tight sm:text-5xl md:text-6xl text-slate-50 animate-slide-in-down">
-                How Campus Ride Works
+                How Campus Rides Works
               </h1>
               <p className="max-w-xl text-lg text-slate-300 animate-slide-in-down" style={{ animationDelay: '100ms' }}>
-                A friendly walkthrough so first-time riders and drivers feel confident, safe, and ready to share rides across campus.
+                A friendly walkthrough so first-time passengers and ride providers feel confident, safe, and ready to share rides across campus.
               </p>
               <div className="flex flex-wrap items-center gap-3 text-sm animate-slide-in-down" style={{ animationDelay: '200ms' }}>
                 <div className="inline-flex items-center gap-2 rounded-full bg-card/80 border border-border/40 px-4 py-2 backdrop-blur-sm hover:border-primary/50 hover:scale-105 transition-all duration-300">
                   <Users className="h-4 w-4 text-primary" />
-                  <span className="text-slate-300">Riders & drivers both win</span>
+                  <span className="text-slate-300">Passengers & Ride Providers both win</span>
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full bg-card/80 border border-border/40 px-4 py-2 backdrop-blur-sm hover:border-primary/50 hover:scale-105 transition-all duration-300">
                   <ShieldCheck className="h-4 w-4 text-primary" />
@@ -176,7 +176,7 @@ export default function HowItWorks() {
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full bg-card/80 border border-border/40 px-4 py-2 backdrop-blur-sm hover:border-primary/50 hover:scale-105 transition-all duration-300">
                   <Clock3 className="h-4 w-4 text-primary" />
-                  <span className="text-slate-300">Smart timer, no stress</span>
+                  <span className="text-slate-300">Confirm Ride, no stress</span>
                 </div>
               </div>
               <div className="flex flex-wrap gap-4 animate-slide-in-down" style={{ animationDelay: '300ms' }}>
@@ -203,7 +203,7 @@ export default function HowItWorks() {
                       <Car className="h-6 w-6" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Campus Ride</p>
+                      <p className="text-sm text-muted-foreground">Campus Rides</p>
                       <p className="text-lg font-semibold">Student Carpool</p>
                     </div>
                   </div>
@@ -213,7 +213,7 @@ export default function HowItWorks() {
                 <div className="rounded-2xl border border-primary/20 bg-background/60 p-4">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <MapPin className="h-4 w-4 text-primary" />
-                    From campus gate to Library
+                    From gulshan to FAST university
                   </div>
                   <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Users className="h-4 w-4 text-primary" />
@@ -226,7 +226,7 @@ export default function HowItWorks() {
 
                 <div className="grid grid-cols-2 gap-3 text-sm text-muted-foreground">
                   <div className="rounded-2xl border border-primary/15 bg-primary/5 p-3">
-                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Rider view</p>
+                    <p className="text-xs uppercase tracking-[0.15em] text-primary">Passenger view</p>
                     <p className="mt-2 font-semibold text-foreground">Instant alerts</p>
                     <p className="mt-1">You see who accepts and pick one.</p>
                   </div>
@@ -295,12 +295,12 @@ export default function HowItWorks() {
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="rounded-2xl border border-primary/20 bg-primary/10 p-4 text-sm text-primary">
-                      <p className="font-semibold text-foreground">For riders</p>
-                      <p className="mt-1 text-muted-foreground">You get breathing room to confirm the best driver.</p>
+                      <p className="font-semibold text-foreground">For Passengers</p>
+                      <p className="mt-1 text-muted-foreground">You get breathing room to confirm the best ride provider.</p>
                     </div>
                     <div className="rounded-2xl border border-primary/20 bg-secondary/20 p-4 text-sm text-foreground">
-                      <p className="font-semibold">For drivers</p>
-                      <p className="mt-1 text-muted-foreground">Seats are protected while you wait for a rider decision.</p>
+                      <p className="font-semibold">For ride provider</p>
+                      <p className="mt-1 text-muted-foreground">Seats are protected while you wait for a passenger decision.</p>
                     </div>
                   </div>
                 </div>
@@ -368,7 +368,7 @@ export default function HowItWorks() {
                 <div className="relative flex flex-col gap-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Chat & call</p>
                   <h3 className="font-headline text-2xl">Talk safely inside the app</h3>
-                  <p className="text-sm text-muted-foreground">Share details without exposing phone numbers. Drivers and riders can coordinate pickup spots and timing as soon as an acceptance happens.</p>
+                  <p className="text-sm text-muted-foreground">Share details in app or can contact on phone numbers. Ride Providers and Passengers can coordinate pickup spots and timing as soon as an acceptance happens.</p>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="flex items-center gap-3 rounded-2xl border border-primary/20 bg-card/70 p-3 text-sm text-muted-foreground">
                       <MessageCircle className="h-5 w-5 text-primary" />
@@ -381,7 +381,7 @@ export default function HowItWorks() {
                       <PhoneCall className="h-5 w-5 text-primary" />
                       <div>
                         <p className="font-semibold text-foreground">In-app calls</p>
-                        <p>Call without sharing personal numbers.</p>
+                        <p>Call in app</p>
                       </div>
                     </div>
                   </div>
@@ -406,7 +406,7 @@ export default function HowItWorks() {
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />
-                      Confirmation locks one ride and frees the rest, fair for riders and ride providers.
+                      Confirmation locks one ride and frees the rest, fair for passengers and ride providers.
                     </li>
                   </ul>
                 </div>
@@ -449,23 +449,23 @@ export default function HowItWorks() {
             <div className="mt-10 grid gap-6 md:grid-cols-2">
               <Reveal>
                 <Card className="border-primary/25 bg-card/60 p-6 shadow-lg animate-fade-slide">
-                <h3 className="font-headline text-2xl">For riders</h3>
+                <h3 className="font-headline text-2xl">For passengers</h3>
                 <p className="mt-2 text-sm text-muted-foreground">Stay covered by requesting multiple drivers, then confirm the one that feels best.</p>
                 <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                   <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Soft seat lock keeps your spot.</li>
-                  <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Smart timer means no sudden auto-cancels for future rides.</li>
+                  <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />No sudden auto-cancels for future rides.</li>
                   <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Chat and call safely after acceptance.</li>
                 </ul>
                 </Card>
               </Reveal>
               <Reveal delay={120}>
                 <Card className="border-primary/25 bg-card/60 p-6 shadow-lg animate-fade-slide" style={{ animationDelay: '120ms' }}>
-                <h3 className="font-headline text-2xl">For drivers</h3>
-                <p className="mt-2 text-sm text-muted-foreground">Accept requests, hold a seat, and let riders confirm. Fair for your time and fuel.</p>
+                <h3 className="font-headline text-2xl">For ride providers</h3>
+                <p className="mt-2 text-sm text-muted-foreground">Accept requests, hold a seat, and let passenger confirm. Fair for your time and fuel.</p>
                 <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                   <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Seat hold stops overbooking while riders decide.</li>
                   <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Clear confirmations so you know exactly who is riding.</li>
-                  <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Cancel easily if plans change before a rider confirms.</li>
+                  <li className="flex items-start gap-2"><span className="mt-1 inline-flex h-2.5 w-2.5 rounded-full bg-primary/70" aria-hidden />Cancel easily if plans change before a passenger confirms.</li>
                 </ul>
                 </Card>
               </Reveal>

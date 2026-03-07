@@ -28,12 +28,12 @@ import { SiteHeader } from "@/components/SiteHeader";
 const missionVision = [
   {
     title: "Mission",
-    body: "Make every campus commute safe, affordable, and community-first by connecting verified students who look out for each other.",
+    body: "Make every campus commute safe, affordable, and community-first by connecting students who look out for each other.",
     icon: <HeartHandshake className="h-6 w-6 text-primary" />,
   },
   {
     title: "Vision",
-    body: "A trusted mobility layer for universities worldwide where sharing a ride feels as safe as meeting a friend on campus.",
+    body: "A trusted mobility layer for universities where sharing a ride feels as safe as meeting a friend on campus.",
     icon: <Target className="h-6 w-6 text-accent" />,
   },
 ];
@@ -48,7 +48,7 @@ const story = [
   {
     title: "The spark",
     detail:
-      "Verified-only ride pooling with transparent profiles, gender-based preferences, and real-time checks designed for student life.",
+      "Safe ride pooling with transparent profiles, gender-based preferences, and real-time checks designed for student life.",
     icon: <Sparkles className="h-5 w-5 text-primary" />,
   },
   {
@@ -72,13 +72,19 @@ const portals = [
     link: "/auth/ned/register",
     badge: "NED UET",
   },
+  {
+    name: "UOK Portal",
+    description: "Identity-verified hub for UOK students with gender-safe matching and campus-trusted profiles.",
+    link: "/auth/karachi/register",
+    badge: "UOK",
+  },
 ];
 
 const team = [
-  { name: "Aiman", role: "Design & Trust", university: "FAST", color: "from-primary/40 to-primary/10" },
-  { name: "Hassan", role: "Product", university: "NED", color: "from-accent/40 to-accent/10" },
-  { name: "Fatima", role: "Ops & Safety", university: "FAST", color: "from-emerald-500/30 to-emerald-500/10" },
-  { name: "Ali", role: "Community", university: "NED", color: "from-amber-400/30 to-amber-400/10" },
+  { name: "Nahyan", role: "Backend Developer & Leader", university: "UIT", color: "from-primary/40 to-primary/10" },
+  { name: "Saad", role: "Front End Developer & Designer", university: "FAST", color: "from-accent/40 to-accent/10" },
+  { name: "Ayaan", role: "Reports & Safety Manager", university: "FAST", color: "from-emerald-500/30 to-emerald-500/10" },
+  { name: "Aiman", role: "Community", university: "NED", color: "from-amber-400/30 to-amber-400/10" },
 ];
 
 export default function AboutPage() {
@@ -99,10 +105,10 @@ export default function AboutPage() {
               About Campus Ride
             </span>
             <h1 className="font-headline text-3xl leading-tight tracking-tight sm:text-5xl md:text-6xl animate-slide-in-down">
-              Premium, human, and safe rides built for universities.
+              Premium, safe rides designed for university campuses.
             </h1>
             <p className="max-w-2xl text-base sm:text-lg text-slate-300 animate-slide-in-down" style={{ animationDelay: "120ms" }}>
-              We turn everyday commutes into trusted micro-communities. Verified students, transparent profiles, and gentle motion design make every interaction feel cared for.
+              We turn everyday commutes into trusted micro-communities with transparent profiles and a smooth, thoughtfully designed experience.
             </p>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 animate-slide-in-down" style={{ animationDelay: "200ms" }}>
               <AnimatedButton asChild size="lg" className="rounded-full px-7 btn-press hover-glow">
@@ -164,14 +170,14 @@ export default function AboutPage() {
 
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-primary/20 bg-primary/10 p-4 hover-lift-sm hover-glow transition-all duration-300">
-                  <p className="text-xs uppercase tracking-[0.15em] text-primary">For riders</p>
+                  <p className="text-xs uppercase tracking-[0.15em] text-primary">For Passengers</p>
                   <p className="mt-2 font-semibold text-slate-50">Multi-request safety</p>
                   <p className="mt-1 text-sm text-slate-300">Request multiple rides, confirm who feels safest.</p>
                 </div>
                 <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/10 p-4 hover-lift-sm hover-glow transition-all duration-300">
-                  <p className="text-xs uppercase tracking-[0.15em] text-emerald-300">For drivers</p>
+                  <p className="text-xs uppercase tracking-[0.15em] text-emerald-300">For Ride Providers</p>
                   <p className="mt-2 font-semibold text-slate-50">Seat hold</p>
-                  <p className="mt-1 text-sm text-slate-300">Your seats stay reserved while riders choose.</p>
+                  <p className="mt-1 text-sm text-slate-300">Your seats stay reserved while Passengers choose.</p>
                 </div>
               </div>
             </AnimatedCard>
@@ -244,7 +250,7 @@ export default function AboutPage() {
               { 
                 icon: <ShieldCheck className="h-6 w-6 text-primary" />, 
                 title: "University Verification", 
-                description: "Only verified students and faculty can access the platform. Your university email keeps the community trusted.",
+                description: "Students can verify their university email to earn a Trusted Badge. This helps others easily identify verified members within the community.",
                 gradient: "from-primary/10 to-accent/5"
               },
               { 
@@ -255,8 +261,8 @@ export default function AboutPage() {
               },
               { 
                 icon: <MapPin className="h-6 w-6 text-accent" />, 
-                title: "Real-Time Location", 
-                description: "Share live location with trusted contacts during rides. Always stay connected and secure.",
+                title: "Route Map View", 
+                description: "View your ride route directly inside the app with an integrated map, helping passengers and ride providers easily understand the journey.",
                 gradient: "from-accent/10 to-accent/5"
               },
               { 
@@ -268,7 +274,7 @@ export default function AboutPage() {
               { 
                 icon: <MessageCircle className="h-6 w-6 text-blue-400" />, 
                 title: "In-App Chat", 
-                description: "Coordinate rides securely without sharing personal contact info. Private and protected communication.",
+                description: "Coordinate rides easily through in-app chat and calls. WhatsApp numbers are also shared so passengers and ride providers can communicate in the way they prefer.",
                 gradient: "from-blue-500/10 to-blue-500/5"
               },
               { 
@@ -346,7 +352,7 @@ export default function AboutPage() {
         <Reveal className="space-y-4 text-center mb-8 relative z-10">
           <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Universities We Serve</p>
           <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Active at FAST, NED & Karachi University</h2>
-          <p className="text-slate-300 max-w-2xl mx-auto">Campus Ride is officially active and serving students at FAST University, NED University, and Karachi University with equal focus and dedication.</p>
+          <p className="text-slate-300 max-w-2xl mx-auto">Campus Rides is officially active and serving students at FAST University(Karachi), NED University, and Karachi University with equal focus and dedication.</p>
         </Reveal>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto relative z-10">
@@ -376,7 +382,7 @@ export default function AboutPage() {
                 <div className="space-y-3 text-slate-300">
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-primary" />
-                    <span className="text-sm">University email verification required</span>
+                    <span className="text-sm">University email verification provides Trusted Badge</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-primary" />
@@ -425,7 +431,7 @@ export default function AboutPage() {
                 <div className="space-y-3 text-slate-300">
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-accent" />
-                    <span className="text-sm">University email verification required</span>
+                    <span className="text-sm">University email verification provides Trusted Badge</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-accent" />
@@ -474,7 +480,7 @@ export default function AboutPage() {
                 <div className="space-y-3 text-slate-300">
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-purple-400" />
-                    <span className="text-sm">University email verification required</span>
+                    <span className="text-sm">University email verification provides Trusted Badge</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-purple-400" />
@@ -500,7 +506,7 @@ export default function AboutPage() {
         <Reveal delay={400} className="mt-8 text-center relative z-10">
           <div className="inline-block rounded-2xl border border-primary/20 bg-gradient-to-br from-card/90 to-card/70 px-8 py-6 backdrop-blur-sm">
             <p className="text-slate-300">
-              <span className="font-semibold text-slate-50">Equal Focus, Equal Service:</span> All three universities receive the same level of attention, features, and support from Campus Ride.
+              <span className="font-semibold text-slate-50">Equal Focus, Equal Service:</span> All three universities receive the same level of attention, features, and support from Campus Rides.
             </p>
           </div>
         </Reveal>
@@ -524,7 +530,7 @@ export default function AboutPage() {
                 <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-slate-300">
                   <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-2 text-primary">
                     <ShieldCheck className="h-4 w-4" />
-                    Verified IDs only
+                    Trusted Badges
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-2 text-emerald-200">
                     <GraduationCap className="h-4 w-4" />
@@ -606,7 +612,7 @@ export default function AboutPage() {
               <p className="text-xs uppercase tracking-[0.3em] text-primary font-semibold">Ready to Join</p>
             </div>
             <h2 className="font-headline text-3xl sm:text-5xl text-slate-50 leading-tight">Join the most trusted way to move on campus</h2>
-            <p className="max-w-2xl mx-auto text-lg text-slate-300">Create a ride, join a seat, or talk to us about bringing Campus Ride to your university.</p>
+            <p className="max-w-2xl mx-auto text-lg text-slate-300">Create a ride, join a seat, or talk to us about bringing Campus Rides to your university.</p>
             <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
               <AnimatedButton asChild size="lg" className="rounded-full px-8 shadow-lg shadow-primary/30 hover:shadow-primary/50 hover:scale-105 transition-all duration-300">
                 <Link href="/rides" className="inline-flex items-center gap-2" aria-label="Create or join a ride">

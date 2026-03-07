@@ -117,35 +117,12 @@ export async function DELETE(req: Request) {
   try {
     const auth = await requireAdmin(req);
     if (!auth.ok) return auth.response;
-
-    const { searchParams } = new URL(req.url);
-    const bookingId = searchParams.get('bookingId');
-    const universityId = searchParams.get('universityId');
-
-    if (!bookingId) {
-      return NextResponse.json({ error: 'bookingId is required' }, { status: 400 });
-    }
-
-    const db = admin.firestore();
-    const paths = [
-      universityId ? `universities/${String(universityId).toLowerCase()}/bookings/${bookingId}` : null,
-      `bookings/${bookingId}`,
-    ].filter(Boolean) as string[];
-
-    let deleted = false;
-    for (const path of paths) {
-      const ref = db.doc(path);
-      const snap = await ref.get();
-      if (!snap.exists) continue;
-      await ref.delete();
-      deleted = true;
-    }
-
-    if (!deleted) {
-      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-    }
-
-    return NextResponse.json({ ok: true });
+    return NextResponse.json(
+      {
+        error: 'Deletion from admin dashboard is disabled. Delete records only from Firebase project console.',
+      },
+      { status: 403 }
+    );
   } catch (e: any) {
     console.error('[admin/bookings:DELETE] error', e);
     return NextResponse.json({ error: e?.message || 'Failed to delete booking' }, { status: 500 });

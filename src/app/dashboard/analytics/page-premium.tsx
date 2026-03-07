@@ -66,30 +66,32 @@ const RoleToggle = memo(function RoleToggle({
   if (role !== 'both') return null;
 
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg w-full sm:w-auto">
+    <div className="flex w-full min-w-0 flex-col items-stretch gap-1.5 p-1 bg-slate-900/50 border border-slate-800/50 rounded-lg md:w-auto md:flex-row md:items-center">
       <button
         onClick={() => onViewChange('driver')}
         className={cn(
-          'flex items-center justify-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
+          'flex w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-all md:w-auto md:gap-2 md:px-4 md:text-sm',
           activeView === 'driver'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
         )}
       >
-        <Car className="w-4 h-4" />
-        Ride Provider View
+        <Car className="h-3.5 w-3.5 md:h-4 md:w-4" />
+        <span className="truncate md:hidden">Provider</span>
+        <span className="hidden md:inline">Ride Provider View</span>
       </button>
       <button
         onClick={() => onViewChange('passenger')}
         className={cn(
-          'flex items-center justify-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-2 rounded-md text-sm font-medium transition-all w-full sm:w-auto',
+          'flex w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-all md:w-auto md:gap-2 md:px-4 md:text-sm',
           activeView === 'passenger'
             ? 'bg-primary text-white shadow-lg shadow-primary/25'
             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
         )}
       >
-        <User className="w-4 h-4" />
-        Passenger View
+        <User className="h-3.5 w-3.5 md:h-4 md:w-4" />
+        <span className="truncate md:hidden">Passenger</span>
+        <span className="hidden md:inline">Passenger View</span>
       </button>
     </div>
   );
@@ -145,14 +147,14 @@ const AnalyticsSkeleton = memo(function AnalyticsSkeleton() {
       </div>
 
       {/* Stats grid skeleton */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
         {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
           <Skeleton key={i} className="h-28 sm:h-32 rounded-xl" />
         ))}
       </div>
 
       {/* Charts skeleton */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
         <Skeleton className="h-64 sm:h-[350px] rounded-xl" />
         <Skeleton className="h-64 sm:h-[350px] rounded-xl" />
       </div>
@@ -224,7 +226,7 @@ interface DriverAnalyticsProps {
 
 const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: DriverAnalyticsProps) {
   return (
-    <div className="space-y-5 sm:space-y-8 min-w-0 overflow-x-hidden">
+    <div className="space-y-4 sm:space-y-6 min-w-0 overflow-x-hidden">
       {/* Post-Ride Earnings & Ratings Card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -281,7 +283,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
       </motion.div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
         <RidesLineChart
           data={metrics.ridesOverTime}
           title="Rides Over Time"
@@ -295,7 +297,7 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
       </div>
 
       {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         <WeeklyActivityChart
           data={metrics.weeklyActivity}
           title="Weekly Activity"
@@ -313,34 +315,42 @@ const DriverAnalyticsView = memo(function DriverAnalyticsView({ metrics }: Drive
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4 sm:p-6"
+        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-3 sm:p-6 w-full max-w-full overflow-hidden"
       >
         <h3 className="text-base sm:text-lg font-semibold text-white mb-4 sm:mb-6">Performance Metrics</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
-          <ProgressCircle
-            percentage={metrics.seatEfficiencyPercent}
-            label="Seat Efficiency"
-            sublabel="Seats filled vs offered"
-            color="#8B5CF6"
-          />
-          <ProgressCircle
-            percentage={metrics.rideCompletionRate}
-            label="Completion Rate"
-            sublabel="Completed rides"
-            color="#10B981"
-          />
-          <ProgressCircle
-            percentage={metrics.rideAcceptanceRate}
-            label="Acceptance Rate"
-            sublabel="Accepted requests"
-            color="#3B82F6"
-          />
-          <ProgressCircle
-            percentage={Math.max(0, Math.min(100, metrics.cancellationRate))}
-            label="Cancellation Rate"
-            sublabel="Cancelled rides"
-            color="#EF4444"
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 w-full max-w-full">
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={metrics.seatEfficiencyPercent}
+              label="Seat Efficiency"
+              sublabel="Seats filled vs offered"
+              color="#8B5CF6"
+            />
+          </div>
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={metrics.rideCompletionRate}
+              label="Completion Rate"
+              sublabel="Completed rides"
+              color="#10B981"
+            />
+          </div>
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={metrics.rideAcceptanceRate}
+              label="Acceptance Rate"
+              sublabel="Accepted requests"
+              color="#3B82F6"
+            />
+          </div>
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={Math.max(0, Math.min(100, metrics.cancellationRate))}
+              label="Cancellation Rate"
+              sublabel="Cancelled rides"
+              color="#EF4444"
+            />
+          </div>
         </div>
       </motion.div>
 
@@ -388,7 +398,7 @@ interface PassengerAnalyticsProps {
 
 const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }: PassengerAnalyticsProps) {
   return (
-    <div className="space-y-5 sm:space-y-8 min-w-0 overflow-x-hidden">
+    <div className="space-y-4 sm:space-y-6 min-w-0 overflow-x-hidden">
       {/* Post-Ride Spending Card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -446,7 +456,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
       </motion.div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
         <RidesLineChart
           data={metrics.ridesOverTime}
           title="Rides Over Time"
@@ -460,7 +470,7 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
       </div>
 
       {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         <WeeklyActivityChart
           data={metrics.weeklyActivity}
           title="Weekly Activity"
@@ -478,28 +488,34 @@ const PassengerAnalyticsView = memo(function PassengerAnalyticsView({ metrics }:
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4 sm:p-6"
+        className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-3 sm:p-6 w-full max-w-full overflow-hidden"
       >
         <h3 className="text-base sm:text-lg font-semibold text-white mb-4 sm:mb-6">Booking Performance</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-          <ProgressCircle
-            percentage={metrics.rideCompletionRate}
-            label="Completion Rate"
-            sublabel="Completed rides"
-            color="#10B981"
-          />
-          <ProgressCircle
-            percentage={Math.max(0, Math.min(100, metrics.cancellationRate))}
-            label="Cancellation Rate"
-            sublabel="Cancelled rides"
-            color="#EF4444"
-          />
-          <ProgressCircle
-            percentage={metrics.trustScore}
-            label="Trust Score"
-            sublabel="Overall reliability"
-            color="#8B5CF6"
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 w-full max-w-full">
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={metrics.rideCompletionRate}
+              label="Completion Rate"
+              sublabel="Completed rides"
+              color="#10B981"
+            />
+          </div>
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={Math.max(0, Math.min(100, metrics.cancellationRate))}
+              label="Cancellation Rate"
+              sublabel="Cancelled rides"
+              color="#EF4444"
+            />
+          </div>
+          <div className="w-full min-w-0 flex justify-center">
+            <ProgressCircle
+              percentage={metrics.trustScore}
+              label="Trust Score"
+              sublabel="Overall reliability"
+              color="#8B5CF6"
+            />
+          </div>
         </div>
       </motion.div>
     </div>
@@ -792,16 +808,16 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] px-2 py-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 pb-28 sm:pb-10 overflow-x-hidden touch-pan-y">
-      <div className="max-w-7xl mx-auto w-full">
+    <div className="min-h-[100dvh] px-1 py-1 sm:px-3 sm:py-3 md:px-5 md:py-5 lg:px-8 lg:py-8 pb-24 sm:pb-10 w-full max-w-full overflow-x-hidden touch-pan-y">
+      <div className="max-w-7xl mx-auto w-full min-w-0">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 sm:mb-6 min-w-0"
+          className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 mb-3 sm:mb-5 min-w-0"
         >
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-2 sm:gap-3">
+            <h1 className="text-base sm:text-xl md:text-2xl font-bold text-white flex items-center gap-2 sm:gap-3">
               <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-primary" />
               Analytics Dashboard
             </h1>
@@ -812,7 +828,7 @@ export default function AnalyticsPage() {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto min-w-0">
+            <div className="flex w-full min-w-0 flex-col items-stretch gap-1.5 md:flex-row md:items-center md:gap-2 lg:w-auto">
             {/* Role Toggle */}
             <RoleToggle
               role={analytics.userRole}
@@ -826,7 +842,7 @@ export default function AnalyticsPage() {
               size="sm"
               onClick={fetchAnalytics}
               disabled={isLoading}
-              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto h-11 sm:h-9"
+              className="gap-2 border-slate-700 hover:bg-slate-800 w-full sm:w-auto h-9 sm:h-9 text-xs sm:text-sm"
             >
               <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
               Refresh
@@ -839,7 +855,7 @@ export default function AnalyticsPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mb-4 sm:mb-6"
+            className="mb-3 sm:mb-5"
           >
             <span className="inline-flex items-center gap-2 px-2.5 py-1.5 sm:px-3 bg-primary/10 border border-primary/20 rounded-full text-xs sm:text-sm font-medium text-primary">
               {userData.university.toUpperCase()} University
@@ -856,7 +872,7 @@ export default function AnalyticsPage() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
-            className="space-y-5 sm:space-y-8"
+            className="space-y-4 sm:space-y-6"
           >
             {/* Role-specific analytics */}
             {activeView === 'driver' && analytics.driverMetrics && (
@@ -869,7 +885,7 @@ export default function AnalyticsPage() {
 
             {/* Status Pie Chart */}
             {analytics.rideStatusBreakdown.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 min-w-0">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6 min-w-0">
                 <StatusPieChart
                   data={analytics.rideStatusBreakdown}
                   title="Ride Status Breakdown"

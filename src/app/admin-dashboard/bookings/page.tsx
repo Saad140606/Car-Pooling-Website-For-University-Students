@@ -211,28 +211,9 @@ export default function AdminBookingsPage() {
     }
   }, [fetchRows]);
 
-  const deleteBooking = useCallback(async (booking: BookingRow) => {
-    try {
-      setActionLoadingId(booking.id);
-      const authUser = getAuth().currentUser;
-      if (!authUser) throw new Error("Admin authentication required");
-      const token = await authUser.getIdToken();
-
-      const params = new URLSearchParams({ bookingId: booking.id, universityId: booking.universityId });
-      const response = await fetch(`/api/admin/bookings?${params.toString()}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || "Delete failed");
-      await fetchRows();
-    } catch (e: any) {
-      setError(e?.message || "Delete failed");
-    } finally {
-      setActionLoadingId(null);
-    }
-  }, [fetchRows]);
+  const deleteBooking = useCallback(async () => {
+    setError('Deletion is disabled in admin dashboard. Delete data only from Firebase project console.');
+  }, []);
 
   const stats = {
     total: analytics.combined.bookings.total,
@@ -415,9 +396,9 @@ export default function AdminBookingsPage() {
                       />
                       <ActionButton
                         icon={Trash2}
-                        title="Delete"
+                        title="Delete disabled (Firebase console only)"
                         className="hover:text-red-400"
-                        disabled={actionLoadingId === booking.id}
+                        disabled
                         onClick={() => void deleteBooking(booking)}
                       />
                       <ActionButton

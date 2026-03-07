@@ -343,14 +343,14 @@ export const QuickStatsBar = memo(function QuickStatsBar({ stats }: QuickStatsBa
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 p-3 sm:p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl backdrop-blur-md [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3"
+      className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 p-2.5 sm:p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl backdrop-blur-md w-full max-w-full overflow-hidden [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3"
     >
       {stats.map((stat, index) => {
         const IconComponent = iconMap[stat.icon] || Zap;
         return (
           <div
             key={index}
-            className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 bg-slate-800/50 rounded-lg min-w-0 [@media(max-height:700px)]:px-2 [@media(max-height:700px)]:py-1"
+            className="flex items-center gap-2 px-2 sm:px-3 py-1.5 bg-slate-800/50 rounded-lg min-w-0 w-full overflow-hidden [@media(max-height:700px)]:px-2 [@media(max-height:700px)]:py-1"
           >
             <IconComponent className="w-4 h-4 text-primary [@media(max-height:700px)]:w-3.5 [@media(max-height:700px)]:h-3.5" />
             <span className="text-xs sm:text-sm text-slate-400 truncate [@media(max-height:700px)]:text-xs">{stat.label}:</span>

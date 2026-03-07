@@ -13,30 +13,61 @@ export async function POST(req: NextRequest) {
     const uid = payload.uid;
 
     const body = await req.json().catch(() => ({}));
-    const selectedUni = body?.selectedUni || 'fast';
-    const allUniversities = ['fast', 'ned', 'karachi'].filter(u => u !== selectedUni);
+    const selectedUniRaw = String(body?.selectedUni || 'fast').toLowerCase();
+    const universities = ['fast', 'ned', 'karachi'] as const;
+    const selectedUni = universities.includes(selectedUniRaw as any)
+      ? (selectedUniRaw as 'fast' | 'ned' | 'karachi')
+      : 'fast';
 
     // Check admin document first
     const adminSnap = await admin.firestore().doc(`admins/${uid}`).get().catch(() => null as any);
     const isAdmin = !!(adminSnap && adminSnap.exists);
 
-    // Check university-scoped profile
-    const uniSnap = await admin.firestore().doc(`universities/${selectedUni}/users/${uid}`).get().catch(() => null as any);
-    if (uniSnap && uniSnap.exists) return NextResponse.json({ isMember: true, isAdmin, university: selectedUni });
-
-    // Check ALL other universities - IMPORTANT: return which university the user belongs to
-    for (const otherUni of allUniversities) {
-      const otherSnap = await admin.firestore().doc(`universities/${otherUni}/users/${uid}`).get().catch(() => null as any);
-      if (otherSnap && otherSnap.exists) return NextResponse.json({ isMember: true, isAdmin, university: otherUni, registeredIn: otherUni });
+    const memberships: Array<'fast' | 'ned' | 'karachi'> = [];
+    for (const uni of universities) {
+      const snap = await admin.firestore().doc(`universities/${uni}/users/${uid}`).get().catch(() => null as any);
+      if (snap && snap.exists) memberships.push(uni);
     }
 
-    // Check legacy top-level users/{univ}_{uid}
-    const legacySelected = await admin.firestore().doc(`users/${selectedUni}_${uid}`).get().catch(() => null as any);
-    if (legacySelected && legacySelected.exists) return NextResponse.json({ isMember: true, isAdmin, university: selectedUni, legacy: true });
-    
-    for (const otherUni of allUniversities) {
-      const legacyOther = await admin.firestore().doc(`users/${otherUni}_${uid}`).get().catch(() => null as any);
-      if (legacyOther && legacyOther.exists) return NextResponse.json({ isMember: true, isAdmin, university: otherUni, legacy: true, registeredIn: otherUni });
+    let preferredUniversity: 'fast' | 'ned' | 'karachi' | null = null;
+    const topLevelUserSnap = await admin.firestore().doc(`users/${uid}`).get().catch(() => null as any);
+    if (topLevelUserSnap?.exists) {
+      const topUniversity = String((topLevelUserSnap.data() as any)?.university || '').toLowerCase();
+      if (universities.includes(topUniversity as any) && memberships.includes(topUniversity as any)) {
+        preferredUniversity = topUniversity as 'fast' | 'ned' | 'karachi';
+      }
+    }
+
+    if (memberships.length > 0) {
+      const resolvedUniversity = preferredUniversity || memberships[0];
+      return NextResponse.json({
+        isMember: true,
+        isAdmin,
+        university: resolvedUniversity,
+        registeredIn: resolvedUniversity,
+        hasMultipleMemberships: memberships.length > 1,
+        memberships,
+      });
+    }
+
+    // Legacy fallback: top-level users/{univ}_{uid}
+    const legacyMemberships: Array<'fast' | 'ned' | 'karachi'> = [];
+    for (const uni of universities) {
+      const legacy = await admin.firestore().doc(`users/${uni}_${uid}`).get().catch(() => null as any);
+      if (legacy && legacy.exists) legacyMemberships.push(uni);
+    }
+
+    if (legacyMemberships.length > 0) {
+      const resolvedLegacyUniversity = legacyMemberships[0];
+      return NextResponse.json({
+        isMember: true,
+        isAdmin,
+        university: resolvedLegacyUniversity,
+        registeredIn: resolvedLegacyUniversity,
+        legacy: true,
+        hasMultipleMemberships: legacyMemberships.length > 1,
+        memberships: legacyMemberships,
+      });
     }
 
     return NextResponse.json({ isMember: false, isAdmin });

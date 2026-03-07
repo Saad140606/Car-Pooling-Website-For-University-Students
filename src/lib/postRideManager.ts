@@ -14,6 +14,7 @@
 import { Firestore, collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, getDocs, getDoc } from 'firebase/firestore';
 import type { PendingPostRideWorkflow, PostRideStatus, PostRideConfig } from '@/types/postRideWorkflow';
 import { getPostRideConfig } from '@/types/postRideWorkflow';
+import { parseTimestampToMs } from '@/lib/timestampUtils';
 
 type WorkflowCallback = (workflows: PendingPostRideWorkflow[]) => void;
 
@@ -26,7 +27,7 @@ class PostRideManager {
   // Listeners
   private ridesListener: (() => void) | null = null;
   private bookingsListener: (() => void) | null = null;
-  private timers: Map<string, NodeJS.Timeout> = new Map();
+  private timers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   
   // Callbacks
   private callbacks: WorkflowCallback[] = [];
@@ -211,67 +212,108 @@ class PostRideManager {
   private evaluateRideForWorkflow(rideId: string, rideData: any, role: 'passenger' | 'driver') {
     const workflowKey = `${rideId}-${role}`;
 
+    // Clean previous timer when ride updates to keep scheduling deterministic.
+    const existingTimer = this.timers.get(workflowKey);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.timers.delete(workflowKey);
+    }
+
     // Skip if already processed
     if (this.processedRideIds.has(workflowKey)) {
       return;
     }
 
-    // Get ride departure time
-    const departureTime = rideData.departureTime?.toDate?.() || new Date(rideData.departureTime);
-    const now = new Date();
-    const timeSinceDeparture = (now.getTime() - departureTime.getTime()) / 1000; // in seconds
+    const departureMs = parseTimestampToMs(rideData?.departureTime, { silent: true });
+    if (departureMs === null) return;
 
-    console.log('[PostRideManager] Evaluating ride:', {
-      rideId,
-      role,
-      departureTime: departureTime.toISOString(),
-      timeSinceDeparture: Math.round(timeSinceDeparture),
-      triggerDelay: this.config.triggerDelaySeconds,
-      shouldTrigger: timeSinceDeparture >= this.config.triggerDelaySeconds,
+    const triggerAtMs = departureMs + this.config.triggerDelaySeconds * 1000;
+    const nowMs = Date.now();
+
+    const confirmedPassengers = Array.isArray(rideData?.confirmedPassengers)
+      ? rideData.confirmedPassengers
+      : [];
+
+    const isPassengerConfirmed = confirmedPassengers.some((passenger: any) => {
+      if (typeof passenger === 'string') return passenger === this.userId;
+      const passengerId = String(passenger?.userId || passenger?.passengerId || passenger?.id || '');
+      return passengerId === this.userId;
     });
 
-    // Check if enough time has passed since departure
-    if (timeSinceDeparture >= this.config.triggerDelaySeconds) {
-      const postRideStatus = rideData.postRideStatus as PostRideStatus | undefined;
+    const shouldEvaluateForRole = role === 'driver'
+      ? confirmedPassengers.length > 0
+      : isPassengerConfirmed;
 
-      // Check if workflow is already completed
-      const isCompletedPassenger = role === 'passenger' && postRideStatus?.passengerConfirmed;
-      const isCompletedDriver = role === 'driver' && postRideStatus?.driverConfirmed;
-
-      if (!isCompletedPassenger && !isCompletedDriver) {
-        // Create workflow
-        const workflow: PendingPostRideWorkflow = {
-          rideId,
-          userId: this.userId!,
-          userRole: role,
-          rideData: {
-            id: rideId,
-            driverId: rideData.driverId,
-            passengerId: rideData.passengerId || this.userId!,
-            departureTime,
-            departureLocation: rideData.departureLocation,
-            destinationLocation: rideData.destinationLocation,
-            confirmedPassengers: rideData.confirmedPassengers?.map((p: any) => ({
-              id: p.passengerId,
-              name: p.name,
-              email: p.email,
-            })) || [],
-          },
-          university: this.university!,
-        };
-
-        this.pendingWorkflows.set(workflowKey, workflow);
-        this.processedRideIds.add(workflowKey);
-
-        console.log('[PostRideManager] Created pending workflow:', { rideId, role });
-        this.notifyCallbacks();
-
-        // Mark as pending in Firestore so it persists across sessions
-        this.markWorkflowPending(rideId, role).catch(error => {
-          console.error('[PostRideManager] Failed to mark workflow pending:', error);
-        });
-      }
+    if (!shouldEvaluateForRole) {
+      return;
     }
+
+    const postRideStatus = rideData.postRideStatus as PostRideStatus | undefined;
+    const isCompletedPassenger = role === 'passenger' && postRideStatus?.passengerConfirmed;
+    const isCompletedDriver = role === 'driver' && postRideStatus?.driverConfirmed;
+    if (isCompletedPassenger || isCompletedDriver) {
+      return;
+    }
+
+    const createWorkflow = () => {
+      // Skip if already processed in the meantime.
+      if (this.processedRideIds.has(workflowKey)) return;
+
+      const departureTime = new Date(departureMs);
+
+      const workflow: PendingPostRideWorkflow = {
+        rideId,
+        userId: this.userId!,
+        userRole: role,
+        rideData: {
+          id: rideId,
+          driverId: rideData.driverId,
+          passengerId: rideData.passengerId || this.userId!,
+          departureTime,
+          departureLocation: rideData.departureLocation,
+          destinationLocation: rideData.destinationLocation,
+          confirmedPassengers: confirmedPassengers.map((p: any) => ({
+            id: p?.passengerId || p?.userId || p?.id || p,
+            name: p?.name || p?.passengerName || 'Passenger',
+            email: p?.email || '',
+          })),
+        },
+        university: this.university!,
+      };
+
+      this.pendingWorkflows.set(workflowKey, workflow);
+      this.processedRideIds.add(workflowKey);
+      this.notifyCallbacks();
+
+      console.log('[PostRideManager] Created pending workflow:', {
+        rideId,
+        role,
+        triggerAt: new Date(triggerAtMs).toISOString(),
+      });
+
+      this.markWorkflowPending(rideId, role).catch((error) => {
+        console.error('[PostRideManager] Failed to mark workflow pending:', error);
+      });
+    };
+
+    if (nowMs >= triggerAtMs) {
+      createWorkflow();
+      return;
+    }
+
+    const delayMs = Math.max(0, triggerAtMs - nowMs);
+    const timer = setTimeout(() => {
+      this.timers.delete(workflowKey);
+      createWorkflow();
+    }, delayMs);
+    this.timers.set(workflowKey, timer);
+
+    console.log('[PostRideManager] Scheduled workflow trigger:', {
+      rideId,
+      role,
+      triggerAt: new Date(triggerAtMs).toISOString(),
+      inSeconds: Math.round(delayMs / 1000),
+    });
   }
 
   /**

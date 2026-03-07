@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { clearAdminOtpSession, isAdminOtpSessionValid } from '@/lib/adminOtpSession';
 
 interface AdminAuthState {
   loading: boolean;
@@ -39,6 +40,7 @@ export function useAdminAuth() {
     
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
+        clearAdminOtpSession();
         // Not signed in at all - redirect to admin login
         console.log('[useAdminAuth] No user signed in, redirecting to login');
         setState({
@@ -72,6 +74,22 @@ export function useAdminAuth() {
         const data = await response.json();
 
         if (data.isAdmin) {
+          const hasOtpSession = isAdminOtpSessionValid(user.uid);
+          if (!hasOtpSession) {
+            await auth.signOut();
+            clearAdminOtpSession();
+            setState({
+              loading: false,
+              isAdmin: false,
+              uid: null,
+              email: null,
+              error: 'Two-factor verification required',
+              idToken: null,
+            });
+            router.replace('/admin-login?error=otp-required');
+            return;
+          }
+
           console.log('[useAdminAuth] ✅ Admin role verified:', user.email);
           setState({
             loading: false,
@@ -85,6 +103,7 @@ export function useAdminAuth() {
           // Not an admin - sign out and redirect
           console.warn('[useAdminAuth] ❌ User is not an admin:', user.email);
           await auth.signOut();
+          clearAdminOtpSession();
           setState({
             loading: false,
             isAdmin: false,
@@ -98,6 +117,7 @@ export function useAdminAuth() {
       } catch (error) {
         console.error('[useAdminAuth] Error verifying admin role:', error);
         await auth.signOut();
+        clearAdminOtpSession();
         setState({
           loading: false,
           isAdmin: false,

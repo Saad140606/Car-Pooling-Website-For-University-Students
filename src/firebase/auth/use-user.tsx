@@ -139,19 +139,24 @@ export function useUser() {
         return !!value && (value === 'ned' || value === 'fast' || value === 'karachi') && arr.indexOf(value) === index;
       });
 
-      for (const uni of preferredOrder) {
-        try {
-          const snap = await getDoc(doc(firestore, 'universities', uni, 'users', user.uid));
-          if (snap.exists()) {
-            if (!cancelled) {
-              setResolvedUniversity(uni);
-              setSelectedUniversity(uni);
-            }
-            return;
+      const existenceChecks = await Promise.all(
+        preferredOrder.map(async (uni) => {
+          try {
+            const snap = await getDoc(doc(firestore, 'universities', uni, 'users', user.uid));
+            return { uni, exists: snap.exists() };
+          } catch (_) {
+            return { uni, exists: false };
           }
-        } catch (_) {
-          // try next university
+        })
+      );
+
+      const resolved = preferredOrder.find((uni) => existenceChecks.find((entry) => entry.uni === uni)?.exists);
+      if (resolved) {
+        if (!cancelled) {
+          setResolvedUniversity(resolved);
+          setSelectedUniversity(resolved);
         }
+        return;
       }
 
       const fallback = getSelectedUniversity() || getPendingUniversity() || 'fast';

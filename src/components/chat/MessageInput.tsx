@@ -1,12 +1,10 @@
 import React, { useState, useRef } from 'react';
-import VoiceRecorder from './VoiceRecorder';
-import { Send, Smile } from 'lucide-react';
+import { Send } from 'lucide-react';
 
-export default function MessageInput({ onSend, onTyping, onSendMedia, onSendVoice, disabled }: { 
+export default function MessageInput({ onSend, onTyping, onSendMedia, disabled }: { 
   onSend: (text: string) => Promise<any>, 
   onTyping: (v: boolean) => void, 
   onSendMedia: (url: string, type: 'image' | 'video' | 'audio' | 'file') => Promise<any>,
-  onSendVoice: (url: string) => Promise<any>,
   disabled?: boolean 
 }) {
   const [text, setText] = useState('');
@@ -61,25 +59,14 @@ export default function MessageInput({ onSend, onTyping, onSendMedia, onSendVoic
         
         {/* Right actions */}
         <div className="flex items-center gap-1 pb-2">
-          {text.trim() ? (
-            <button 
-              onClick={handleSend} 
-              disabled={disabled}
-              className="p-2.5 rounded-full bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 text-white shadow-lg shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95 flex-shrink-0"
-              aria-label="Send message"
-            >
-              <Send className="h-5 w-5" />
-            </button>
-          ) : (
-            <VoiceRecorder onSend={async (url: string) => { 
-              try {
-                await onSendVoice(url);
-              } catch (err: any) {
-                console.error('Failed to send voice:', err);
-                alert(err?.message || 'Failed to send voice message');
-              }
-            }} disabled={disabled} />
-          )}
+          <button 
+            onClick={handleSend} 
+            disabled={disabled || !text.trim()}
+            className="p-2.5 rounded-full bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 text-white shadow-lg shadow-primary/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+            aria-label="Send message"
+          >
+            <Send className="h-5 w-5" />
+          </button>
         </div>
       </div>
     </div>

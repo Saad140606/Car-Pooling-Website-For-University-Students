@@ -174,11 +174,44 @@ export function AuthForm({ university, action }: AuthFormProps) {
           },
           body: JSON.stringify({ selectedUni }),
         });
-        if (res.ok) {
-          serverResult = await res.json();
+        if (!res.ok) {
+          throw new Error('Could not verify university membership');
         }
+        serverResult = await res.json();
       } catch (err) {
         console.error('Error checking membership for Google sign-in:', err);
+        try { await signOut(auth); } catch (_) {}
+        toast({
+          variant: 'destructive',
+          title: 'Verification Failed',
+          description: 'Unable to verify your university portal right now. Please try again.',
+        });
+        return;
+      }
+
+      if (!serverResult || typeof serverResult.isMember !== 'boolean') {
+        try { await signOut(auth); } catch (_) {}
+        toast({
+          variant: 'destructive',
+          title: 'Verification Failed',
+          description: 'Could not validate account portal mapping. Please try again.',
+        });
+        return;
+      }
+
+      if (serverResult?.hasMultipleMemberships && serverResult?.registeredIn && serverResult.registeredIn !== selectedUni) {
+        try { await signOut(auth); } catch (_) {}
+        const uniName = serverResult.registeredIn === 'fast'
+          ? 'FAST University'
+          : serverResult.registeredIn === 'karachi'
+            ? 'Karachi University'
+            : 'NED University';
+        toast({
+          variant: 'destructive',
+          title: 'Wrong University Portal',
+          description: `This account is registered with ${uniName} portal. Please sign in through that portal only.`,
+        });
+        return;
       }
 
       if (serverResult && serverResult.isMember && serverResult.university !== selectedUni) {

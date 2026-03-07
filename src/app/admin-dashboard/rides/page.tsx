@@ -227,28 +227,9 @@ export default function AdminRidesPage() {
     }
   }, [fetchRows]);
 
-  const deleteRide = useCallback(async (ride: RideRow) => {
-    try {
-      setActionLoadingId(ride.id);
-      const authUser = getAuth().currentUser;
-      if (!authUser) throw new Error("Admin authentication required");
-      const token = await authUser.getIdToken();
-
-      const params = new URLSearchParams({ rideId: ride.id, universityId: ride.universityId });
-      const response = await fetch(`/api/admin/rides?${params.toString()}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || "Delete failed");
-      await fetchRows();
-    } catch (e: any) {
-      setError(e?.message || "Delete failed");
-    } finally {
-      setActionLoadingId(null);
-    }
-  }, [fetchRows]);
+  const deleteRide = useCallback(async () => {
+    setError('Deletion is disabled in admin dashboard. Delete data only from Firebase project console.');
+  }, []);
 
   const stats = {
     total: analytics.combined.rides.total,
@@ -427,9 +408,9 @@ export default function AdminRidesPage() {
                       />
                       <ActionButton
                         icon={Trash2}
-                        title="Delete"
+                        title="Delete disabled (Firebase console only)"
                         className="hover:text-red-400"
-                        disabled={actionLoadingId === ride.id}
+                        disabled
                         onClick={() => void deleteRide(ride)}
                       />
                       <ActionButton

@@ -1149,7 +1149,7 @@ export default function MyBookingsPage() {
         <div className="section-shell py-8 relative z-10">
           <EmptyState
             title="No Active Bookings"
-            description="No bookings found. Browse available rides and make a booking."
+            description="Passengers can view their bookings here. Browse available rides and make a booking."
             action={{
               label: 'Find a Ride',
               onClick: () => window.location.href = '/dashboard/rides'
@@ -1172,7 +1172,10 @@ export default function MyBookingsPage() {
       <div className="section-shell py-8 relative z-10">
         <div className="mb-6 sm:mb-8 animate-page">
           <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Bookings</h1>
-          <p className="text-slate-300">View and manage your ride bookings</p>
+          <p className="text-slate-300">
+            Confirm one accepted ride quickly to lock your seat. When you confirm one booking, your other active booking
+            requests for that same trip are auto-cancelled.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">

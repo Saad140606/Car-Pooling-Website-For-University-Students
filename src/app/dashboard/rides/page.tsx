@@ -781,7 +781,7 @@ function RideCard({ ride, user, userData, firestore, selectedUniversity }: { rid
               <Loader2 className="h-4 w-4 animate-spin" />
               Sending Request...
             </span>
-          ) : (alreadyBooked ? 'Already Requested' : 'Request Pickup')}
+          ) : (hasBlockingRequest ? 'Already Requested' : 'Request Pickup')}
         <circle cx={start.x} cy={start.y} r="3.5" fill="#10B981" stroke="#ffffff" strokeWidth="1" />
         {/* End pin: small map-pin shape composed of head + tail */}
         <g transform={`translate(${end.x}, ${end.y})`}>
@@ -1380,6 +1380,10 @@ function RidesPageInner() {
           {!user && <button onClick={() => router.back()} className="px-3 py-2 rounded-md bg-white/10 hover:bg-white/15 text-sm text-slate-200">← Back</button>}
           <h1 className="text-3xl font-headline font-bold text-slate-50">Available Rides</h1>
         </div>
+        <p className="text-slate-300 text-sm sm:text-base mb-6 max-w-3xl">
+          Tip: You can request multiple rides first to keep options open. Once one ride provider accepts your request,
+          confirm only the ride you want to lock your seat.
+        </p>
 
         {activeRideLock && (
           <div className="mb-5 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
@@ -1626,7 +1630,7 @@ function RidesPageInner() {
           <div className="ml-4 flex items-center gap-2 w-full max-w-md">
             <Input value={searchQuery} onChange={(e: any) => setSearchQuery(e.target.value)} placeholder="Search by from, to, ride provider, price..." />
             {searchQuery ? (
-              <Button variant="ghost" onClick={() => setSearchQuery('')}>Clear</Button>
+              <Button className="hidden sm:inline-flex" variant="ghost" onClick={() => setSearchQuery('')}>Clear</Button>
             ) : (
               <div className="hidden sm:flex items-center text-slate-400 pl-2"><SearchIcon className="w-4 h-4"/></div>
             )}

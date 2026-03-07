@@ -35,6 +35,29 @@ type Step = {
   accent?: string;
 };
 
+const tutorialVideos = [
+  {
+    label: 'Passenger View Tutorial',
+    title: 'How To Book, Confirm, And Ride',
+    description:
+      'Watch the complete passenger flow from sending requests to confirming one ride and coordinating pickup.',
+    embedUrl: 'https://www.youtube-nocookie.com/embed/cKBEI7ZfiJk',
+    icon: <UserCheck className="h-5 w-5" />,
+    ctaLabel: 'Watch On YouTube',
+    youtubeUrl: 'https://youtu.be/cKBEI7ZfiJk?si=Tz9jgmTJwIpxRAoT',
+  },
+  {
+    label: 'Ride Provider View Tutorial',
+    title: 'How To Accept Riders And Manage Seats',
+    description:
+      'See the full driver-side experience: handling requests, seat flow, and in-app coordination with passengers.',
+    embedUrl: 'https://www.youtube-nocookie.com/embed/3SsIB8C-yL8',
+    icon: <Car className="h-5 w-5" />,
+    ctaLabel: 'Watch On YouTube',
+    youtubeUrl: 'https://youtu.be/3SsIB8C-yL8?si=lUNvlelbB4OS8fNL',
+  },
+];
+
 const coreSteps: Step[] = [
   {
     label: 'Step 1',
@@ -238,6 +261,79 @@ export default function HowItWorks() {
                 </div>
               </div>
             </Reveal>
+          </div>
+        </section>
+
+        <section className="relative overflow-hidden pb-10 sm:pb-14">
+          <div className="absolute inset-0 -z-10 pointer-events-none" aria-hidden>
+            <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-primary/10 to-transparent" />
+            <div className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-primary/15 blur-3xl" />
+            <div className="absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-accent/15 blur-3xl" />
+          </div>
+
+          <div className="container mx-auto px-4">
+            <Reveal>
+              <div className="mb-6 sm:mb-8 flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tutorial Hub</p>
+                  <h2 className="font-headline text-3xl sm:text-4xl text-slate-50">Start With Video Walkthroughs</h2>
+                  <p className="mt-2 max-w-2xl text-sm sm:text-base text-slate-300">
+                    First watch passenger flow, then ride provider flow. These videos match the live app screens so you can follow confidently.
+                  </p>
+                </div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+                  <Zap className="h-4 w-4" />
+                  Pro Max Tutorials
+                </div>
+              </div>
+            </Reveal>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              {tutorialVideos.map((video, index) => (
+                <AnimatedCard
+                  key={video.title}
+                  animation="scale-up"
+                  hover="lift"
+                  delay={(index + 1) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}
+                  className="group overflow-hidden border-primary/25 bg-gradient-to-br from-card/85 via-card/70 to-card/55 shadow-xl"
+                >
+                  <CardHeader className="relative z-10 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
+                        {video.icon}
+                        {video.label}
+                      </div>
+                      <span className="rounded-full border border-border/60 bg-background/60 px-3 py-1 text-[11px] text-muted-foreground">HD Guide</span>
+                    </div>
+                    <CardTitle className="font-headline text-2xl leading-tight text-slate-50">{video.title}</CardTitle>
+                    <p className="text-sm text-slate-300">{video.description}</p>
+                  </CardHeader>
+
+                  <CardContent className="space-y-4">
+                    <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-slate-950/70 shadow-inner">
+                      <div className="aspect-video">
+                        <iframe
+                          src={video.embedUrl}
+                          title={video.title}
+                          className="h-full w-full"
+                          loading="lazy"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          referrerPolicy="strict-origin-when-cross-origin"
+                          allowFullScreen
+                        />
+                      </div>
+                    </div>
+
+                    <Button asChild variant="outline" className="w-full rounded-xl border-primary/35 bg-primary/5 text-slate-100 hover:bg-primary/15 hover:border-primary/60">
+                      <Link href={video.youtubeUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2">
+                        {video.ctaLabel}
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  </CardContent>
+                </AnimatedCard>
+              ))}
+            </div>
           </div>
         </section>
 

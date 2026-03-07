@@ -73,7 +73,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
       setIsLoading(true);
       setError(null);
       
-      const token = await user.getIdToken(true);
+      const token = await user.getIdToken();
       if (!token) return;
       
       const response = await fetch(
@@ -107,7 +107,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
     try {
       setIsProcessing(true);
       
-      const token = await user.getIdToken(true);
+      const token = await user.getIdToken();
       if (!token) return;
       
       const response = await fetch('/api/analytics/process-completed', {
@@ -367,7 +367,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
       {/* Rating Distribution */}
       <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-yellow-400" />
             Rating Distribution
           </CardTitle>
@@ -394,7 +394,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
                       className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400"
                     />
                   </div>
-                  <span className="text-sm text-gray-400 min-w-[28px] text-right flex-shrink-0">
+                  <span className="text-xs sm:text-sm text-gray-400 min-w-[24px] sm:min-w-[28px] text-right flex-shrink-0">
                     {count}
                   </span>
                 </div>
@@ -408,7 +408,7 @@ export default function DriverEarningsCard({ compact = false, onViewDetails }: D
       <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
               <Calendar className="w-5 h-5 text-emerald-400" />
               Recent Rides
             </CardTitle>

@@ -1891,7 +1891,10 @@ export default function MyRidesPage() {
       <div className="section-shell py-8 relative z-10">
         <div className="mb-6 sm:mb-8 animate-page">
           <h1 className="text-3xl font-headline font-bold text-slate-50 mb-2">My Offered Rides</h1>
-          <p className="text-slate-300">Ride providers can view and track their ride offers after creating them.</p>
+          <p className="text-slate-300">
+            Review incoming requests, accept multiple passengers if seats are available, and wait for each passenger to confirm.
+            A seat is only locked after passenger confirmation.
+          </p>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {ridesWithStatus

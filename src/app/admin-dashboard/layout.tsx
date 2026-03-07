@@ -6,6 +6,7 @@ import { Loader2, ShieldOff, Menu } from "lucide-react";
 import { useAuth } from "@/firebase";
 import { getAuth } from "firebase/auth";
 import AdminSidebar from "@/components/AdminSidebar";
+import { clearAdminOtpSession, isAdminOtpSessionValid } from "@/lib/adminOtpSession";
 
 export default function AdminDashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -44,6 +45,16 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
 
     // If authContext already has user, allow access
     if (user) {
+      if (!isAdminOtpSessionValid(user.uid)) {
+        try {
+          void getAuth().signOut();
+        } catch (_) {
+          // ignore signout race
+        }
+        clearAdminOtpSession();
+        router.replace('/admin-login?error=otp-required');
+        return;
+      }
       setIsReady(true);
       return;
     }
@@ -53,6 +64,16 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
       const authDirect = getAuth();
       const current = authDirect.currentUser;
       if (current) {
+        if (!isAdminOtpSessionValid(current.uid)) {
+          try {
+            void authDirect.signOut();
+          } catch (_) {
+            // ignore signout race
+          }
+          clearAdminOtpSession();
+          router.replace('/admin-login?error=otp-required');
+          return;
+        }
         setIsReady(true);
         return;
       }

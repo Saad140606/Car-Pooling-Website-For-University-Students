@@ -1241,13 +1241,6 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
             rideId: resolvedRideId,
             senderName: resolvedSenderName || undefined,
           })}
-          onSendVoice={async (mediaUrl) => await sendMessage({
-            type: 'voice',
-            mediaUrl,
-            recipientId: effectiveRecipientId || undefined,
-            rideId: resolvedRideId,
-            senderName: resolvedSenderName || undefined,
-          })}
           disabled={accessible !== true || (typeof effectiveMeta?.status === 'string' && effectiveMeta.status !== 'active')} 
         />
       </div>

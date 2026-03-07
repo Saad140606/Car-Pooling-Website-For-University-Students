@@ -212,7 +212,7 @@ export const StatCard = memo(function StatCard({
         styles.border,
         'transition-all duration-300',
         `hover:shadow-lg ${styles.glow}`,
-        compact ? 'p-4' : 'p-6',
+        compact ? 'p-3 sm:p-4' : 'p-4 sm:p-5',
         '[@media(max-height:700px)]:p-4'
       )}
     >
@@ -245,7 +245,7 @@ export const StatCard = memo(function StatCard({
         </div>
 
         {/* Title */}
-        <p className="text-xs sm:text-sm text-slate-400 mb-1 leading-snug [@media(max-height:700px)]:text-[11px]">{title}</p>
+        <p className="text-[11px] sm:text-sm text-slate-400 mb-1 leading-snug [@media(max-height:700px)]:text-[11px]">{title}</p>
 
         {/* Value */}
         <div className="flex items-baseline gap-1">
@@ -255,10 +255,10 @@ export const StatCard = memo(function StatCard({
               prefix={prefix}
               suffix={suffix}
               decimals={decimals}
-              className={cn('font-bold text-white', compact ? 'text-lg sm:text-2xl' : 'text-xl sm:text-3xl', '[@media(max-height:700px)]:text-lg')}
+              className={cn('font-bold text-white', compact ? 'text-base sm:text-xl' : 'text-lg sm:text-2xl', '[@media(max-height:700px)]:text-lg')}
             />
           ) : (
-            <span className={cn('font-bold text-white break-words', compact ? 'text-lg sm:text-2xl' : 'text-xl sm:text-3xl', '[@media(max-height:700px)]:text-lg')}>
+            <span className={cn('font-bold text-white break-words', compact ? 'text-base sm:text-xl' : 'text-lg sm:text-2xl', '[@media(max-height:700px)]:text-lg')}>
               {prefix}{value}{suffix}
             </span>
           )}

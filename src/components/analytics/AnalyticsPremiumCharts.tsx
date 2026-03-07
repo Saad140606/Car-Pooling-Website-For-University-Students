@@ -134,14 +134,14 @@ export const ChartWrapper = memo(function ChartWrapper({
       className={cn(
         'relative overflow-hidden rounded-xl border border-slate-800/50',
         'bg-gradient-to-br from-slate-900/80 via-slate-900/60 to-slate-950/80',
-        'backdrop-blur-md p-4 sm:p-6 [@media(max-height:700px)]:p-3',
+        'backdrop-blur-md p-3 sm:p-4 [@media(max-height:700px)]:p-3',
         className
       )}
     >
       {/* Header */}
       <div className="mb-4 [@media(max-height:700px)]:mb-2">
-        <h3 className="text-lg font-semibold text-white [@media(max-height:700px)]:text-base">{title}</h3>
-        {subtitle && <p className="text-sm text-slate-400 mt-1 [@media(max-height:700px)]:text-xs">{subtitle}</p>}
+        <h3 className="text-base sm:text-lg font-semibold text-white [@media(max-height:700px)]:text-base">{title}</h3>
+        {subtitle && <p className="text-xs sm:text-sm text-slate-400 mt-1 [@media(max-height:700px)]:text-xs">{subtitle}</p>}
       </div>
 
       {/* Chart content */}
@@ -170,7 +170,7 @@ export const RidesLineChart = memo(function RidesLineChart({
   title = 'Rides Over Time',
   color = CHART_COLORS.primary,
   showArea = true,
-  height = 300,
+  height = 220,
 }: RidesLineChartProps) {
   const resolvedHeight = useCompactHeight(height, 220);
   const chartData = useMemo(() => {
@@ -205,14 +205,14 @@ export const RidesLineChart = memo(function RidesLineChart({
             <XAxis
               dataKey="name"
               stroke="#64748B"
-              fontSize={12}
+              fontSize={10}
               tickLine={false}
               axisLine={false}
               interval="preserveStartEnd"
             />
             <YAxis
               stroke="#64748B"
-              fontSize={12}
+              fontSize={10}
               tickLine={false}
               axisLine={false}
               allowDecimals={false}
@@ -235,13 +235,13 @@ export const RidesLineChart = memo(function RidesLineChart({
             <XAxis
               dataKey="name"
               stroke="#64748B"
-              fontSize={12}
+              fontSize={10}
               tickLine={false}
               axisLine={false}
             />
             <YAxis
               stroke="#64748B"
-              fontSize={12}
+              fontSize={10}
               tickLine={false}
               axisLine={false}
               allowDecimals={false}
@@ -279,7 +279,7 @@ export const EarningsChart = memo(function EarningsChart({
   data,
   title = 'Earnings Over Time',
   isSpending = false,
-  height = 300,
+  height = 220,
 }: EarningsChartProps) {
   const resolvedHeight = useCompactHeight(height, 220);
   const chartData = useMemo(() => {
@@ -316,14 +316,14 @@ export const EarningsChart = memo(function EarningsChart({
           <XAxis
             dataKey="name"
             stroke="#64748B"
-            fontSize={12}
+            fontSize={10}
             tickLine={false}
             axisLine={false}
             interval="preserveStartEnd"
           />
           <YAxis
             stroke="#64748B"
-            fontSize={12}
+            fontSize={10}
             tickLine={false}
             axisLine={false}
             tickFormatter={(value) => `PKR ${value}`}
@@ -358,7 +358,7 @@ interface WeeklyActivityChartProps {
 export const WeeklyActivityChart = memo(function WeeklyActivityChart({
   data,
   title = 'Weekly Activity',
-  height = 250,
+  height = 200,
 }: WeeklyActivityChartProps) {
   const resolvedHeight = useCompactHeight(height, 190);
   const chartData = useMemo(() => {
@@ -386,13 +386,13 @@ export const WeeklyActivityChart = memo(function WeeklyActivityChart({
           <XAxis
             dataKey="name"
             stroke="#64748B"
-            fontSize={12}
+            fontSize={10}
             tickLine={false}
             axisLine={false}
           />
           <YAxis
             stroke="#64748B"
-            fontSize={12}
+            fontSize={10}
             tickLine={false}
             axisLine={false}
             allowDecimals={false}
@@ -434,7 +434,7 @@ interface StatusPieChartProps {
 export const StatusPieChart = memo(function StatusPieChart({
   data,
   title = 'Ride Status Breakdown',
-  height = 300,
+  height = 220,
 }: StatusPieChartProps) {
   const resolvedHeight = useCompactHeight(height, 220);
   const total = useMemo(() => data.reduce((sum, d) => sum + d.value, 0), [data]);
@@ -451,47 +451,49 @@ export const StatusPieChart = memo(function StatusPieChart({
 
   return (
     <ChartWrapper title={title} subtitle={`Total: ${total} rides`}>
-      <div className="flex flex-col lg:flex-row items-center gap-6">
-        <ResponsiveContainer width="100%" height={resolvedHeight}>
-          <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={100}
-              paddingAngle={2}
-              dataKey="value"
-              nameKey="label"
-              animationDuration={1500}
-              animationEasing="ease-out"
-            >
-              {data.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-              ))}
-            </Pie>
-            <Tooltip
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const item = payload[0].payload;
-                const percentage = ((item.value / total) * 100).toFixed(1);
-                return (
-                  <div className="bg-slate-900/95 backdrop-blur-md border border-slate-700/50 rounded-lg p-3 shadow-xl">
-                    <p className="text-sm font-semibold" style={{ color: item.color }}>
-                      {item.label}
-                    </p>
-                    <p className="text-sm text-slate-300">
-                      {item.value} rides ({percentage}%)
-                    </p>
-                  </div>
-                );
-              }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
+      <div className="flex w-full min-w-0 max-w-full flex-col items-center gap-4 overflow-hidden sm:gap-6 xl:flex-row">
+        <div className="w-full min-w-0 max-w-full overflow-hidden">
+          <ResponsiveContainer width="100%" height={resolvedHeight}>
+            <PieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                innerRadius={42}
+                outerRadius={78}
+                paddingAngle={2}
+                dataKey="value"
+                nameKey="label"
+                animationDuration={1500}
+                animationEasing="ease-out"
+              >
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                ))}
+              </Pie>
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const item = payload[0].payload;
+                  const percentage = ((item.value / total) * 100).toFixed(1);
+                  return (
+                    <div className="bg-slate-900/95 backdrop-blur-md border border-slate-700/50 rounded-lg p-3 shadow-xl">
+                      <p className="text-sm font-semibold" style={{ color: item.color }}>
+                        {item.label}
+                      </p>
+                      <p className="text-sm text-slate-300">
+                        {item.value} rides ({percentage}%)
+                      </p>
+                    </div>
+                  );
+                }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
 
         {/* Legend */}
-        <div className="flex flex-wrap lg:flex-col gap-3 justify-center">
+        <div className="flex w-full min-w-0 max-w-full flex-wrap justify-center gap-2 overflow-hidden sm:gap-3 xl:w-auto xl:flex-col">
           {data.map((entry, index) => {
             const percentage = ((entry.value / total) * 100).toFixed(1);
             return (
@@ -500,13 +502,13 @@ export const StatusPieChart = memo(function StatusPieChart({
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: index * 0.1 }}
-                className="flex items-center gap-2"
+                className="flex min-w-0 max-w-full items-center gap-2"
               >
                 <div
-                  className="w-3 h-3 rounded-full"
+                  className="h-3 w-3 flex-shrink-0 rounded-full"
                   style={{ backgroundColor: entry.color }}
                 />
-                <span className="text-sm text-slate-300">
+                <span className="min-w-0 break-words text-[11px] text-slate-300 sm:text-sm">
                   {entry.label}: <span className="font-semibold text-white">{entry.value}</span>
                   <span className="text-slate-500 ml-1">({percentage}%)</span>
                 </span>
@@ -554,7 +556,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
   return (
     <ChartWrapper title={title} subtitle="Activity by day and hour">
       <div className="overflow-x-auto">
-        <div className="min-w-[360px] sm:min-w-[600px] [@media(max-height:700px)]:min-w-[520px]">
+        <div className="min-w-[260px] sm:min-w-[420px] [@media(max-height:700px)]:min-w-[360px]">
           {/* Hour labels */}
           <div className="flex gap-1 mb-1 pl-12 [@media(max-height:700px)]:pl-10">
             {[0, 6, 12, 18, 23].map(hour => (
@@ -584,7 +586,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
                   <div
                     key={`${day}-${hour}`}
                     className={cn(
-                      'w-5 h-5 rounded-sm transition-all duration-200 hover:scale-125 cursor-pointer relative group [@media(max-height:700px)]:w-4 [@media(max-height:700px)]:h-4',
+                      'w-4 h-4 sm:w-5 sm:h-5 rounded-sm transition-all duration-200 hover:scale-125 cursor-pointer relative group [@media(max-height:700px)]:w-4 [@media(max-height:700px)]:h-4',
                       getColor(value)
                     )}
                     title={`${day} ${hour}:00 - ${value} rides`}
@@ -621,7 +623,7 @@ export const ProgressCircle = memo(function ProgressCircle({
   percentage,
   label,
   sublabel,
-  size = 120,
+  size = 96,
   strokeWidth = 8,
   color = CHART_COLORS.primary,
 }: ProgressCircleProps) {
@@ -631,11 +633,15 @@ export const ProgressCircle = memo(function ProgressCircle({
     if (typeof window === 'undefined') return;
     const compute = () => {
       if (window.innerWidth <= 360) {
-        setResolvedSize(Math.min(size, 92));
+        setResolvedSize(Math.min(size, 78));
         return;
       }
       if (window.innerWidth <= 420) {
-        setResolvedSize(Math.min(size, 104));
+        setResolvedSize(Math.min(size, 86));
+        return;
+      }
+      if (window.innerWidth <= 520) {
+        setResolvedSize(Math.min(size, 94));
         return;
       }
       setResolvedSize(size);
@@ -654,9 +660,9 @@ export const ProgressCircle = memo(function ProgressCircle({
     <motion.div
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col items-center"
+      className="flex w-full min-w-0 flex-col items-center"
     >
-      <div className="relative" style={{ width: resolvedSize, height: resolvedSize }}>
+      <div className="relative mx-auto" style={{ width: resolvedSize, height: resolvedSize }}>
         <svg width={resolvedSize} height={resolvedSize} className="transform -rotate-90">
           {/* Background circle */}
           <circle
@@ -689,8 +695,8 @@ export const ProgressCircle = memo(function ProgressCircle({
           </span>
         </div>
       </div>
-      <p className="text-xs sm:text-sm font-medium text-white mt-2 text-center">{label}</p>
-      {sublabel && <p className="text-[11px] sm:text-xs text-slate-500 text-center">{sublabel}</p>}
+      <p className="mt-2 max-w-[11rem] text-center text-xs font-medium text-white sm:text-sm">{label}</p>
+      {sublabel && <p className="max-w-[11rem] text-center text-[10px] text-slate-500 sm:text-xs">{sublabel}</p>}
     </motion.div>
   );
 });

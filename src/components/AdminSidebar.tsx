@@ -17,6 +17,7 @@ import {
   Home,
 } from "lucide-react";
 import { getAuth, signOut } from "firebase/auth";
+import { clearAdminOtpSession } from "@/lib/adminOtpSession";
 
 const navItems = [
   { icon: Home, label: "Overview", href: "/admin-dashboard", badge: null },
@@ -46,6 +47,7 @@ export default function AdminSidebar({ collapsed, mobileOpen, onCloseMobile }: A
     const auth = getAuth();
     try {
       await signOut(auth);
+      clearAdminOtpSession();
       router.push('/admin-login');
     } catch (error) {
       console.error("Logout failed:", error);

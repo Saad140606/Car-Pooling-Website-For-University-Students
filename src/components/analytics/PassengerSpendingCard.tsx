@@ -79,7 +79,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       setIsLoading(true);
       setError(null);
       
-      const token = await user.getIdToken(true);
+      const token = await user.getIdToken();
       if (!token) return;
       
       const response = await fetch(
@@ -113,7 +113,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
     try {
       setIsProcessing(true);
       
-      const token = await user.getIdToken(true);
+      const token = await user.getIdToken();
       if (!token) return;
       
       const response = await fetch('/api/analytics/process-completed', {
@@ -412,7 +412,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       {/* Rating Distribution */}
       <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
             <Star className="w-5 h-5 text-yellow-400" />
             Rating Distribution
           </CardTitle>
@@ -426,9 +426,9 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                 : 0;
 
               return (
-                <div key={starValue} className="flex items-center gap-3">
-                  <div className="flex items-center gap-1 min-w-[48px]">
-                    <span className="text-sm text-gray-300">{starValue}</span>
+                <div key={starValue} className="flex items-center gap-2 sm:gap-3">
+                  <div className="flex items-center gap-1 min-w-[42px] sm:min-w-[48px] flex-shrink-0">
+                    <span className="text-xs sm:text-sm text-gray-300">{starValue}</span>
                     <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
                   </div>
                   <div className="flex-1 h-2 rounded-full bg-gray-700 overflow-hidden">
@@ -437,7 +437,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                       style={{ width: `${percentage}%` }}
                     />
                   </div>
-                  <span className="text-sm text-gray-400 min-w-[20px] text-right">{count}</span>
+                  <span className="text-xs sm:text-sm text-gray-400 min-w-[18px] sm:min-w-[20px] text-right flex-shrink-0">{count}</span>
                 </div>
               );
             })}
@@ -455,7 +455,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-end justify-between gap-2 h-40">
+            <div className="flex items-end justify-between gap-1 sm:gap-2 h-40">
               {sortedMonths.map(([month, amount], index) => {
                 const height = (amount / maxMonthlySpending) * 100;
                 return (
@@ -467,8 +467,8 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
                       className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t-lg min-h-[4px]"
                     />
                     <div className="text-center">
-                      <p className="text-xs text-gray-400">{getMonthName(month)}</p>
-                      <p className="text-xs text-blue-400 font-medium">
+                      <p className="text-[10px] sm:text-xs text-gray-400">{getMonthName(month)}</p>
+                      <p className="text-[10px] sm:text-xs text-blue-400 font-medium">
                         {amount >= 1000 ? `${(amount / 1000).toFixed(1)}k` : amount}
                       </p>
                     </div>
@@ -484,7 +484,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       {topRoutes.length > 0 && (
         <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
               <MapPin className="w-5 h-5 text-purple-400" />
               Frequent Routes
             </CardTitle>
@@ -524,7 +524,7 @@ export default function PassengerSpendingCard({ compact = false, onViewDetails }
       <Card className="bg-gray-800/50 border-gray-700 min-w-0 overflow-hidden">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
               <Calendar className="w-5 h-5 text-blue-400" />
               Recent Rides
             </CardTitle>

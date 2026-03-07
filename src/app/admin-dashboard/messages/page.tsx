@@ -390,9 +390,13 @@ export default function AdminMessagesPage() {
                         <Archive className="w-4 h-4" />
                         Archive
                       </button>
-                      <button className="w-full px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-all flex items-center justify-center gap-2">
+                      <button
+                        disabled
+                        title="Delete disabled. Remove records from Firebase project console only."
+                        className="w-full px-4 py-2 bg-red-500/20 text-red-400 rounded-lg transition-all flex items-center justify-center gap-2 opacity-50 cursor-not-allowed"
+                      >
                         <Trash2 className="w-4 h-4" />
-                        Delete
+                        Delete Disabled
                       </button>
                     </div>
                   </div>

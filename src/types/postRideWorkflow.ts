@@ -109,19 +109,19 @@ export interface PostRideConfig {
  */
 export const POST_RIDE_CONFIGS = {
   development: {
-    triggerDelaySeconds: 300,  // 5 minutes for testing
+    triggerDelaySeconds: 300,  // 5 minutes
     maxWorkflowsPerSession: 10,
     maxRetries: 3,
     retryDelaySeconds: 5,
   },
   staging: {
-    triggerDelaySeconds: 600,  // 10 minutes
+    triggerDelaySeconds: 300,  // 5 minutes
     maxWorkflowsPerSession: 10,
     maxRetries: 3,
     retryDelaySeconds: 10,
   },
   production: {
-    triggerDelaySeconds: 3600, // 60 minutes
+    triggerDelaySeconds: 300,  // 5 minutes
     maxWorkflowsPerSession: 5,
     maxRetries: 5,
     retryDelaySeconds: 30,

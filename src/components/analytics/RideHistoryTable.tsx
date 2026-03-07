@@ -423,8 +423,8 @@ const Pagination = memo(function Pagination({
   const endItem = Math.min(currentPage * pageSize, totalItems);
 
   return (
-    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t border-slate-800/50">
-      <p className="text-sm text-slate-500">
+    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-3 pt-3 border-t border-slate-800/50">
+      <p className="text-xs sm:text-sm text-slate-500">
         Showing {startItem} - {endItem} of {totalItems} rides
       </p>
       <div className="flex items-center gap-2">
@@ -454,7 +454,7 @@ const Pagination = memo(function Pagination({
                 key={pageNum}
                 onClick={() => onPageChange(pageNum)}
                 className={cn(
-                  'w-8 h-8 rounded-lg text-sm font-medium transition-colors',
+                  'w-7 h-7 sm:w-8 sm:h-8 rounded-lg text-xs sm:text-sm font-medium transition-colors',
                   currentPage === pageNum
                     ? 'bg-primary text-white'
                     : 'text-slate-400 hover:bg-slate-800'
@@ -584,11 +584,11 @@ export const RideHistoryTable = memo(function RideHistoryTable({
       className="bg-slate-900/50 border border-slate-800/50 rounded-xl overflow-hidden backdrop-blur-md"
     >
       {/* Header & Filters */}
-      <div className="p-4 border-b border-slate-800/50">
+      <div className="p-3 sm:p-4 border-b border-slate-800/50">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">Ride History</h3>
-            <p className="text-sm text-slate-500">
+            <h3 className="text-base sm:text-lg font-semibold text-white">Ride History</h3>
+            <p className="text-xs sm:text-sm text-slate-500">
               {filteredRides.length} ride{filteredRides.length !== 1 ? 's' : ''} found
             </p>
           </div>
@@ -601,7 +601,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
                 placeholder="Search routes..."
                 value={searchQuery}
                 onChange={handleSearchChange}
-                className="pl-9 w-full sm:w-[220px] bg-slate-900/50 border-slate-700/50 focus:border-primary"
+                className="pl-9 w-full sm:w-[200px] text-xs sm:text-sm bg-slate-900/50 border-slate-700/50 focus:border-primary"
               />
             </div>
 
@@ -730,7 +730,7 @@ export const RideHistoryTable = memo(function RideHistoryTable({
       </div>
 
       {/* Mobile Cards */}
-      <div className="lg:hidden p-4 space-y-3">
+      <div className="lg:hidden p-3 space-y-2.5">
         {paginatedRides.length > 0 ? (
           paginatedRides.map((ride, index) => (
             <RideHistoryCard key={ride.id} ride={ride} index={index} onSelect={setSelectedRide} />

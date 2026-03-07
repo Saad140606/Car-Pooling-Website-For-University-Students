@@ -60,11 +60,11 @@ export default function MonthlyRewardPosterPopup() {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="fixed inset-0 z-[200] flex items-center justify-center p-3 xs:p-4 sm:p-5"
+        className="fixed inset-0 z-[200] flex items-center justify-center p-2 xs:p-3 sm:p-5"
         aria-live="polite"
         style={{ pointerEvents: 'none' }}
       >
-        <div className="relative w-full max-w-sm" style={{ pointerEvents: 'auto' }}>
+        <div className="relative w-[95vw] max-w-[23rem] sm:w-full sm:max-w-[25rem] md:max-w-[26rem] lg:max-w-[27rem]" style={{ pointerEvents: 'auto' }}>
           {/* Close Button */}
           <button
             type="button"
@@ -82,13 +82,13 @@ export default function MonthlyRewardPosterPopup() {
             className="block w-full overflow-hidden rounded-xl xs:rounded-2xl sm:rounded-3xl border border-white/15 bg-slate-900/90 shadow-2xl ring-1 ring-black/30 transition hover:ring-white/20"
             aria-label="Close poster"
           >
-            <div className="relative w-full bg-slate-950" style={{ aspectRatio: '3/4' }}>
+            <div className="relative w-full bg-slate-950 max-h-[88vh]" style={{ aspectRatio: '3/4' }}>
               <Image
                 src="/Monthly_Reward_Poster.png"
                 alt="Monthly reward poster - top 5 ride providers and passengers with prizes"
                 fill
                 priority
-                sizes="(max-width: 480px) 90vw, (max-width: 640px) 85vw, 420px"
+                sizes="(max-width: 420px) 95vw, (max-width: 640px) 92vw, 480px"
                 className="object-cover object-center"
                 quality={95}
               />

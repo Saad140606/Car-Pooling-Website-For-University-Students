@@ -47,7 +47,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: 'Campus Rides',
+    default: 'Campus Rides -  University Carpooling for FAST, NED, and Karachi University Students',
     template: '%s | Campus Rides',
   },
   description: 'University carpooling for FAST, NED, and Karachi University students.',
@@ -64,10 +64,10 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: '/favicon-campus-rides.png', type: 'image/png' },
-      { url: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/favicon-campus-rides.png', sizes: '192x192', type: 'image/png' },
     ],
     apple: [
-      { url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+      { url: '/favicon-campus-rides.png', sizes: '180x180', type: 'image/png' },
     ],
   },
   alternates: {
@@ -105,14 +105,14 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Campus Rides" />
         <meta name="msapplication-TileColor" content="#1f2937" />
-        <meta name="msapplication-TileImage" content="/icons/icon-192x192.png" />
+        <meta name="msapplication-TileImage" content="/favicon-campus-rides.png" />
         <meta name="msapplication-config" content="/browserconfig.xml" />
         
         {/* PWA Support */}
         <link rel="manifest" href="/manifest.json" />
         <link rel="icon" href="/favicon-campus-rides.png" type="image/png" />
-        <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" type="image/png" />
-        <link rel="mask-icon" href="/icons/safari-pinned-tab.svg" color="#1f2937" />
+        <link rel="apple-touch-icon" href="/favicon-campus-rides.png" sizes="180x180" type="image/png" />
+        <link rel="mask-icon" href="/favicon-campus-rides.png" color="#1f2937" />
         
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

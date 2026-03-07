@@ -20,6 +20,7 @@ import ChatButton from '@/components/chat/ChatButton';
 import PassengerDetailModal from '@/components/PassengerDetailModal';
 import { LatLngExpression } from 'leaflet';
 import { openGoogleMapsRoute } from '@/lib/googleMapsRoute';
+import { getRoleCancellationRate } from '@/lib/roleCancellationRate';
 
 function isValidFirestoreInstance(value: any): boolean {
   return Boolean(value && typeof value === 'object' && '_databaseId' in value);
@@ -108,22 +109,10 @@ export default function MyRideCardPremium({ ride, university }: { ride: RideType
   const pendingCount = acceptedBookings?.filter(b => b.status === 'accepted').length || 0;
   const requestCount = pendingRequests?.length || 0;
   const acceptedCount = acceptedBookings?.length || 0;
-  const driverCancellationRate = React.useMemo(() => {
-    const policy = (userData as any)?.driverCancellationPolicy || {};
-    const policyRate = Number(policy?.cancellationRate);
-    if (Number.isFinite(policyRate) && policyRate > 0) return Math.round(policyRate);
-
-    const completedWindow = Number(policy?.completedRidesWindow || 0);
-    const cancelledWindow = Number(policy?.cancelledRidesWindow || 0);
-    const windowBase = completedWindow + cancelledWindow;
-    if (windowBase > 0) return Math.round((cancelledWindow / windowBase) * 100);
-
-    const totalParticipations = Number((userData as any)?.totalParticipations || 0);
-    const totalCancellations = Number((userData as any)?.totalCancellations || 0);
-    if (totalParticipations > 0) return Math.round((totalCancellations / totalParticipations) * 100);
-
-    return 0;
-  }, [userData]);
+  const driverCancellationRate = React.useMemo(
+    () => getRoleCancellationRate(userData, 'driver'),
+    [userData]
+  );
 
   const lifecycleStatus = (ride as any)?.lifecycleStatus;
   const needsCompletion = lifecycleStatus === 'IN_PROGRESS' || lifecycleStatus === 'COMPLETION_WINDOW';

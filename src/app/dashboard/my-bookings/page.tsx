@@ -30,6 +30,7 @@ import { BookingDetailDialog } from './BookingDetailDialog';
 import { decodePolyline } from '@/lib/route';
 import { parseTimestampToMs } from '@/lib/timestampUtils';
 import { trackEvent } from '@/lib/ga';
+import { getRoleCancellationRate } from '@/lib/roleCancellationRate';
 
 const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
   ssr: false,
@@ -1060,15 +1061,10 @@ export default function MyBookingsPage() {
     });
   }, [sortedVisibleBookings, getUnreadForRide, markRideAsRead]);
   
-  const policyCancellationRate = Number((userData as any)?.passengerCancellationPolicy?.cancellationRate);
-  const totalParticipations = Number((userData as any)?.totalParticipations || 0);
-  const totalCancellations = Number((userData as any)?.totalCancellations || 0);
-  const fallbackCancellationRate = totalParticipations > 0
-    ? Math.round((totalCancellations / totalParticipations) * 100)
-    : 0;
-  const cancellationRate = Number.isFinite(policyCancellationRate)
-    ? policyCancellationRate
-    : fallbackCancellationRate;
+  const cancellationRate = React.useMemo(
+    () => getRoleCancellationRate(userData, 'passenger'),
+    [userData]
+  );
 
   const waitingForUniversityResolution = !!user?.uid && !userLoading && !normalizedUniversity;
   const waitingForBackfillBeforeEmpty =

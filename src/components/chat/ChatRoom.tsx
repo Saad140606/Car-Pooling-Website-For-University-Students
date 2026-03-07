@@ -8,6 +8,8 @@ import { useFirestore, useUser } from '@/firebase';
 import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { createNotification } from '@/firebase/firestore/notifications';
 
+const UNANSWERED_CALL_TIMEOUT_MS = 30000;
+
 export default function ChatRoom({ chatId, university, forcedOtherUserName }: { chatId: string, university: string, forcedOtherUserName?: string }) {
   const {
     messages,
@@ -446,18 +448,16 @@ export default function ChatRoom({ chatId, university, forcedOtherUserName }: { 
       rtcpMuxPolicy: 'require'
     });
     pcRef.current = pc;
+    hasConnectedRef.current = false;
     
-    // Track call initiation time
-    const callStartTime = Date.now();
-    
-    // Set call timeout (60 seconds for ringing, then auto-hangup)
+    // Auto-end if nobody answers within 30 seconds.
     callTimeoutRef.current = window.setTimeout(() => {
-      if (inCall && isConnecting && Date.now() - callStartTime > 60000) {
-        console.warn('[ChatRoom] Call timeout - no answer received');
-        setCallError('Call timeout - recipient did not answer in 60 seconds');
+      if (!hasConnectedRef.current) {
+        console.warn('[ChatRoom] Call timeout - no answer within 30 seconds');
+        setCallError('Call ended - recipient did not answer in 30 seconds');
         cleanupCall().catch(() => {});
       }
-    }, 60000) as any;
+    }, UNANSWERED_CALL_TIMEOUT_MS) as any;
 
     // local stream
     let stream: MediaStream | null = null;

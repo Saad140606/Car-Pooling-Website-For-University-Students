@@ -1,7 +1,7 @@
 {
-  "name": "Campus Rides - University Carpooling",
-  "short_name": "Campus Rides",
-  "description": "Efficient and affordable carpooling for university students. Share rides, split costs, and build community.",
+  "name": "Campus Rides - FAST, NED and Karachi University Carpooling",
+  "short_name": "Campus Rides - FAST, NED and Karachi University Carpooling",
+  "description": "Efficient and affordable carpooling for fast, ned and karachi university students. Share rides, split costs, and build community.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -62,30 +62,14 @@
   ],
   "icons": [
     {
-      "src": "/favicon-campus-rides.png",
-      "type": "image/png"
-    },
-    {
-      "src": "/icons/icon-192x192.png",
-      "sizes": "192x192",
+      "src": "/favicon-campus-rides.png?v=2",
+      "sizes": "32x32 64x64 128x128 192x192 512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-192x192-maskable.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
-    },
-    {
-      "src": "/icons/icon-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-512x512-maskable.png",
-      "sizes": "512x512",
+      "src": "/favicon-campus-rides.png?v=2",
+      "sizes": "32x32 64x64 128x128 192x192 512x512",
       "type": "image/png",
       "purpose": "maskable"
     }

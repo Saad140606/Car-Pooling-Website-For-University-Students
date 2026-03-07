@@ -105,14 +105,15 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Campus Rides" />
         <meta name="msapplication-TileColor" content="#1f2937" />
-        <meta name="msapplication-TileImage" content="/favicon-campus-rides.png" />
+        <meta name="msapplication-TileImage" content="/favicon-campus-rides.png?v=2" />
         <meta name="msapplication-config" content="/browserconfig.xml" />
         
         {/* PWA Support */}
-        <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" href="/favicon-campus-rides.png" type="image/png" />
-        <link rel="apple-touch-icon" href="/favicon-campus-rides.png" sizes="180x180" type="image/png" />
-        <link rel="mask-icon" href="/favicon-campus-rides.png" color="#1f2937" />
+        <link rel="manifest" href="/manifest.json?v=2" />
+        <link rel="icon" href="/favicon-campus-rides.png?v=2" type="image/png" />
+        <link rel="shortcut icon" href="/favicon-campus-rides.png?v=2" type="image/png" />
+        <link rel="apple-touch-icon" href="/favicon-campus-rides.png?v=2" sizes="180x180" type="image/png" />
+        <link rel="mask-icon" href="/favicon-campus-rides.png?v=2" color="#1f2937" />
         
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

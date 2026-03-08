@@ -42,10 +42,10 @@ async function run() {
   const u2 = await createAccount(user2Email, pwd);
   await signOut(auth);
 
-  // Sign in as user1 and create users/{uid} doc and a ride
-  console.log('Signing in as user1 and creating users/{uid} & ride doc');
+  // Sign in as user1 and create universities/{uni}/users/{uid} doc and a ride
+  console.log('Signing in as user1 and creating university user doc & ride doc');
   await signInWithEmailAndPassword(auth, user1Email, pwd);
-  await setDoc(doc(db, 'users', auth.currentUser.uid), { uid: auth.currentUser.uid, email: user1Email, university: 'fast' });
+  await setDoc(doc(db, 'universities', 'fast', 'users', auth.currentUser.uid), { uid: auth.currentUser.uid, email: user1Email, university: 'fast' });
 
   // Create a ride under universities/fast/rides
   const ridesCol = collection(db, 'universities', 'fast', 'rides');
@@ -71,7 +71,7 @@ async function run() {
 
   // Sign out and sign in as user2
   await signOut(auth);
-  console.log('Signing in as user2 (no users/{uid} doc) and attempting to delete the ride');
+  console.log('Signing in as user2 (no university user doc) and attempting to delete the ride');
   await signInWithEmailAndPassword(auth, user2Email, pwd);
 
   try {

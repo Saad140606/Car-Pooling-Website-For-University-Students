@@ -200,7 +200,8 @@ export default function AccountPage() {
           throw new Error('Firestore or user not available');
         }
 
-        const userRef = doc(firestore, 'users', user.uid);
+        const userUniversity = String(userData?.university || 'fast').trim().toLowerCase();
+        const userRef = doc(firestore, 'universities', userUniversity, 'users', user.uid);
         const userDoc = await getDoc(userRef);
         const currentUserData = userDoc.data();
         

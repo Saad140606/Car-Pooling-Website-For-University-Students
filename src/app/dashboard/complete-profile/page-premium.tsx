@@ -90,7 +90,8 @@ export default function CompleteProfilePage() {
       }
 
       // Update Firestore
-      const userRef = doc(firestore, 'users', user.uid);
+      const userUniversity = String((userData as any)?.university || university || 'fast').trim().toLowerCase();
+      const userRef = doc(firestore, 'universities', userUniversity, 'users', user.uid);
       await updateDoc(userRef, {
         fullName: fullName || undefined,
         gender: gender || undefined,

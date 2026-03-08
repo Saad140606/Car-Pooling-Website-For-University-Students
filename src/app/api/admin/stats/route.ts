@@ -9,7 +9,7 @@ export async function GET(req: Request) {
 
     const db = admin.firestore();
     // Aggregations (production: use count() aggregation if available)
-    const usersSnap = await db.collection('users').get();
+    const usersSnap = await db.collectionGroup('users').get();
     const ridesSnap = await db.collectionGroup('rides').get().catch(async () => {
       // if rides are top-level
       const s = await db.collection('rides').get().catch(() => null);

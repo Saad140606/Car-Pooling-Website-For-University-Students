@@ -115,25 +115,7 @@ export async function POST(request: NextRequest) {
     // Check if the email is a university email
     const isUniversityEmail = otpData.university && isValidUniversityEmail(otpData.email, otpData.university as 'fast' | 'ned' | 'karachi');
     
-    // Mark email as verified in users collection
-    const userRef = db.collection('users').doc(uid);
-    const updateData: any = {
-      email: otpData.email,
-      emailVerified: true,
-      emailVerifiedAt: FieldValue.serverTimestamp(),
-    };
-
-    // If it's a valid university email, also mark university email as verified
-    if (isUniversityEmail) {
-      updateData.universityEmail = otpData.email;
-      updateData.universityEmailVerified = true;
-      updateData.universityEmailVerifiedAt = FieldValue.serverTimestamp();
-      console.log('University email verified for uid:', uid);
-    }
-
-    await userRef.set(updateData, { merge: true });
-
-    // Also mark in university-scoped users if university is available
+    // Mark as verified only in university-scoped user doc.
     if (otpData.university) {
       const uniUserRef = db.collection('universities').doc(otpData.university).collection('users').doc(uid);
       const uniUpdateData: any = {

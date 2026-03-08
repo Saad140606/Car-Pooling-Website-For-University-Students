@@ -66,6 +66,7 @@ const getRouteBounds = (route: LatLngExpression[] | undefined) => {
 // Active booking statuses used for queries and duplicate checks
 // Only these statuses are considered "active" - completed/expired/rejected/cancelled are excluded
 const ACTIVE_BOOKING_STATUSES = ['pending', 'PENDING', 'accepted', 'ACCEPTED', 'confirmed', 'CONFIRMED', 'ongoing', 'ONGOING'];
+const DISCOVERABLE_RIDE_STATUSES: Array<'active' | 'full'> = ['active', 'full'];
 
 const CAMPUS_OPTIONS = {
   fast: [
@@ -1026,7 +1027,7 @@ function RidesPageInner() {
   
   const fastRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'fast', 'rides'),
-    where('status', '==', 'active'),
+    where('status', 'in', DISCOVERABLE_RIDE_STATUSES),
     where('departureTime', '>=', thirtyDaysAgo),
     orderBy('departureTime', 'asc'),
     limit(50) // ── PERF: Limit initial load ──
@@ -1034,7 +1035,7 @@ function RidesPageInner() {
 
   const nedRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'ned', 'rides'),
-    where('status', '==', 'active'),
+    where('status', 'in', DISCOVERABLE_RIDE_STATUSES),
     where('departureTime', '>=', thirtyDaysAgo),
     orderBy('departureTime', 'asc'),
     limit(50) // ── PERF: Limit initial load ──
@@ -1042,7 +1043,7 @@ function RidesPageInner() {
 
   const karachiRidesQuery = firestore ? query(
     safeCollection(firestore, 'universities', 'karachi', 'rides'),
-    where('status', '==', 'active'),
+    where('status', 'in', DISCOVERABLE_RIDE_STATUSES),
     where('departureTime', '>=', thirtyDaysAgo),
     orderBy('departureTime', 'asc'),
     limit(50) // ── PERF: Limit initial load ──
@@ -1148,6 +1149,12 @@ function RidesPageInner() {
       // Uses defensive logic: if timestamp is invalid/unparseable, keeps the ride visible
       // to avoid hiding rides due to data corruption
       if (isRideExpired(ride.departureTime, { silent: true })) {
+        return false;
+      }
+
+      // Find Rides should only show rides that currently have bookable seats,
+      // even if a stale status field still says "full".
+      if (Number(ride.availableSeats ?? 0) <= 0) {
         return false;
       }
       

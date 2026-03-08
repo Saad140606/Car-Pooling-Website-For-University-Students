@@ -16,17 +16,9 @@ export async function GET(req: Request) {
 
     const normalizedUniversity = String(universityId || '').toLowerCase();
 
-    let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
-    try {
-      const snap = await db.collectionGroup('users').get();
-      docs = snap.docs;
-      console.log(`[admin/users] Found ${docs.length} users via collectionGroup`);
-    } catch (err) {
-      console.warn('[admin/users] collectionGroup failed, trying top-level', err);
-      const snap = await db.collection('users').get();
-      docs = snap.docs;
-      console.log(`[admin/users] Found ${docs.length} users via top-level`);
-    }
+    const snap = await db.collectionGroup('users').get();
+    const docs: FirebaseFirestore.QueryDocumentSnapshot[] = snap.docs;
+    console.log(`[admin/users] Found ${docs.length} users via collectionGroup`);
 
     const withMeta = docs.map((doc) => {
       const data = doc.data();
@@ -89,14 +81,6 @@ export async function PATCH(req: Request) {
     const db = admin.firestore();
     const userIdStr = String(userId);
     const writePayload = { ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-
-    const topLevelRef = db.collection('users').doc(userIdStr);
-    const topLevelSnap = await topLevelRef.get().catch(() => null);
-
-    if (topLevelSnap?.exists) {
-      await topLevelRef.set(writePayload, { merge: true });
-      return NextResponse.json({ ok: true });
-    }
 
     const cgSnap = await db
       .collectionGroup('users')

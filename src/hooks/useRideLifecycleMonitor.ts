@@ -14,7 +14,7 @@ import { parseTimestampToMs } from '@/lib/timestampUtils';
  * 3. Runs on page load, periodically, and when app regains focus
  * 4. Calls backend API to update server state when needed
  * 
- * COMPLETION_DELAY: 5 minutes (testing) - configurable
+ * COMPLETION_DELAY: 60 minutes (production) - configurable
  */
 
 export interface RideLifecycleState {
@@ -29,7 +29,7 @@ interface LifecycleMonitorOptions {
   booking?: any; // For passengers
   university: string;
   checkInterval?: number; // milliseconds, default 15000 (15 seconds)
-  completionDelayMinutes?: number; // default 5
+  completionDelayMinutes?: number; // default 60
 }
 
 /**

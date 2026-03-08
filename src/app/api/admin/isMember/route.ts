@@ -29,17 +29,8 @@ export async function POST(req: NextRequest) {
       if (snap && snap.exists) memberships.push(uni);
     }
 
-    let preferredUniversity: 'fast' | 'ned' | 'karachi' | null = null;
-    const topLevelUserSnap = await admin.firestore().doc(`users/${uid}`).get().catch(() => null as any);
-    if (topLevelUserSnap?.exists) {
-      const topUniversity = String((topLevelUserSnap.data() as any)?.university || '').toLowerCase();
-      if (universities.includes(topUniversity as any) && memberships.includes(topUniversity as any)) {
-        preferredUniversity = topUniversity as 'fast' | 'ned' | 'karachi';
-      }
-    }
-
     if (memberships.length > 0) {
-      const resolvedUniversity = preferredUniversity || memberships[0];
+      const resolvedUniversity = memberships[0];
       return NextResponse.json({
         isMember: true,
         isAdmin,
@@ -47,26 +38,6 @@ export async function POST(req: NextRequest) {
         registeredIn: resolvedUniversity,
         hasMultipleMemberships: memberships.length > 1,
         memberships,
-      });
-    }
-
-    // Legacy fallback: top-level users/{univ}_{uid}
-    const legacyMemberships: Array<'fast' | 'ned' | 'karachi'> = [];
-    for (const uni of universities) {
-      const legacy = await admin.firestore().doc(`users/${uni}_${uid}`).get().catch(() => null as any);
-      if (legacy && legacy.exists) legacyMemberships.push(uni);
-    }
-
-    if (legacyMemberships.length > 0) {
-      const resolvedLegacyUniversity = legacyMemberships[0];
-      return NextResponse.json({
-        isMember: true,
-        isAdmin,
-        university: resolvedLegacyUniversity,
-        registeredIn: resolvedLegacyUniversity,
-        legacy: true,
-        hasMultipleMemberships: legacyMemberships.length > 1,
-        memberships: legacyMemberships,
       });
     }
 

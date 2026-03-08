@@ -14,7 +14,7 @@ export const LIFECYCLE_CONFIG = {
    * TESTING: 5 minutes (for rapid testing)
    * PRODUCTION: 60 minutes (for actual use)
    */
-  COMPLETION_DELAY_MINUTES: 5, // ⚠️ CHANGE THIS TO 60 FOR PRODUCTION
+    COMPLETION_DELAY_MINUTES: 60,
   
   /**
    * How long the completion window stays open (in hours)

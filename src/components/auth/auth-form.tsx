@@ -585,7 +585,7 @@ export function AuthForm({ university, action }: AuthFormProps) {
               }
             }
 
-            emailVerifiedFlag = Boolean(profile?.universityEmailVerified);
+            emailVerifiedFlag = Boolean(profile?.universityEmailVerified || profile?.emailVerified);
           }
 
           // If user does NOT have a university profile yet, force verification flow

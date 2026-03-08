@@ -25,7 +25,6 @@ import {
   RATE_LIMITS,
 } from '@/lib/api-security';
 import { notifyRideCancelled } from '@/lib/serverNotificationService';
-import { handleCancelPassenger } from '@/lib/rideLifecycle/lifecycleService';
 import { evaluateAndApplyRoleCancellationPolicy } from '@/lib/serverRoleCancellationPolicy';
 
 export async function POST(req: NextRequest) {
@@ -189,11 +188,23 @@ export async function POST(req: NextRequest) {
         if (normalizedStatus === 'ACCEPTED') {
           // Release reserved seat
           const reserved = (ride.reservedSeats ?? 0) as number;
-          tx.update(rideRef, { reservedSeats: Math.max(0, reserved - 1) });
+          tx.update(rideRef, {
+            reservedSeats: Math.max(0, reserved - 1),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
         } else if (normalizedStatus === 'CONFIRMED') {
           // Return seat to available pool
           const available = (ride.availableSeats ?? 0) as number;
-          tx.update(rideRef, { availableSeats: available + 1 });
+          const nextAvailableSeats = available + 1;
+          tx.update(rideRef, {
+            availableSeats: nextAvailableSeats,
+            confirmedPassengers: (ride.confirmedPassengers || []).filter((entry: any) => {
+              if (typeof entry === 'string') return entry !== effective.passengerId;
+              return String(entry?.userId || entry?.uid || '') !== String(effective.passengerId || '');
+            }),
+            status: nextAvailableSeats > 0 ? 'active' : (ride.status || 'full'),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
         }
       }
 
@@ -272,20 +283,6 @@ export async function POST(req: NextRequest) {
     } catch (notifError) {
       // Log notification error but don't fail the request
       console.error('[CancelRequest] Notification error (non-critical):', notifError);
-    }
-
-    // ===== UPDATE LIFECYCLE (ASYNC, non-blocking) =====
-    try {
-      // Call lifecycle service to sync state
-      await handleCancelPassenger(
-        adminDb,
-        validUniversity,
-        rideId,
-        result.passengerId,
-        'CANCELLED_BY_PASSENGER'
-      );
-    } catch (lifecycleErr) {
-      console.warn('[CancelRequest] Lifecycle update failed (non-critical):', lifecycleErr);
     }
 
     return successResponse({

@@ -3,10 +3,11 @@
 import { useEffect } from 'react';
 import { useFirestore, useUser } from '@/firebase';
 import { registerSparkPush } from '@/lib/sparkPushClient';
+import { getSelectedUniversity } from '@/lib/university';
 
 export function SparkPushBootstrap() {
   const firestore = useFirestore();
-  const { user } = useUser();
+  const { user, data: userData } = useUser();
 
   useEffect(() => {
     if (!firestore || !user?.uid) return;
@@ -20,11 +21,12 @@ export function SparkPushBootstrap() {
     registerSparkPush({
       firestore,
       uid: user.uid,
+      university: String((userData as any)?.university || getSelectedUniversity() || 'fast').trim().toLowerCase(),
       vapidKey,
     }).catch((error) => {
       console.warn('[SparkPushBootstrap] Push registration failed:', error);
     });
-  }, [firestore, user?.uid]);
+  }, [firestore, user?.uid, userData]);
 
   return null;
 }

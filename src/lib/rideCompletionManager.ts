@@ -4,7 +4,7 @@
  * Ride Completion Manager
  * 
  * Production-grade service that:
- * - Monitors rides for completion eligibility (departure_time + 5 min)
+ * - Monitors rides for completion eligibility (departure_time + 1 hour)
  * - Persists workflow state to Firestore + localStorage
  * - Handles provider and passenger flows
  * - Syncs analytics on completion
@@ -39,7 +39,7 @@ import type {
 import { toSafeDate } from '@/types/rideCompletion';
 import { parseTimestampToMs } from '@/lib/timestampUtils';
 
-const COMPLETION_TRIGGER_DELAY_MS = 5 * 60 * 1000;
+const COMPLETION_TRIGGER_DELAY_MS = 60 * 60 * 1000;
 
 const LOCAL_CACHE_KEY = 'campus_rides_completion_cache';
 const WORKFLOW_FORM_PREFIX = 'campus_rides_wf_';

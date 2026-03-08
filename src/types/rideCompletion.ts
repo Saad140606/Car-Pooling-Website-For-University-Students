@@ -12,7 +12,7 @@ import { Timestamp } from 'firebase/firestore';
 // TRIGGER CONFIG
 // ============================================================================
 
-export const COMPLETION_TRIGGER_DELAY_MS = 5 * 60 * 1000; // 5 minutes after departure
+export const COMPLETION_TRIGGER_DELAY_MS = 60 * 60 * 1000; // 1 hour after departure
 
 // ============================================================================
 // PASSENGER ATTENDANCE

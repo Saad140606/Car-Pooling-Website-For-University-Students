@@ -32,7 +32,7 @@ export function getRoleCancellationRate(userData: any, role: CancellationRole): 
   const policy = getPolicy(userData, role);
 
   const directPolicyRate = toFiniteNumber(policy?.cancellationRate);
-  if (directPolicyRate !== null) {
+  if (directPolicyRate !== null && directPolicyRate > 0) {
     return clampRate(directPolicyRate);
   }
 
@@ -46,6 +46,18 @@ export function getRoleCancellationRate(userData: any, role: CancellationRole): 
   const totalWindow = toFiniteNumber(policy?.totalRidesWindow) ?? 0;
   if (totalWindow > 0) {
     return clampRate(toRateFromRatio(cancelledWindow, totalWindow));
+  }
+
+  // Legacy fallback used by older profile trackers.
+  const historicalTotal = toFiniteNumber(userData?.totalParticipations) ?? 0;
+  const historicalCancelled = toFiniteNumber(userData?.totalCancellations) ?? 0;
+  if (historicalTotal > 0) {
+    return clampRate(toRateFromRatio(historicalCancelled, historicalTotal));
+  }
+
+  // If policy explicitly reports 0 and no stronger evidence exists, return 0.
+  if (directPolicyRate !== null) {
+    return clampRate(directPolicyRate);
   }
 
   return 0;

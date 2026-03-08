@@ -49,7 +49,7 @@ async function fetchTokensForUsers(userIds) {
   const tokens = [];
   for (const idsChunk of chunks) {
     const snap = await db
-      .collection('users')
+      .collectionGroup('users')
       .where(admin.firestore.FieldPath.documentId(), 'in', idsChunk)
       .get();
 

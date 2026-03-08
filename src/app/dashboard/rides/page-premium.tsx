@@ -191,7 +191,7 @@ export default function FindARidePage() {
     user && firestore && userData
       ? query(
           collection(firestore, 'universities', userData.university, 'rides'),
-          where('status', '==', 'active'),
+          where('status', 'in', ['active', 'full']),
           where('driverId', '!=', user.uid),
           orderBy('driverId'),
           orderBy('departureTime', 'desc')

@@ -13,13 +13,14 @@ const VAPID_KEY = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
 
 export class FCMTokenManager {
   private userId: string | null = null;
+  private university: string | null = null;
   private firestore: Firestore | null = null;
   private tokenRefreshInterval: number | null = null;
 
   /**
    * Initialize the token manager
    */
-  async initialize(firestore: Firestore, userId: string): Promise<void> {
+  async initialize(firestore: Firestore, userId: string, university: string): Promise<void> {
     if (!VAPID_KEY) {
       console.warn('[FCMTokenManager] VAPID key not configured. Push notifications disabled.');
       return;
@@ -27,6 +28,7 @@ export class FCMTokenManager {
 
     this.firestore = firestore;
     this.userId = userId;
+    this.university = String(university || '').trim().toLowerCase();
 
     console.log('[FCMTokenManager] Initializing for user:', userId);
 
@@ -124,13 +126,14 @@ export class FCMTokenManager {
         userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
       }, { merge: true });
 
-      // Spark-compatible external-worker structure:
-      // Also mirror token to `users/{uid}.fcmToken`.
-      const userDocRef = doc(this.firestore, 'users', this.userId);
-      await setDoc(userDocRef, {
-        fcmToken: token,
-        fcmTokenUpdatedAt: Timestamp.now(),
-      }, { merge: true });
+      // Mirror token into canonical university-scoped user profile.
+      if (this.university) {
+        const userDocRef = doc(this.firestore, 'universities', this.university, 'users', this.userId);
+        await setDoc(userDocRef, {
+          fcmToken: token,
+          fcmTokenUpdatedAt: Timestamp.now(),
+        }, { merge: true });
+      }
 
       console.log('[FCMTokenManager] ✅ Token registered in Firestore');
 
@@ -194,11 +197,13 @@ export class FCMTokenManager {
         const tokenDocRef = doc(this.firestore, 'fcm_tokens', this.userId);
         await deleteDoc(tokenDocRef);
 
-        const userDocRef = doc(this.firestore, 'users', this.userId);
-        await setDoc(userDocRef, {
-          fcmToken: null,
-          fcmTokenUpdatedAt: Timestamp.now(),
-        }, { merge: true });
+        if (this.university) {
+          const userDocRef = doc(this.firestore, 'universities', this.university, 'users', this.userId);
+          await setDoc(userDocRef, {
+            fcmToken: null,
+            fcmTokenUpdatedAt: Timestamp.now(),
+          }, { merge: true });
+        }
       }
 
       console.log('[FCMTokenManager] Token cleaned up from Firestore');
@@ -213,6 +218,7 @@ export class FCMTokenManager {
     }
 
     this.userId = null;
+    this.university = null;
     this.firestore = null;
   }
 
@@ -332,8 +338,10 @@ export class FCMTokenManager {
       if (newToken && this.userId && this.firestore) {
         const tokenDocRef = doc(this.firestore, 'fcm_tokens', this.userId);
         await setDoc(tokenDocRef, { token: newToken }, { merge: true });
-        const userDocRef = doc(this.firestore, 'users', this.userId);
-        await setDoc(userDocRef, { fcmToken: newToken, fcmTokenUpdatedAt: Timestamp.now() }, { merge: true });
+        if (this.university) {
+          const userDocRef = doc(this.firestore, 'universities', this.university, 'users', this.userId);
+          await setDoc(userDocRef, { fcmToken: newToken, fcmTokenUpdatedAt: Timestamp.now() }, { merge: true });
+        }
         console.log('[FCMTokenManager] ✅ New token registered');
         return newToken;
       }

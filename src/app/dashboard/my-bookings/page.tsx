@@ -31,6 +31,11 @@ import { decodePolyline } from '@/lib/route';
 import { parseTimestampToMs } from '@/lib/timestampUtils';
 import { trackEvent } from '@/lib/ga';
 import { getRoleCancellationRate } from '@/lib/roleCancellationRate';
+import { safeCollection } from '@/firebase/helpers';
+
+function isValidFirestoreInstance(value: any): boolean {
+  return Boolean(value && typeof value === 'object' && '_databaseId' in value);
+}
 
 const LazyMapLeaflet = dynamic(() => import('@/components/MapLeaflet'), {
   ssr: false,
@@ -462,6 +467,15 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
   const driverInitials = driverName.split(' ').map((s: string) => s[0]).slice(0, 2).join('').toUpperCase();
   const rideFrom = safeGet(ride, 'from', 'Unknown');
   const rideTo = safeGet(ride, 'to', 'Unknown');
+  const minutesUntilDeparture = React.useMemo(() => {
+    const departureSource =
+      safeGet(ride, 'departureTime') ||
+      safeGet(booking, 'departureTime') ||
+      safeGet(booking, 'ride.departureTime');
+    const departureMs = parseTimestampToMs(departureSource, { silent: true });
+    if (departureMs === null) return undefined;
+    return Math.floor((departureMs - Date.now()) / (60 * 1000));
+  }, [ride, booking]);
   const ridePrice = safeGet(ride, 'price') ?? safeGet(booking, 'price', 0);
   const rideRoute = safeGet(ride, 'route', []);
   const pickupPoint = safeGet(booking, 'pickupPoint');
@@ -876,7 +890,7 @@ function BookingCard({ booking, university, cancellationRate = 0 }: BookingCardP
         isLoading={cancelling}
         cancellerRole="passenger"
         cancellationRate={cancellationRate}
-        minutesUntilDeparture={departureTimer ? parseInt(departureTimer.split(':')[0] || '0') : 0}
+        minutesUntilDeparture={minutesUntilDeparture}
         showRateWarning={cancellationRate > 30}
           isBookingConfirmed={normalizedStatus === 'CONFIRMED'}
       />
@@ -908,10 +922,10 @@ export default function MyBookingsPage() {
   );
 
   // Safety checks
-  const hasRequiredData = user?.uid && firestore && normalizedUniversity;
+  const hasRequiredData = user?.uid && isValidFirestoreInstance(firestore) && normalizedUniversity;
 
   const bookingsQuery = hasRequiredData ? query(
-    collection(firestore, 'universities', normalizedUniversity, 'bookings'),
+    safeCollection(firestore as any, 'universities', normalizedUniversity, 'bookings'),
     where('passengerId', '==', user.uid),
     orderBy('createdAt', 'desc'),
     limit(100) // ── PERF: Limit to last 100 bookings ──
@@ -1308,7 +1322,7 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
 
         // If seats are now full, auto-decline all remaining pending/accepted requests
         if (currentSeats - 1 === 0) {
-          const requestsRef = collection(firestore, `universities/${university}/rides/${booking.ride.id}/requests`);
+          const requestsRef = safeCollection(firestore as any, `universities/${university}/rides/${booking.ride.id}/requests`);
           const pendingQuery = query(requestsRef, where('status', 'in', ['PENDING', 'pending']));
           const pendingSnap = await getDocs(pendingQuery);
           
@@ -1324,7 +1338,7 @@ function BookingCardLegacy({ booking, university }: { booking: BookingType, univ
 
           // Also update accepted bookings that haven't been confirmed yet
           const acceptedQuery = query(
-            collection(firestore, `universities/${university}/bookings`),
+            safeCollection(firestore as any, `universities/${university}/bookings`),
             where('rideId', '==', booking.ride.id),
             where('status', '==', 'accepted')
           );

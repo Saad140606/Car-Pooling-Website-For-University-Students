@@ -1377,7 +1377,14 @@ function MyRideCard({ ride, university } : { ride: RideType, university: string 
                     </div>
                   </div>
                    <div className="text-right flex-shrink-0">
-                     <Badge variant={ride.status === 'active' ? 'default' : ride.status === 'full' ? 'destructive' : 'secondary'} className="text-[0.65rem] mb-1">{ride.status}</Badge>
+                     {(() => {
+                       const effectiveStatus = availableSeats > 0 ? 'active' : 'full';
+                       return (
+                         <Badge variant={effectiveStatus === 'active' ? 'default' : 'destructive'} className="text-[0.65rem] mb-1">
+                           {effectiveStatus}
+                         </Badge>
+                       );
+                     })()}
                      <div className="text-sm font-semibold text-white">PKR {ride.price}</div>
                      <div className="text-[0.7rem] text-slate-300">Seats: {availableSeats}</div>
                    </div>

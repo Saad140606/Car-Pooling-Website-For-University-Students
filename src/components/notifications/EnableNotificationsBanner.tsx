@@ -5,12 +5,13 @@ import { Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useFirestore, useUser } from '@/firebase';
 import { fcmTokenManager } from '@/lib/fcmTokenManager';
+import { getSelectedUniversity } from '@/lib/university';
 
 export function EnableNotificationsBanner() {
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [requesting, setRequesting] = useState(false);
   const firestore = useFirestore();
-  const { user } = useUser();
+  const { user, data: userData } = useUser();
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -44,7 +45,8 @@ export function EnableNotificationsBanner() {
       setPermission(result);
 
       if (result === 'granted' && firestore && user?.uid) {
-        await fcmTokenManager.initialize(firestore, user.uid);
+        const resolvedUniversity = String((userData as any)?.university || getSelectedUniversity() || 'fast').trim().toLowerCase();
+        await fcmTokenManager.initialize(firestore, user.uid, resolvedUniversity);
       }
     } catch (error) {
       setPermission(Notification.permission);

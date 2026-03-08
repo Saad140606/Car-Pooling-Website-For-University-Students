@@ -61,10 +61,11 @@ export default function AccountPage() {
       const twoWeeksAgo = new Date();
       twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
       
-      const userRef = doc(firestore!, 'users', user.uid);
+      const userUniversity = String((userData as any)?.university || 'fast').trim().toLowerCase();
+      const userRef = doc(firestore!, 'universities', userUniversity, 'users', user.uid);
       const userDoc = await getDoc(userRef);
-      const userData = userDoc.data();
-      const passwordChanges = userData?.passwordChanges || [];
+      const userDocData = userDoc.data();
+      const passwordChanges = userDocData?.passwordChanges || [];
       
       // Filter changes within last 2 weeks
       const recentChanges = passwordChanges.filter((change: any) => {

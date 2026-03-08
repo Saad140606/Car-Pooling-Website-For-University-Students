@@ -70,16 +70,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid OTP' }, { status: 401 });
     }
 
-    const userRef = db.collection('users').doc(uid);
-    await userRef.set(
-      {
-        verifiedUniversityEmail: true,
-        universityEmail: verificationData.universityEmail,
-        universityEmailVerifiedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
     if (verificationData.university) {
       const uniUserRef = db
         .collection('universities')

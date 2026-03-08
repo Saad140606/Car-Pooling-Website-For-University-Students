@@ -6,10 +6,11 @@ import { doc, setDoc, serverTimestamp, Firestore } from 'firebase/firestore';
 export interface RegisterSparkPushParams {
   firestore: Firestore;
   uid: string;
+  university: string;
   vapidKey: string;
 }
 
-export async function registerSparkPush({ firestore, uid, vapidKey }: RegisterSparkPushParams): Promise<string | null> {
+export async function registerSparkPush({ firestore, uid, university, vapidKey }: RegisterSparkPushParams): Promise<string | null> {
   if (typeof window === 'undefined') return null;
   if (!vapidKey) throw new Error('Missing VAPID key');
 
@@ -34,7 +35,7 @@ export async function registerSparkPush({ firestore, uid, vapidKey }: RegisterSp
   if (!token) return null;
 
   await setDoc(
-    doc(firestore, 'users', uid),
+    doc(firestore, 'universities', university, 'users', uid),
     {
       fcmToken: token,
       fcmTokenUpdatedAt: serverTimestamp(),

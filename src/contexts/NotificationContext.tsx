@@ -116,26 +116,53 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   // Track the last notification ID to detect new ones
   const lastNotificationIdRef = useRef<string | null>(null);
   const isInitialLoadRef = useRef(true);
+  const autoPermissionPromptedUidRef = useRef<string | null>(null);
 
   // Initialize FCM token registration
   useEffect(() => {
-    if (!firestore || !user?.uid) {
+    if (!firestore || !user?.uid || !resolvedUniversity) {
       // Cleanup on logout
       fcmTokenManager.cleanup().catch(console.error);
+      autoPermissionPromptedUidRef.current = null;
       return;
     }
 
-    // Register FCM token on login
-    console.log('[NotificationProvider] Initializing FCM token manager for user:', user.uid);
-    fcmTokenManager.initialize(firestore, user.uid).catch((error) => {
-      console.error('[NotificationProvider] Failed to initialize FCM token manager:', error);
-    });
+    const initNotifications = async () => {
+      try {
+        if (typeof window === 'undefined' || !('Notification' in window)) {
+          return;
+        }
+
+        // Auto-prompt once per logged-in user when permission is undecided.
+        if (
+          Notification.permission === 'default' &&
+          autoPermissionPromptedUidRef.current !== user.uid
+        ) {
+          autoPermissionPromptedUidRef.current = user.uid;
+          try {
+            await Notification.requestPermission();
+          } catch (promptErr) {
+            console.warn('[NotificationProvider] Auto permission prompt failed:', promptErr);
+          }
+        }
+
+        // Register FCM token only when permission is granted.
+        if (Notification.permission === 'granted') {
+          console.log('[NotificationProvider] Initializing FCM token manager for user:', user.uid);
+          await fcmTokenManager.initialize(firestore, user.uid, resolvedUniversity);
+        }
+      } catch (error) {
+        console.error('[NotificationProvider] Failed to initialize FCM token manager:', error);
+      }
+    };
+
+    void initNotifications();
 
     return () => {
       // Cleanup on unmount or user change
       fcmTokenManager.cleanup().catch(console.error);
     };
-  }, [firestore, user?.uid]);
+  }, [firestore, user?.uid, resolvedUniversity]);
 
   // Initialize Firestore notifications
   useEffect(() => {

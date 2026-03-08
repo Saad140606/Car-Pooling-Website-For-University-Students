@@ -43,6 +43,26 @@ export async function POST(request: NextRequest) {
 
     const db = adminDb ?? getFirestore();
 
+    // If this user is already verified under the selected university profile,
+    // avoid regenerating and resending OTPs.
+    const existingUniUser = await db
+      .collection('universities')
+      .doc(university)
+      .collection('users')
+      .doc(uid)
+      .get();
+    if (existingUniUser.exists) {
+      const existingData = existingUniUser.data() as any;
+      const alreadyVerified = Boolean(existingData?.emailVerified || existingData?.universityEmailVerified);
+      if (alreadyVerified) {
+        return NextResponse.json({
+          success: true,
+          alreadyVerified: true,
+          message: 'Email already verified',
+        });
+      }
+    }
+
     // ===== CRITICAL FIX: Check if email already exists in another university =====
     // This prevents a user registered at one university from signing up at another with the same email
     const allUniversities = ['fast', 'ned', 'karachi'];

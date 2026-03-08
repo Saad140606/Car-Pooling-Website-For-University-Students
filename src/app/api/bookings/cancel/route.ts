@@ -192,11 +192,16 @@ export async function POST(req: NextRequest) {
       };
 
       if (normalizedStatus === 'CONFIRMED') {
+        const nextAvailableSeats = currentAvailable + 1;
         tx.update(rideRef, {
-          availableSeats: currentAvailable + 1,
+          availableSeats: nextAvailableSeats,
           confirmedPassengers: (freshRide.confirmedPassengers || []).filter(
-            (uid: string) => uid !== passengerId
+            (entry: any) => {
+              if (typeof entry === 'string') return entry !== passengerId;
+              return String(entry?.userId || entry?.uid || '') !== String(passengerId || '');
+            }
           ),
+          status: nextAvailableSeats > 0 ? 'active' : (freshRide.status || 'full'),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       } else if (normalizedStatus === 'ACCEPTED') {

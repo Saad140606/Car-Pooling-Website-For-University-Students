@@ -1381,8 +1381,7 @@ function RidesPageInner() {
           <h1 className="text-3xl font-headline font-bold text-slate-50">Available Rides</h1>
         </div>
         <p className="text-slate-300 text-sm sm:text-base mb-6 max-w-3xl">
-          Tip: You can request multiple rides first to keep options open. Once one ride provider accepts your request,
-          confirm only the ride you want to lock your seat.
+       Request multiple rides to keep your options open. Once a ride provider accepts, confirm one ride to secure your seat.
         </p>
 
         {activeRideLock && (
@@ -1636,9 +1635,7 @@ function RidesPageInner() {
             )}
           </div>
         </div>
-        <div>
-          <Button variant="ghost" onClick={() => { setFilters({ transport: 'any', gender: 'any', minPrice: '', maxPrice: '', pointInput: '', point: null, university: (user && lockedUniversity) ? lockedUniversity : '', campus: '', direction: 'any' }); setSearchQuery(''); router.push('/dashboard/rides'); }}>Clear</Button>
-        </div>
+        
       </div>
 
       {ridesLoading ? (

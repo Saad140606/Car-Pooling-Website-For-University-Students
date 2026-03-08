@@ -819,8 +819,11 @@ export default function AnalyticsPage() {
           <div className="min-w-0">
             <h1 className="text-base sm:text-xl md:text-2xl font-bold text-white flex items-center gap-2 sm:gap-3">
               <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-primary" />
-              Analytics Dashboard
+              Analytics Dashboard 
             </h1>
+            <p className="text-slate-300 text-sm sm:text-base mb-6 max-w-3xl">
+               Open Analytics Dasboard on your desktop Screen to get the best experience.
+        </p>
             <p className="text-xs sm:text-sm text-slate-500 mt-0.5 sm:mt-1">
               {lastUpdated && (
                 <>Last updated: {lastUpdated.toLocaleTimeString()}</>

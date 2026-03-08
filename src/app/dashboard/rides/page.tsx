@@ -1387,9 +1387,11 @@ function RidesPageInner() {
           {!user && <button onClick={() => router.back()} className="px-3 py-2 rounded-md bg-white/10 hover:bg-white/15 text-sm text-slate-200">← Back</button>}
           <h1 className="text-3xl font-headline font-bold text-slate-50">Available Rides</h1>
         </div>
-        <p className="text-slate-300 text-sm sm:text-base mb-6 max-w-3xl">
-       Request multiple rides to keep your options open. Once a ride provider accepts, confirm one ride to secure your seat.
-        </p>
+        {user && (
+          <p className="text-slate-300 text-sm sm:text-base mb-6 max-w-3xl">
+            Request multiple rides to keep your options open. Once a ride provider accepts, confirm one ride to secure your seat.
+          </p>
+        )}
 
         {activeRideLock && (
           <div className="mb-5 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">

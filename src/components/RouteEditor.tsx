@@ -342,6 +342,7 @@ export default function RouteEditor({ origin, destination, onRouteGenerated, get
 
   return (
     <div className="space-y-4">
+      <h2 className="font-semibold text-lg text-slate-50">Change Map Route by Adding Points</h2>
       <h3 className="font-semibold text-slate-100">Add Route Points (Optional)</h3>
       
       <div className="flex gap-2">

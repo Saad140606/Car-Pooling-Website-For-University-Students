@@ -215,10 +215,19 @@ service cloud.firestore {
           || (resource.data.providerId is string && resource.data.providerId == request.auth.uid)
         ));
 
-        match /messages/{messageId} {
-          allow create: if isAuth() && request.resource.data.senderId == request.auth.uid;
-          allow get, list: if isAuth();
-          allow update: if isAuth();
+      match /messages/{messageId} { //IDOR FIX BY SHAMVEEL KHAN
+          // Only authenticated users who are part of the chat can create a message
+          allow create: if isAuth() 
+            && request.resource.data.senderId == request.auth.uid
+            && request.resource.data.senderId in resource.parent.data.participants;
+        
+          // Only participants can read or list messages
+          allow get, list: if isAuth() && request.auth.uid in resource.parent.data.participants;
+        
+          // Only the sender can update their own message
+          allow update: if isAuth() && request.auth.uid == resource.data.senderId;
+        
+          //  deletion is not allowed
           allow delete: if false;
         }
       }

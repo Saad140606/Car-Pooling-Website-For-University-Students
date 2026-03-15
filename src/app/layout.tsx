@@ -10,7 +10,6 @@ import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 import SafeConsolePatch from '@/components/SafeConsolePatch';
 import { PWAServiceWorkerRegistration } from '@/components/pwa/PWAServiceWorkerRegistration';
 import GoogleAnalytics from '@/components/analytics/GoogleAnalytics';
-import MonthlyRewardPosterPopup from '@/components/MonthlyRewardPosterPopup';
 import { SEO_TARGET_KEYWORDS, SITE_URL } from '@/config/seo';
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
@@ -131,7 +130,6 @@ export default function RootLayout({
             </ClientSideProviders>
           </FirebaseClientProvider>
         </GlobalErrorBoundary>
-        <MonthlyRewardPosterPopup />
         <Analytics />
         <SpeedInsights />
         <Toaster />

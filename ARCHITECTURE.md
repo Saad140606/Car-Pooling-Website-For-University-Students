@@ -68,7 +68,7 @@ Core shared UI is in `src/components`.
 
 ### 4.2 Firestore data model
 
-Main structure (simplified):
+Main structure:
 
 ```text
 admins/{uid}
